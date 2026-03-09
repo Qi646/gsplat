@@ -1,0 +1,566 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Gaussian Splat Viewer</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500&family=Syne:wght@400;600;800&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #080a0e;
+      --surface: #0e1117;
+      --surface2: #151a22;
+      --border: rgba(255,255,255,0.07);
+      --accent: #00e5ff;
+      --accent2: #ff6b35;
+      --text: #e8edf5;
+      --muted: #5a6478;
+      --danger: #ff4455;
+      --success: #00ff88;
+      --mono: 'JetBrains Mono', monospace;
+      --sans: 'Syne', sans-serif;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--mono);
+      overflow: hidden;
+      height: 100vh;
+      width: 100vw;
+    }
+
+    #app {
+      display: grid;
+      grid-template-columns: 1fr 320px;
+      grid-template-rows: 48px 1fr;
+      height: 100vh;
+      width: 100vw;
+    }
+
+    /* ── Top Bar ── */
+    #topbar {
+      grid-column: 1 / -1;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 0 16px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      z-index: 10;
+    }
+
+    .logo {
+      font-family: var(--sans);
+      font-weight: 800;
+      font-size: 15px;
+      letter-spacing: -0.02em;
+      color: var(--accent);
+      margin-right: 8px;
+    }
+    .logo span { color: var(--muted); }
+
+    .topbar-sep { width: 1px; height: 20px; background: var(--border); margin: 0 4px; }
+
+    .stats-pill {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      padding: 4px 12px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      font-size: 11px;
+      color: var(--muted);
+    }
+    .stats-pill .val { color: var(--accent); font-weight: 500; }
+    .stats-pill .fps-val { color: var(--success); }
+    .stats-pill .fps-val.warn { color: var(--accent2); }
+    .stats-pill .fps-val.bad { color: var(--danger); }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 12px;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      background: var(--surface2);
+      color: var(--text);
+      font-family: var(--mono);
+      font-size: 11px;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: all 0.15s;
+      user-select: none;
+    }
+    .btn:hover { border-color: var(--accent); color: var(--accent); }
+    .btn:active { transform: scale(0.97); }
+    .btn.active { border-color: var(--accent); background: rgba(0,229,255,0.08); color: var(--accent); }
+    .btn.danger { border-color: var(--danger); color: var(--danger); }
+    .btn.danger:hover { background: rgba(255,68,85,0.1); }
+    .btn.primary { border-color: var(--accent2); color: var(--accent2); }
+    .btn.primary:hover { background: rgba(255,107,53,0.12); }
+    .btn:disabled { opacity: 0.35; cursor: not-allowed; pointer-events: none; }
+
+    .spacer { flex: 1; }
+
+    /* ── Canvas Area ── */
+    #canvas-container {
+      position: relative;
+      overflow: hidden;
+      background: var(--bg);
+    }
+
+    #splat-canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+
+    /* ── Loading overlay ── */
+    #loading-overlay {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 20px;
+      background: var(--bg);
+      z-index: 20;
+      transition: opacity 0.5s;
+    }
+    #loading-overlay.hidden { opacity: 0; pointer-events: none; }
+
+    .loading-title {
+      font-family: var(--sans);
+      font-size: 22px;
+      font-weight: 600;
+      color: var(--accent);
+      letter-spacing: -0.02em;
+    }
+
+    .progress-track {
+      width: 320px;
+      height: 2px;
+      background: var(--surface2);
+      border-radius: 1px;
+      overflow: hidden;
+    }
+    .progress-fill {
+      height: 100%;
+      background: var(--accent);
+      border-radius: 1px;
+      transition: width 0.2s;
+      box-shadow: 0 0 8px var(--accent);
+    }
+    .progress-label { font-size: 11px; color: var(--muted); }
+
+    /* ── Walk mode indicator ── */
+    #walkmode-hud {
+      position: absolute;
+      top: 12px;
+      left: 50%;
+      transform: translateX(-50%);
+      padding: 6px 14px;
+      background: rgba(0,229,255,0.12);
+      border: 1px solid var(--accent);
+      border-radius: 4px;
+      font-size: 11px;
+      color: var(--accent);
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.2s;
+    }
+    #walkmode-hud.visible { opacity: 1; }
+
+    /* ── Export progress overlay ── */
+    #export-overlay {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      background: rgba(8,10,14,0.88);
+      backdrop-filter: blur(4px);
+      z-index: 30;
+      display: none;
+    }
+    #export-overlay.visible { display: flex; }
+    .export-title { font-family: var(--sans); font-size: 18px; font-weight: 600; }
+    .export-status { font-size: 11px; color: var(--muted); min-width: 280px; text-align: center; }
+
+    /* ── Right Panel ── */
+    #panel {
+      display: flex;
+      flex-direction: column;
+      background: var(--surface);
+      border-left: 1px solid var(--border);
+      overflow: hidden;
+    }
+
+    .panel-section {
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .section-label {
+      font-size: 9px;
+      font-weight: 500;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 10px;
+    }
+
+    /* ── Scene Source ── */
+    .source-toggle {
+      display: flex;
+      gap: 4px;
+      margin-bottom: 10px;
+    }
+    .source-tab {
+      flex: 1;
+      padding: 5px;
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      background: transparent;
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: 10px;
+      cursor: pointer;
+      text-align: center;
+      transition: all 0.15s;
+    }
+    .source-tab.active { border-color: var(--accent); color: var(--accent); background: rgba(0,229,255,0.06); }
+
+    .url-input {
+      width: 100%;
+      padding: 7px 10px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      color: var(--text);
+      font-family: var(--mono);
+      font-size: 11px;
+      margin-bottom: 8px;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    .url-input:focus { border-color: var(--accent); }
+    .url-input::placeholder { color: var(--muted); }
+
+    .preset-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 4px;
+      margin-bottom: 8px;
+    }
+    .preset-btn {
+      padding: 6px 8px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: 10px;
+      cursor: pointer;
+      text-align: left;
+      transition: all 0.15s;
+      line-height: 1.4;
+    }
+    .preset-btn:hover { border-color: var(--accent); color: var(--text); }
+    .preset-btn .preset-name { color: var(--text); font-size: 10px; display: block; }
+    .preset-btn .preset-size { color: var(--muted); font-size: 9px; }
+
+    /* ── Keyframe list ── */
+    #keyframe-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 8px;
+      min-height: 0;
+      scrollbar-width: thin;
+      scrollbar-color: var(--surface2) transparent;
+    }
+
+    .kf-empty {
+      text-align: center;
+      color: var(--muted);
+      font-size: 11px;
+      padding: 24px 0;
+      line-height: 1.8;
+    }
+
+    .kf-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 10px;
+      margin-bottom: 4px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      cursor: pointer;
+      transition: all 0.12s;
+      user-select: none;
+    }
+    .kf-item:hover { border-color: rgba(0,229,255,0.3); }
+    .kf-item.selected { border-color: var(--accent); background: rgba(0,229,255,0.06); }
+    .kf-item.dragging { opacity: 0.4; }
+
+    .kf-index {
+      font-size: 9px;
+      color: var(--muted);
+      min-width: 18px;
+    }
+    .kf-info { flex: 1; }
+    .kf-time { font-size: 10px; color: var(--accent); }
+    .kf-pos { font-size: 9px; color: var(--muted); }
+    .kf-delete {
+      opacity: 0;
+      background: none;
+      border: none;
+      color: var(--danger);
+      font-size: 14px;
+      cursor: pointer;
+      padding: 2px 4px;
+      line-height: 1;
+      border-radius: 2px;
+      transition: opacity 0.15s;
+    }
+    .kf-item:hover .kf-delete { opacity: 1; }
+
+    /* ── Scrubber / timeline ── */
+    .timeline-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 0 16px 12px;
+    }
+    #timeline-scrubber {
+      flex: 1;
+      -webkit-appearance: none;
+      appearance: none;
+      height: 3px;
+      background: var(--surface2);
+      border-radius: 2px;
+      outline: none;
+      cursor: pointer;
+    }
+    #timeline-scrubber::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 12px; height: 12px;
+      background: var(--accent);
+      border-radius: 50%;
+      cursor: pointer;
+      box-shadow: 0 0 6px var(--accent);
+    }
+    .scrubber-time { font-size: 10px; color: var(--muted); min-width: 36px; }
+
+    /* ── Export section ── */
+    .export-settings {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px;
+      margin-bottom: 10px;
+    }
+    .setting-group label {
+      display: block;
+      font-size: 9px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 4px;
+    }
+    .setting-group select,
+    .setting-group input[type="number"] {
+      width: 100%;
+      padding: 5px 8px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      color: var(--text);
+      font-family: var(--mono);
+      font-size: 11px;
+      outline: none;
+    }
+    .setting-group select:focus,
+    .setting-group input:focus { border-color: var(--accent); }
+
+    /* ── Path presets ── */
+    .path-preset-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 4px;
+    }
+
+    /* ── Scrollbar ── */
+    ::-webkit-scrollbar { width: 4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--surface2); border-radius: 2px; }
+  </style>
+</head>
+<body>
+  <div id="app">
+
+    <!-- Top bar -->
+    <header id="topbar">
+      <div class="logo">GSPLAT<span>.viewer</span></div>
+      <div class="topbar-sep"></div>
+      <div class="stats-pill">
+        <span>FPS <span class="val fps-val" id="stat-fps">--</span></span>
+        <span>·</span>
+        <span>Gaussians <span class="val" id="stat-count">--</span></span>
+        <span>·</span>
+        <span id="stat-scene" style="color:var(--muted)">no scene</span>
+      </div>
+      <div class="spacer"></div>
+      <button class="btn" id="btn-frame-scene" disabled>⊡ Frame Scene</button>
+      <button class="btn" id="btn-reset-view" disabled>↺ Reset View</button>
+      <div class="topbar-sep"></div>
+      <button class="btn" id="btn-walk-mode" disabled>⬡ Walk Mode</button>
+    </header>
+
+    <!-- Canvas area -->
+    <div id="canvas-container">
+      <canvas id="splat-canvas"></canvas>
+
+      <!-- Loading overlay -->
+      <div id="loading-overlay">
+        <div class="loading-title">Gaussian Splat Viewer</div>
+        <div class="progress-track">
+          <div class="progress-fill" id="progress-fill" style="width:0%"></div>
+        </div>
+        <div class="progress-label" id="progress-label">load a scene to begin</div>
+      </div>
+
+      <!-- Walk mode HUD -->
+      <div id="walkmode-hud">WALK MODE · WASD move · Mouse look · ESC exit</div>
+
+      <!-- Export overlay -->
+      <div id="export-overlay">
+        <div class="export-title">Rendering Frames…</div>
+        <div class="progress-track" style="width:320px">
+          <div class="progress-fill" id="export-progress-fill" style="width:0%"></div>
+        </div>
+        <div class="export-status" id="export-status">Preparing…</div>
+        <button class="btn danger" id="btn-cancel-export">✕ Cancel</button>
+      </div>
+    </div>
+
+    <!-- Right panel -->
+    <aside id="panel">
+
+      <!-- Scene source -->
+      <div class="panel-section">
+        <div class="section-label">Scene Source</div>
+        <div class="source-toggle">
+          <button class="source-tab active" data-tab="url">URL / Path</button>
+          <button class="source-tab" data-tab="presets">Presets</button>
+        </div>
+
+        <div id="tab-url">
+          <input class="url-input" id="scene-url-input" type="text"
+            placeholder="https://… or /path/to/scene.ply" />
+          <button class="btn" id="btn-load-scene" style="width:100%">▶ Load Scene</button>
+        </div>
+
+        <div id="tab-presets" style="display:none">
+          <div class="preset-grid" id="preset-grid">
+            <!-- Filled by JS -->
+          </div>
+        </div>
+      </div>
+
+      <!-- Camera path recording -->
+      <div class="panel-section">
+        <div class="section-label">Camera Path</div>
+        <div style="display:flex;gap:4px;margin-bottom:8px">
+          <button class="btn" id="btn-add-kf" disabled style="flex:1">+ Add Keyframe</button>
+          <button class="btn" id="btn-clear-kfs" disabled>✕ Clear</button>
+        </div>
+        <div style="display:flex;gap:4px;margin-bottom:8px">
+          <button class="btn" id="btn-preview" disabled style="flex:1">▶ Preview</button>
+          <button class="btn" id="btn-save-path" disabled>⬇ Save</button>
+          <button class="btn" id="btn-load-path">⬆ Load</button>
+        </div>
+        <input type="file" id="path-file-input" accept=".json" style="display:none" />
+      </div>
+
+      <!-- Cinematic path presets -->
+      <div class="panel-section">
+        <div class="section-label">Cinematic Presets</div>
+        <div class="path-preset-grid">
+          <button class="btn" id="preset-turntable" disabled>⟳ Turntable</button>
+          <button class="btn" id="preset-dolly" disabled>→ Dolly In</button>
+          <button class="btn" id="preset-crane" disabled>↑ Crane Up</button>
+          <button class="btn" id="preset-figure8" disabled>∞ Figure-8</button>
+        </div>
+      </div>
+
+      <!-- Keyframe list -->
+      <div id="keyframe-list">
+        <div class="kf-empty" id="kf-empty">
+          No keyframes yet.<br/>
+          Navigate to a view, then<br/>
+          click <strong>Add Keyframe</strong>.
+        </div>
+      </div>
+
+      <!-- Timeline scrubber -->
+      <div class="timeline-row">
+        <span class="scrubber-time" id="scrubber-time-left">0.0s</span>
+        <input type="range" id="timeline-scrubber" min="0" max="1000" value="0" disabled />
+        <span class="scrubber-time" id="scrubber-time-right">0.0s</span>
+      </div>
+
+      <!-- Export -->
+      <div class="panel-section" style="border-bottom:none">
+        <div class="section-label">Export MP4</div>
+        <div class="export-settings">
+          <div class="setting-group">
+            <label>Resolution</label>
+            <select id="export-resolution">
+              <option value="1280x720">1280×720</option>
+              <option value="1920x1080">1920×1080</option>
+              <option value="854x480">854×480</option>
+            </select>
+          </div>
+          <div class="setting-group">
+            <label>FPS</label>
+            <select id="export-fps">
+              <option value="30">30 fps</option>
+              <option value="60">60 fps</option>
+              <option value="24">24 fps</option>
+            </select>
+          </div>
+          <div class="setting-group">
+            <label>Duration (s)</label>
+            <input type="number" id="export-duration" value="10" min="1" max="300" />
+          </div>
+          <div class="setting-group">
+            <label>Quality</label>
+            <select id="export-quality">
+              <option value="high">High (CRF 18)</option>
+              <option value="med">Medium (CRF 23)</option>
+              <option value="draft">Draft (CRF 30)</option>
+            </select>
+          </div>
+        </div>
+        <button class="btn primary" id="btn-export" disabled style="width:100%">
+          ⬛ Export MP4
+        </button>
+      </div>
+
+    </aside>
+  </div>
+
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>
