@@ -6,6 +6,7 @@ declare module '@mkkellogg/gaussian-splats-3d' {
     initialCameraPosition?: [number, number, number];
     initialCameraLookAt?: [number, number, number];
     selfDrivenMode?: boolean;
+    useBuiltInControls?: boolean;
     gpuAcceleratedSort?: boolean;
     sharedMemoryForWorkers?: boolean;
     enableSIMDInSort?: boolean;

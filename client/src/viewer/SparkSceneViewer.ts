@@ -8,6 +8,13 @@ import {
 import { detectSceneFormat } from '../lib/sceneFormat';
 import type { InterpolatedPose, ViewerDebugSnapshot } from '../types';
 import { applyAdaptiveCameraFrustum } from './adaptiveCameraFrustum';
+import {
+  createViewerOrbitControls,
+  setOrbitControlsNavigationMode,
+  syncOrbitControlsTargetFromCamera,
+  updateOrbitControls,
+  type NavigationMode,
+} from './orbitControls';
 import type { ViewerAdapter, ViewerAdapterOptions } from './ViewerAdapter';
 
 const SPARK_VIEW_OPTIONS = {
@@ -36,6 +43,7 @@ export class SparkSceneViewer implements ViewerAdapter {
   private fpsSamples: number[] = [];
   private animationFrameId: number | null = null;
   private frameHook: (() => void) | null = null;
+  private navigationMode: NavigationMode = 'orbit';
 
   constructor(options: ViewerAdapterOptions) {
     this.hostElement = options.hostElement;
@@ -63,10 +71,7 @@ export class SparkSceneViewer implements ViewerAdapter {
 
     this.hostElement.replaceChildren(this.renderer.domElement);
 
-    this.controls = new OrbitControls(this.camera, this.renderer.domElement);
-    this.controls.enableDamping = true;
-    this.controls.target.set(0, 0, 0);
-    this.controls.update();
+    this.controls = createViewerOrbitControls(this.camera, this.renderer.domElement);
 
     this.resize(this.hostElement.clientWidth, this.hostElement.clientHeight);
     this.startRenderLoop();
@@ -149,10 +154,8 @@ export class SparkSceneViewer implements ViewerAdapter {
   }
 
   setNavigationMode(mode: 'orbit' | 'walk'): void {
-    if (this.controls) {
-      this.controls.enabled = mode === 'orbit';
-      this.controls.update();
-    }
+    this.navigationMode = mode;
+    setOrbitControlsNavigationMode(this.controls, mode);
   }
 
   syncOrbitTargetFromCamera(distance?: number): void {
@@ -160,16 +163,13 @@ export class SparkSceneViewer implements ViewerAdapter {
       return;
     }
 
-    const currentDistance = this.controls.target.distanceTo(this.camera.position);
-    const targetDistance = distance ?? (currentDistance > 0 ? currentDistance : 1);
-    const lookDirection = new THREE.Vector3(0, 0, -1).applyQuaternion(this.camera.quaternion);
-    this.controls.target.copy(this.camera.position).addScaledVector(lookDirection, targetDistance);
-    this.controls.update();
+    syncOrbitControlsTargetFromCamera(this.camera, this.controls, distance);
+    updateOrbitControls(this.controls, 'orbit');
   }
 
   renderNow(): void {
     this.frameHook?.();
-    this.controls?.update();
+    updateOrbitControls(this.controls, this.navigationMode);
     this.syncCameraProjection();
     if (this.scene && this.camera) {
       this.renderer?.render(this.scene, this.camera);
@@ -341,7 +341,7 @@ export class SparkSceneViewer implements ViewerAdapter {
       }
 
       this.frameHook?.();
-      this.controls?.update();
+      updateOrbitControls(this.controls, this.navigationMode);
       this.syncCameraProjection();
       if (this.scene && this.camera) {
         this.renderer?.render(this.scene, this.camera);

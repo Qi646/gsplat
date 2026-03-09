@@ -63,16 +63,25 @@ vi.mock('three/examples/jsm/controls/OrbitControls.js', async () => {
   class MockOrbitControls {
     target = new THREE.Vector3();
     enableDamping = false;
+    dampingFactor = 0;
+    rotateSpeed = 1;
     enabled = true;
+    camera: THREE.PerspectiveCamera;
+    updateCount = 0;
 
     constructor(
-      _camera: THREE.PerspectiveCamera,
+      camera: THREE.PerspectiveCamera,
       _domElement: HTMLCanvasElement,
-    ) {}
+    ) {
+      this.camera = camera;
+    }
 
     dispose(): void {}
 
-    update(): void {}
+    update(): void {
+      this.updateCount += 1;
+      this.camera.lookAt(this.target);
+    }
   }
 
   return { OrbitControls: MockOrbitControls };
@@ -307,6 +316,37 @@ describe('SparkSceneViewer', () => {
 
     viewer.setNavigationMode('orbit');
     expect(controls.enabled).toBe(true);
+  });
+
+  it('preserves the camera heading during walk-mode renders', async () => {
+    const events = new AppEvents();
+    const hostElement = {
+      clientHeight: 600,
+      clientWidth: 800,
+      replaceChildren: vi.fn(),
+    } as unknown as HTMLDivElement;
+    const viewer = new SparkSceneViewer({ hostElement, events });
+
+    await viewer.init();
+
+    const camera = viewer.getCamera();
+    const controls = (viewer as unknown as {
+      controls: { target: THREE.Vector3; updateCount: number };
+    }).controls;
+
+    controls.target.set(0, 0, 0);
+    camera?.position.set(1, 2, 3);
+    camera?.lookAt(new THREE.Vector3(6, 2, 3));
+    const before = camera?.quaternion.clone();
+
+    viewer.setNavigationMode('walk');
+    viewer.renderNow();
+
+    expect(controls.updateCount).toBe(1);
+    expect(camera?.quaternion.x).toBeCloseTo(before?.x ?? 0);
+    expect(camera?.quaternion.y).toBeCloseTo(before?.y ?? 0);
+    expect(camera?.quaternion.z).toBeCloseTo(before?.z ?? 0);
+    expect(camera?.quaternion.w).toBeCloseTo(before?.w ?? 1);
   });
 
   it('loads scenes through Spark with renderer-aware debug info', async () => {

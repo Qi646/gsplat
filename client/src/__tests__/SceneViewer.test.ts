@@ -1,6 +1,33 @@
 import * as THREE from 'three';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+vi.mock('three/examples/jsm/controls/OrbitControls.js', async () => {
+  const THREE = await import('three');
+
+  class MockOrbitControls {
+    target = new THREE.Vector3();
+    enableDamping = false;
+    dampingFactor = 0;
+    rotateSpeed = 1;
+    enabled = true;
+    camera: THREE.PerspectiveCamera;
+    updateCount = 0;
+
+    constructor(camera: THREE.PerspectiveCamera, _domElement: HTMLCanvasElement) {
+      this.camera = camera;
+    }
+
+    dispose(): void {}
+
+    update(): void {
+      this.updateCount += 1;
+      this.camera.lookAt(this.target);
+    }
+  }
+
+  return { OrbitControls: MockOrbitControls };
+});
+
 vi.mock('@mkkellogg/gaussian-splats-3d', async () => {
   const THREE = await import('three');
 
@@ -62,12 +89,6 @@ vi.mock('@mkkellogg/gaussian-splats-3d', async () => {
       setSize() {},
     } as unknown as THREE.WebGLRenderer;
     camera = new THREE.PerspectiveCamera(60, 1, 0.1, 1000);
-    controls = {
-      enabled: true,
-      target: new THREE.Vector3(),
-      update() {},
-    };
-
     constructor(options: Record<string, unknown>) {
       state.viewerOptions = options;
     }
@@ -203,6 +224,7 @@ describe('SceneViewer', () => {
 
     expect(mockModule.__mockState.viewerOptions?.['rootElement']).toBe(hostElement);
     expect(mockModule.__mockState.viewerOptions?.['canvas']).toBeUndefined();
+    expect(mockModule.__mockState.viewerOptions?.['useBuiltInControls']).toBe(false);
     expect(mockModule.__mockState.viewerOptions?.['gpuAcceleratedSort']).toBe(false);
     expect(mockModule.__mockState.viewerOptions?.['sharedMemoryForWorkers']).toBe(false);
     expect(mockModule.__mockState.viewerOptions?.['integerBasedSort']).toBe(false);
@@ -233,25 +255,52 @@ describe('SceneViewer', () => {
 
     await viewer.init();
 
-    const internalViewer = (viewer as unknown as {
+    const controls = (viewer as unknown as {
       camera: THREE.PerspectiveCamera;
-      viewer: { controls: { enabled: boolean; target: THREE.Vector3 } };
-    }).viewer;
+      controls: { enabled: boolean; target: THREE.Vector3 };
+    }).controls;
 
-    internalViewer.controls.target.set(1, 2, -2);
+    controls.target.set(1, 2, -2);
     viewer.getCamera()?.position.set(1, 2, 3);
     viewer.getCamera()?.lookAt(new THREE.Vector3(6, 2, 3));
 
     viewer.setNavigationMode('walk');
-    expect(internalViewer.controls.enabled).toBe(false);
+    expect(controls.enabled).toBe(false);
 
     viewer.syncOrbitTargetFromCamera();
-    expect(internalViewer.controls.target.x).toBeCloseTo(6);
-    expect(internalViewer.controls.target.y).toBeCloseTo(2);
-    expect(internalViewer.controls.target.z).toBeCloseTo(3);
+    expect(controls.target.x).toBeCloseTo(6);
+    expect(controls.target.y).toBeCloseTo(2);
+    expect(controls.target.z).toBeCloseTo(3);
 
     viewer.setNavigationMode('orbit');
-    expect(internalViewer.controls.enabled).toBe(true);
+    expect(controls.enabled).toBe(true);
+  });
+
+  it('preserves the camera heading during walk-mode renders', async () => {
+    const events = new AppEvents();
+    const hostElement = {} as HTMLDivElement;
+    const viewer = new SceneViewer({ hostElement, events });
+
+    await viewer.init();
+
+    const camera = viewer.getCamera();
+    const controls = (viewer as unknown as {
+      controls: { target: THREE.Vector3; updateCount: number };
+    }).controls;
+
+    controls.target.set(0, 0, 0);
+    camera?.position.set(1, 2, 3);
+    camera?.lookAt(new THREE.Vector3(6, 2, 3));
+    const before = camera?.quaternion.clone();
+
+    viewer.setNavigationMode('walk');
+    viewer.renderNow();
+
+    expect(controls.updateCount).toBe(1);
+    expect(camera?.quaternion.x).toBeCloseTo(before?.x ?? 0);
+    expect(camera?.quaternion.y).toBeCloseTo(before?.y ?? 0);
+    expect(camera?.quaternion.z).toBeCloseTo(before?.z ?? 0);
+    expect(camera?.quaternion.w).toBeCloseTo(before?.w ?? 1);
   });
 
   it('surfaces the active runtime viewer options in the debug snapshot', async () => {

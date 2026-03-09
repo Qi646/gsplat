@@ -1,10 +1,18 @@
 import * as GaussianSplats3D from '@mkkellogg/gaussian-splats-3d';
 import * as THREE from 'three';
+import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { formatLoadProgress } from '../lib/loadProgress';
 import { computeRobustSceneBounds } from '../lib/robustSceneBounds';
 import type { AppEvents, InterpolatedPose, ViewerDebugSnapshot } from '../types';
 import { detectSceneFormat } from '../lib/sceneFormat';
 import { applyAdaptiveCameraFrustum } from './adaptiveCameraFrustum';
+import {
+  createViewerOrbitControls,
+  setOrbitControlsNavigationMode,
+  syncOrbitControlsTargetFromCamera,
+  updateOrbitControls,
+  type NavigationMode,
+} from './orbitControls';
 import { resolveViewerRuntimeConfig, type ViewerRuntimeOverrides, type ViewerRuntimeOptions } from './viewerRuntime';
 import type { ViewerAdapter, ViewerAdapterOptions } from './ViewerAdapter';
 
@@ -17,16 +25,19 @@ export class SceneViewer implements ViewerAdapter {
   private viewer: GaussianSplats3D.Viewer | null = null;
   private renderer: THREE.WebGLRenderer | null = null;
   private camera: THREE.PerspectiveCamera | null = null;
+  private controls: OrbitControls | null = null;
   private sceneBounds = new THREE.Box3();
   private sceneLoaded = false;
   private splatCount = 0;
   private initialPosition = new THREE.Vector3();
+  private initialTarget = new THREE.Vector3();
   private initialQuaternion = new THREE.Quaternion();
   private initialFov = 60;
   private lastFrameTime = performance.now();
   private fpsSamples: number[] = [];
   private animationFrameId: number | null = null;
   private frameHook: (() => void) | null = null;
+  private navigationMode: NavigationMode = 'orbit';
   private compatibilityMode = false;
   private compatibilityStatusMessage: string | null = null;
   private runtimeViewerOptions: ViewerRuntimeOptions = {
@@ -57,6 +68,7 @@ export class SceneViewer implements ViewerAdapter {
       initialCameraPosition: [0, 0, 3],
       initialCameraLookAt: [0, 0, 0],
       selfDrivenMode: false,
+      useBuiltInControls: false,
       ...runtimeConfig.viewerOptions,
     });
 
@@ -69,6 +81,7 @@ export class SceneViewer implements ViewerAdapter {
       throw new Error('Viewer initialization did not expose a renderer and camera.');
     }
 
+    this.controls = createViewerOrbitControls(this.camera, this.renderer.domElement);
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     this.startRenderLoop();
   }
@@ -137,10 +150,8 @@ export class SceneViewer implements ViewerAdapter {
   }
 
   setNavigationMode(mode: 'orbit' | 'walk'): void {
-    if (this.viewer?.controls) {
-      this.viewer.controls.enabled = mode === 'orbit';
-      this.viewer.controls.update?.();
-    }
+    this.navigationMode = mode;
+    setOrbitControlsNavigationMode(this.controls, mode);
   }
 
   syncOrbitTargetFromCamera(distance?: number): void {
@@ -148,20 +159,13 @@ export class SceneViewer implements ViewerAdapter {
       return;
     }
 
-    const target = this.viewer?.controls?.target;
-    if (!target) {
-      return;
-    }
-
-    const currentDistance = target.distanceTo(this.camera.position);
-    const targetDistance = distance ?? (currentDistance > 0 ? currentDistance : 1);
-    const lookDirection = new THREE.Vector3(0, 0, -1).applyQuaternion(this.camera.quaternion);
-    target.copy(this.camera.position).addScaledVector(lookDirection, targetDistance);
-    this.viewer?.controls?.update?.();
+    syncOrbitControlsTargetFromCamera(this.camera, this.controls, distance);
+    updateOrbitControls(this.controls, 'orbit');
   }
 
   renderNow(): void {
     this.frameHook?.();
+    updateOrbitControls(this.controls, this.navigationMode);
     this.viewer?.update();
     this.syncCameraProjection();
     this.viewer?.render();
@@ -177,7 +181,7 @@ export class SceneViewer implements ViewerAdapter {
   }
 
   frameScene(): boolean {
-    if (!this.camera || !this.hasUsableSceneBounds()) {
+    if (!this.camera || !this.controls || !this.hasUsableSceneBounds()) {
       return false;
     }
 
@@ -192,45 +196,40 @@ export class SceneViewer implements ViewerAdapter {
     const targetPosition = center.clone().add(new THREE.Vector3(0, radius * 0.3, distance));
 
     this.camera.position.copy(targetPosition);
+    this.controls.target.copy(center);
     this.camera.lookAt(center);
     this.syncCameraProjection(true);
-    this.viewer?.controls?.target?.copy(center);
-    this.viewer?.controls?.update?.();
+    updateOrbitControls(this.controls, 'orbit');
     return true;
   }
 
   resetView(): void {
-    if (!this.camera) {
+    if (!this.camera || !this.controls) {
       return;
     }
 
     this.camera.position.copy(this.initialPosition);
     this.camera.quaternion.copy(this.initialQuaternion);
     this.camera.fov = this.initialFov;
+    this.controls.target.copy(this.initialTarget);
     this.syncCameraProjection(true);
-    this.viewer?.controls?.update?.();
+    updateOrbitControls(this.controls, 'orbit');
   }
 
   applyCameraPose(pose: InterpolatedPose): void {
-    if (!this.camera) {
+    if (!this.camera || !this.controls) {
       return;
     }
 
-    const currentTarget = this.viewer?.controls?.target as THREE.Vector3 | undefined;
-    const distanceToTarget = currentTarget ? currentTarget.distanceTo(this.camera.position) : 1;
+    const distanceToTarget = this.controls.target.distanceTo(this.camera.position);
 
     this.camera.position.copy(pose.position);
     this.camera.quaternion.copy(pose.quaternion);
     this.camera.fov = pose.fov;
     this.syncCameraProjection(true);
 
-    if (currentTarget) {
-      const lookDirection = new THREE.Vector3(0, 0, -1).applyQuaternion(this.camera.quaternion);
-      const targetDistance = distanceToTarget > 0 ? distanceToTarget : 1;
-      currentTarget.copy(this.camera.position).addScaledVector(lookDirection, targetDistance);
-    }
-
-    this.viewer?.controls?.update?.();
+    syncOrbitControlsTargetFromCamera(this.camera, this.controls, distanceToTarget);
+    updateOrbitControls(this.controls, 'orbit');
   }
 
   getCamera(): THREE.PerspectiveCamera | null {
@@ -312,6 +311,7 @@ export class SceneViewer implements ViewerAdapter {
     if (this.animationFrameId !== null) {
       cancelAnimationFrame(this.animationFrameId);
     }
+    this.controls?.dispose();
     this.viewer?.dispose?.();
   }
 
@@ -339,6 +339,7 @@ export class SceneViewer implements ViewerAdapter {
       }
 
       this.frameHook?.();
+      updateOrbitControls(this.controls, this.navigationMode);
       this.viewer?.update();
       this.syncCameraProjection();
       this.viewer?.render();
@@ -383,6 +384,7 @@ export class SceneViewer implements ViewerAdapter {
     this.splatCount = 0;
     this.sceneBounds.makeEmpty();
     this.initialPosition.set(0, 0, 0);
+    this.initialTarget.set(0, 0, 0);
     this.initialQuaternion.identity();
     this.initialFov = 60;
   }
@@ -402,11 +404,12 @@ export class SceneViewer implements ViewerAdapter {
   }
 
   private saveInitialCamera(): void {
-    if (!this.camera) {
+    if (!this.camera || !this.controls) {
       return;
     }
 
     this.initialPosition.copy(this.camera.position);
+    this.initialTarget.copy(this.controls.target);
     this.initialQuaternion.copy(this.camera.quaternion);
     this.initialFov = this.camera.fov;
   }
