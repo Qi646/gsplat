@@ -1,6 +1,5 @@
 import * as GaussianSplats3D from '@mkkellogg/gaussian-splats-3d';
 import * as THREE from 'three';
-import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { formatLoadProgress } from '../lib/loadProgress';
 import { computeRobustSceneBounds } from '../lib/robustSceneBounds';
 import type { AppEvents, InterpolatedPose, ViewerDebugSnapshot } from '../types';
@@ -8,16 +7,16 @@ import { detectSceneFormat } from '../lib/sceneFormat';
 import { applyAdaptiveCameraFrustum } from './adaptiveCameraFrustum';
 import {
   createViewerOrbitControls,
+  resizeViewerOrbitControls,
   resumeOrbitControlsFromCamera,
   setOrbitControlsNavigationMode,
   syncOrbitControlsTargetFromCamera,
   updateOrbitControls,
   type NavigationMode,
+  type ViewerCameraControls,
 } from './orbitControls';
 import { resolveViewerRuntimeConfig, type ViewerRuntimeOverrides, type ViewerRuntimeOptions } from './viewerRuntime';
 import type { ViewerAdapter, ViewerAdapterOptions } from './ViewerAdapter';
-
-const DEFAULT_SCENE_ROTATION: [number, number, number, number] = [1, 0, 0, 0];
 
 export class SceneViewer implements ViewerAdapter {
   private hostElement: HTMLElement;
@@ -26,12 +25,13 @@ export class SceneViewer implements ViewerAdapter {
   private viewer: GaussianSplats3D.Viewer | null = null;
   private renderer: THREE.WebGLRenderer | null = null;
   private camera: THREE.PerspectiveCamera | null = null;
-  private controls: OrbitControls | null = null;
+  private controls: ViewerCameraControls | null = null;
   private sceneBounds = new THREE.Box3();
   private sceneLoaded = false;
   private splatCount = 0;
   private initialPosition = new THREE.Vector3();
   private initialTarget = new THREE.Vector3();
+  private initialUp = new THREE.Vector3(0, 1, 0);
   private initialQuaternion = new THREE.Quaternion();
   private initialFov = 60;
   private lastFrameTime = performance.now();
@@ -100,7 +100,6 @@ export class SceneViewer implements ViewerAdapter {
 
       await this.viewer.addSplatScene(url, {
         format: this.toSceneFormat(detectSceneFormat(url)),
-        rotation: DEFAULT_SCENE_ROTATION,
         showLoadingUI: false,
         onProgress: (percent: number, progressLabel: string, stage: number) => {
           this.events.emit('scene:progress', formatLoadProgress(percent, progressLabel, stage));
@@ -143,6 +142,7 @@ export class SceneViewer implements ViewerAdapter {
 
     this.renderer.setSize(width, height, false);
     this.camera.aspect = width / Math.max(height, 1);
+    resizeViewerOrbitControls(this.controls);
     this.syncCameraProjection(true);
   }
 
@@ -197,8 +197,8 @@ export class SceneViewer implements ViewerAdapter {
     const targetPosition = center.clone().add(new THREE.Vector3(0, radius * 0.3, distance));
 
     this.camera.position.copy(targetPosition);
+    this.camera.up.set(0, 1, 0);
     this.controls.target.copy(center);
-    this.camera.lookAt(center);
     this.syncCameraProjection(true);
     updateOrbitControls(this.controls, 'orbit');
     return true;
@@ -210,6 +210,7 @@ export class SceneViewer implements ViewerAdapter {
     }
 
     this.camera.position.copy(this.initialPosition);
+    this.camera.up.copy(this.initialUp);
     this.camera.quaternion.copy(this.initialQuaternion);
     this.camera.fov = this.initialFov;
     this.controls.target.copy(this.initialTarget);
@@ -386,6 +387,7 @@ export class SceneViewer implements ViewerAdapter {
     this.sceneBounds.makeEmpty();
     this.initialPosition.set(0, 0, 0);
     this.initialTarget.set(0, 0, 0);
+    this.initialUp.set(0, 1, 0);
     this.initialQuaternion.identity();
     this.initialFov = 60;
   }
@@ -411,6 +413,7 @@ export class SceneViewer implements ViewerAdapter {
 
     this.initialPosition.copy(this.camera.position);
     this.initialTarget.copy(this.controls.target);
+    this.initialUp.copy(this.camera.up);
     this.initialQuaternion.copy(this.camera.quaternion);
     this.initialFov = this.camera.fov;
   }

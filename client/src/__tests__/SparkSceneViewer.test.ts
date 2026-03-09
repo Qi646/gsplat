@@ -57,16 +57,15 @@ vi.mock('three', async () => {
   };
 });
 
-vi.mock('three/examples/jsm/controls/OrbitControls.js', async () => {
+vi.mock('three/examples/jsm/controls/TrackballControls.js', async () => {
   const THREE = await import('three');
 
-  class MockOrbitControls {
+  class MockTrackballControls {
     target = new THREE.Vector3();
-    enableDamping = false;
-    dampingFactor = 0;
-    rotateSpeed = 1;
+    dynamicDampingFactor = 0;
     enabled = true;
     camera: THREE.PerspectiveCamera;
+    handleResizeCount = 0;
     updateCount = 0;
 
     constructor(
@@ -78,13 +77,17 @@ vi.mock('three/examples/jsm/controls/OrbitControls.js', async () => {
 
     dispose(): void {}
 
+    handleResize(): void {
+      this.handleResizeCount += 1;
+    }
+
     update(): void {
       this.updateCount += 1;
       this.camera.lookAt(this.target);
     }
   }
 
-  return { OrbitControls: MockOrbitControls };
+  return { TrackballControls: MockTrackballControls };
 });
 
 vi.mock('@sparkjsdev/spark', async () => {
@@ -94,6 +97,7 @@ vi.mock('@sparkjsdev/spark', async () => {
     boundsMax: [1, 1, 1] as [number, number, number],
     boundsMin: [-1, -1, -1] as [number, number, number],
     fileType: null as string | null,
+    lastParsedMesh: null as MockSplatMesh | null,
     loadCalls: [] as string[],
     samples: [] as Array<{ center: [number, number, number]; opacity: number }>,
     sparkRendererOptions: null as Record<string, unknown> | null,
@@ -156,7 +160,9 @@ vi.mock('@sparkjsdev/spark', async () => {
     }
 
     parse(): MockSplatMesh {
-      return new MockSplatMesh();
+      const mesh = new MockSplatMesh();
+      state.lastParsedMesh = mesh;
+      return mesh;
     }
   }
 
@@ -182,6 +188,7 @@ type MockSparkModule = typeof Spark & {
     boundsMax: [number, number, number];
     boundsMin: [number, number, number];
     fileType: string | null;
+    lastParsedMesh: THREE.Object3D | null;
     loadCalls: string[];
     samples: Array<{ center: [number, number, number]; opacity: number }>;
     sparkRendererOptions: Record<string, unknown> | null;
@@ -200,6 +207,7 @@ describe('SparkSceneViewer', () => {
     mockModule.__mockState.boundsMin = [-2, -1, -3];
     mockModule.__mockState.boundsMax = [4, 5, 6];
     mockModule.__mockState.fileType = null;
+    mockModule.__mockState.lastParsedMesh = null;
     mockModule.__mockState.loadCalls = [];
     mockModule.__mockState.sparkRendererOptions = null;
     mockModule.__mockState.splatCount = 128;
@@ -286,7 +294,7 @@ describe('SparkSceneViewer', () => {
     await expect(frame.text()).resolves.toBe('spark-frame');
   });
 
-  it('resumes orbit from the live walk pose without changing the camera', async () => {
+  it('resumes camera controls from an inverted walk pose without changing the camera', async () => {
     const events = new AppEvents();
     const hostElement = {
       clientHeight: 600,
@@ -302,11 +310,19 @@ describe('SparkSceneViewer', () => {
       controls: { enabled: boolean; target: THREE.Vector3 };
     }).controls;
 
+    const liveCamera = viewer.getCamera();
+    const walkPoseCamera = new THREE.PerspectiveCamera(60, 1, 0.1, 1000);
+    walkPoseCamera.position.set(1, 2, 3);
+    walkPoseCamera.up.set(0, -1, 0);
+    walkPoseCamera.lookAt(new THREE.Vector3(6, 2, 3));
+
     controls.target.set(1, 2, -2);
-    viewer.getCamera()?.position.set(1, 2, 3);
-    viewer.getCamera()?.lookAt(new THREE.Vector3(6, 2, 3));
+    liveCamera?.position.copy(walkPoseCamera.position);
+    liveCamera?.quaternion.copy(walkPoseCamera.quaternion);
+    liveCamera?.up.set(0, 1, 0);
     const beforePosition = viewer.getCamera()?.position.clone();
     const before = viewer.getCamera()?.quaternion.clone();
+    const beforeUp = walkPoseCamera.up.clone();
 
     viewer.setNavigationMode('walk');
     expect(controls.enabled).toBe(false);
@@ -318,6 +334,7 @@ describe('SparkSceneViewer', () => {
     expect(viewer.getCamera()?.quaternion.y).toBeCloseTo(before?.y ?? 0);
     expect(viewer.getCamera()?.quaternion.z).toBeCloseTo(before?.z ?? 0);
     expect(viewer.getCamera()?.quaternion.w).toBeCloseTo(before?.w ?? 1);
+    expect(viewer.getCamera()?.up.toArray()).toEqual(beforeUp.toArray());
     expect(controls.target.x).toBeCloseTo(6);
     expect(controls.target.y).toBeCloseTo(2);
     expect(controls.target.z).toBeCloseTo(3);
@@ -386,6 +403,21 @@ describe('SparkSceneViewer', () => {
     expect(viewer.getCamera()?.far).toBeGreaterThan(10);
   });
 
+  it('loads scenes without forcing a spark mesh rotation override', async () => {
+    const events = new AppEvents();
+    const hostElement = {
+      clientHeight: 600,
+      clientWidth: 800,
+      replaceChildren: vi.fn(),
+    } as unknown as HTMLDivElement;
+    const viewer = new SparkSceneViewer({ hostElement, events });
+
+    await viewer.init();
+    await viewer.loadScene('/api/presets/truck.ksplat');
+
+    expect(mockModule.__mockState.lastParsedMesh?.quaternion.toArray()).toEqual([0, 0, 0, 1]);
+  });
+
   it('maps cached ply presets to the Spark ply file type', async () => {
     const events = new AppEvents();
     const hostElement = {
@@ -400,6 +432,35 @@ describe('SparkSceneViewer', () => {
 
     expect(mockModule.__mockState.loadCalls).toEqual(['/api/presets/luigi.ply']);
     expect(mockModule.__mockState.fileType).toBe('ply');
+  });
+
+  it('applies inverted camera poses without snapping them upright', async () => {
+    const events = new AppEvents();
+    const hostElement = {
+      clientHeight: 600,
+      clientWidth: 800,
+      replaceChildren: vi.fn(),
+    } as unknown as HTMLDivElement;
+    const viewer = new SparkSceneViewer({ hostElement, events });
+
+    await viewer.init();
+
+    const poseCamera = new THREE.PerspectiveCamera(60, 1, 0.1, 1000);
+    poseCamera.position.set(-3, 1, 4);
+    poseCamera.up.set(0, -1, 0);
+    poseCamera.lookAt(new THREE.Vector3(-1, 1, 4));
+
+    viewer.applyCameraPose({
+      position: poseCamera.position.clone(),
+      quaternion: poseCamera.quaternion.clone(),
+      fov: 45,
+    });
+
+    expect(viewer.getCamera()?.quaternion.x).toBeCloseTo(poseCamera.quaternion.x);
+    expect(viewer.getCamera()?.quaternion.y).toBeCloseTo(poseCamera.quaternion.y);
+    expect(viewer.getCamera()?.quaternion.z).toBeCloseTo(poseCamera.quaternion.z);
+    expect(viewer.getCamera()?.quaternion.w).toBeCloseTo(poseCamera.quaternion.w);
+    expect(viewer.getCamera()?.up.toArray()).toEqual(poseCamera.up.toArray());
   });
 
   it('tightens the Spark camera near plane for close inspection poses', async () => {

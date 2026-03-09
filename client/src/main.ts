@@ -151,7 +151,7 @@ async function main(): Promise<void> {
       }
 
       if (walkState === 'active') {
-        setStatusNote('Walk mode active. Press Esc to return to orbit controls.');
+        setStatusNote('Walk mode active. Press Esc to return to camera controls.');
       }
 
       updatePathControlsState();
@@ -425,7 +425,7 @@ async function main(): Promise<void> {
   ($('#btn-walk-mode') as HTMLButtonElement).addEventListener('click', () => {
     if (walkState !== 'inactive') {
       stopWalkMode();
-      setStatusNote('Walk mode exited. Orbit controls restored.');
+      setStatusNote('Walk mode exited. Camera controls restored.');
       return;
     }
 

@@ -1,6 +1,5 @@
 import * as Spark from '@sparkjsdev/spark';
 import * as THREE from 'three';
-import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import {
   DEFAULT_ROBUST_SCENE_BOUNDS_OPTIONS,
   type RobustSceneBoundsOptions,
@@ -10,10 +9,13 @@ import type { InterpolatedPose, ViewerDebugSnapshot } from '../types';
 import { applyAdaptiveCameraFrustum } from './adaptiveCameraFrustum';
 import {
   createViewerOrbitControls,
+  resizeViewerOrbitControls,
   resumeOrbitControlsFromCamera,
   setOrbitControlsNavigationMode,
+  syncOrbitControlsTargetFromCamera,
   updateOrbitControls,
   type NavigationMode,
+  type ViewerCameraControls,
 } from './orbitControls';
 import type { ViewerAdapter, ViewerAdapterOptions } from './ViewerAdapter';
 
@@ -29,7 +31,7 @@ export class SparkSceneViewer implements ViewerAdapter {
   private scene: THREE.Scene | null = null;
   private renderer: THREE.WebGLRenderer | null = null;
   private camera: THREE.PerspectiveCamera | null = null;
-  private controls: OrbitControls | null = null;
+  private controls: ViewerCameraControls | null = null;
   private sparkRenderer: Spark.SparkRenderer | null = null;
   private splatMesh: Spark.SplatMesh | null = null;
   private readonly sceneBounds = new THREE.Box3();
@@ -37,6 +39,7 @@ export class SparkSceneViewer implements ViewerAdapter {
   private splatCount = 0;
   private initialPosition = new THREE.Vector3();
   private initialTarget = new THREE.Vector3();
+  private initialUp = new THREE.Vector3(0, 1, 0);
   private initialQuaternion = new THREE.Quaternion();
   private initialFov = 60;
   private lastFrameTime = performance.now();
@@ -98,7 +101,6 @@ export class SparkSceneViewer implements ViewerAdapter {
       this.events.emit('scene:progress', { percent: 0, message: 'Processing scene…' });
 
       const splatMesh = loader.parse(packedSplats);
-      splatMesh.quaternion.set(1, 0, 0, 0);
       splatMesh.updateMatrixWorld(true);
       await splatMesh.initialized;
 
@@ -146,6 +148,7 @@ export class SparkSceneViewer implements ViewerAdapter {
 
     this.renderer.setSize(safeWidth, safeHeight, false);
     this.camera.aspect = safeWidth / safeHeight;
+    resizeViewerOrbitControls(this.controls);
     this.syncCameraProjection(true);
   }
 
@@ -201,6 +204,7 @@ export class SparkSceneViewer implements ViewerAdapter {
     const targetPosition = center.clone().add(new THREE.Vector3(0, radius * 0.3, distance));
 
     this.camera.position.copy(targetPosition);
+    this.camera.up.set(0, 1, 0);
     this.controls.target.copy(center);
     this.syncCameraProjection(true);
     this.controls.update();
@@ -213,6 +217,7 @@ export class SparkSceneViewer implements ViewerAdapter {
     }
 
     this.camera.position.copy(this.initialPosition);
+    this.camera.up.copy(this.initialUp);
     this.camera.quaternion.copy(this.initialQuaternion);
     this.camera.fov = this.initialFov;
     this.syncCameraProjection(true);
@@ -231,10 +236,7 @@ export class SparkSceneViewer implements ViewerAdapter {
     this.camera.quaternion.copy(pose.quaternion);
     this.camera.fov = pose.fov;
     this.syncCameraProjection(true);
-
-    const lookDirection = new THREE.Vector3(0, 0, -1).applyQuaternion(this.camera.quaternion);
-    const targetDistance = distanceToTarget > 0 ? distanceToTarget : 1;
-    this.controls.target.copy(this.camera.position).addScaledVector(lookDirection, targetDistance);
+    syncOrbitControlsTargetFromCamera(this.camera, this.controls, distanceToTarget);
     this.controls.update();
   }
 
@@ -386,6 +388,7 @@ export class SparkSceneViewer implements ViewerAdapter {
     this.sceneBounds.makeEmpty();
     this.initialPosition.set(0, 0, 0);
     this.initialTarget.set(0, 0, 0);
+    this.initialUp.set(0, 1, 0);
     this.initialQuaternion.identity();
     this.initialFov = 60;
   }
@@ -407,6 +410,7 @@ export class SparkSceneViewer implements ViewerAdapter {
 
     this.initialPosition.copy(this.camera.position);
     this.initialTarget.copy(this.controls.target);
+    this.initialUp.copy(this.camera.up);
     this.initialQuaternion.copy(this.camera.quaternion);
     this.initialFov = this.camera.fov;
   }

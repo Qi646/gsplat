@@ -1,23 +1,25 @@
 import * as THREE from 'three';
-import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { TrackballControls } from 'three/examples/jsm/controls/TrackballControls.js';
 
 export type NavigationMode = 'orbit' | 'walk';
+export type ViewerCameraControls = TrackballControls;
+
+const DEFAULT_CAMERA_UP = new THREE.Vector3(0, 1, 0);
 
 export function createViewerOrbitControls(
   camera: THREE.PerspectiveCamera,
   domElement: HTMLCanvasElement,
-): OrbitControls {
-  const controls = new OrbitControls(camera, domElement);
-  controls.enableDamping = true;
-  controls.dampingFactor = 0.05;
-  controls.rotateSpeed = 0.5;
+): ViewerCameraControls {
+  const controls = new TrackballControls(camera, domElement);
+  controls.dynamicDampingFactor = 0.05;
   controls.target.set(0, 0, 0);
+  controls.handleResize();
   controls.update();
   return controls;
 }
 
 export function setOrbitControlsNavigationMode(
-  controls: OrbitControls | null,
+  controls: ViewerCameraControls | null,
   mode: NavigationMode,
 ): void {
   if (!controls) {
@@ -32,7 +34,7 @@ export function setOrbitControlsNavigationMode(
 
 export function resumeOrbitControlsFromCamera(
   camera: THREE.PerspectiveCamera,
-  controls: OrbitControls | null,
+  controls: ViewerCameraControls | null,
   distance?: number,
 ): void {
   if (!controls) {
@@ -45,7 +47,7 @@ export function resumeOrbitControlsFromCamera(
 }
 
 export function updateOrbitControls(
-  controls: OrbitControls | null,
+  controls: ViewerCameraControls | null,
   mode: NavigationMode,
 ): void {
   if (!controls || mode !== 'orbit') {
@@ -57,7 +59,7 @@ export function updateOrbitControls(
 
 export function syncOrbitControlsTargetFromCamera(
   camera: THREE.PerspectiveCamera,
-  controls: OrbitControls | null,
+  controls: ViewerCameraControls | null,
   distance?: number,
 ): void {
   if (!controls) {
@@ -65,7 +67,15 @@ export function syncOrbitControlsTargetFromCamera(
   }
 
   const currentDistance = controls.target.distanceTo(camera.position);
-  const targetDistance = distance ?? (currentDistance > 0 ? currentDistance : 1);
-  const lookDirection = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
+  const fallbackDistance = currentDistance > 0 ? currentDistance : 1;
+  const targetDistance = typeof distance === 'number' && distance > 0 ? distance : fallbackDistance;
+  const lookDirection = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion).normalize();
+  camera.up.copy(DEFAULT_CAMERA_UP).applyQuaternion(camera.quaternion).normalize();
   controls.target.copy(camera.position).addScaledVector(lookDirection, targetDistance);
+}
+
+export function resizeViewerOrbitControls(
+  controls: ViewerCameraControls | null,
+): void {
+  controls?.handleResize();
 }

@@ -1,16 +1,15 @@
 import * as THREE from 'three';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('three/examples/jsm/controls/OrbitControls.js', async () => {
+vi.mock('three/examples/jsm/controls/TrackballControls.js', async () => {
   const THREE = await import('three');
 
-  class MockOrbitControls {
+  class MockTrackballControls {
     target = new THREE.Vector3();
-    enableDamping = false;
-    dampingFactor = 0;
-    rotateSpeed = 1;
+    dynamicDampingFactor = 0;
     enabled = true;
     camera: THREE.PerspectiveCamera;
+    handleResizeCount = 0;
     updateCount = 0;
 
     constructor(camera: THREE.PerspectiveCamera, _domElement: HTMLCanvasElement) {
@@ -19,13 +18,17 @@ vi.mock('three/examples/jsm/controls/OrbitControls.js', async () => {
 
     dispose(): void {}
 
+    handleResize(): void {
+      this.handleResizeCount += 1;
+    }
+
     update(): void {
       this.updateCount += 1;
       this.camera.lookAt(this.target);
     }
   }
 
-  return { OrbitControls: MockOrbitControls };
+  return { TrackballControls: MockTrackballControls };
 });
 
 vi.mock('@mkkellogg/gaussian-splats-3d', async () => {
@@ -248,7 +251,7 @@ describe('SceneViewer', () => {
     await expect(frame.text()).resolves.toBe('scene-frame');
   });
 
-  it('resumes orbit from the live walk pose without changing the camera', async () => {
+  it('resumes camera controls from an inverted walk pose without changing the camera', async () => {
     const events = new AppEvents();
     const hostElement = {} as HTMLDivElement;
     const viewer = new SceneViewer({ hostElement, events });
@@ -260,11 +263,19 @@ describe('SceneViewer', () => {
       controls: { enabled: boolean; target: THREE.Vector3 };
     }).controls;
 
+    const liveCamera = viewer.getCamera();
+    const walkPoseCamera = new THREE.PerspectiveCamera(60, 1, 0.1, 1000);
+    walkPoseCamera.position.set(1, 2, 3);
+    walkPoseCamera.up.set(0, -1, 0);
+    walkPoseCamera.lookAt(new THREE.Vector3(6, 2, 3));
+
     controls.target.set(1, 2, -2);
-    viewer.getCamera()?.position.set(1, 2, 3);
-    viewer.getCamera()?.lookAt(new THREE.Vector3(6, 2, 3));
+    liveCamera?.position.copy(walkPoseCamera.position);
+    liveCamera?.quaternion.copy(walkPoseCamera.quaternion);
+    liveCamera?.up.set(0, 1, 0);
     const beforePosition = viewer.getCamera()?.position.clone();
     const before = viewer.getCamera()?.quaternion.clone();
+    const beforeUp = walkPoseCamera.up.clone();
 
     viewer.setNavigationMode('walk');
     expect(controls.enabled).toBe(false);
@@ -276,6 +287,7 @@ describe('SceneViewer', () => {
     expect(viewer.getCamera()?.quaternion.y).toBeCloseTo(before?.y ?? 0);
     expect(viewer.getCamera()?.quaternion.z).toBeCloseTo(before?.z ?? 0);
     expect(viewer.getCamera()?.quaternion.w).toBeCloseTo(before?.w ?? 1);
+    expect(viewer.getCamera()?.up.toArray()).toEqual(beforeUp.toArray());
     expect(controls.target.x).toBeCloseTo(6);
     expect(controls.target.y).toBeCloseTo(2);
     expect(controls.target.z).toBeCloseTo(3);
@@ -368,7 +380,7 @@ describe('SceneViewer', () => {
     warnSpy.mockRestore();
   });
 
-  it('loads a scene with the default rotation, disables the package loading UI, and emits scene:loaded when bounds are valid', async () => {
+  it('loads a scene without forcing a rotation override, disables the package loading UI, and emits scene:loaded when bounds are valid', async () => {
     const events = new AppEvents();
     const hostElement = {} as HTMLDivElement;
     const viewer = new SceneViewer({ hostElement, events });
@@ -380,7 +392,7 @@ describe('SceneViewer', () => {
 
     expect(mockModule.__mockState.addSceneCalls).toHaveLength(1);
     expect(mockModule.__mockState.addSceneCalls[0]?.options['showLoadingUI']).toBe(false);
-    expect(mockModule.__mockState.addSceneCalls[0]?.options['rotation']).toEqual([1, 0, 0, 0]);
+    expect(mockModule.__mockState.addSceneCalls[0]?.options['rotation']).toBeUndefined();
     expect(viewer.isSceneLoaded()).toBe(true);
     expect(onLoaded).toHaveBeenCalledWith({ splatCount: 1024 });
     expect(viewer.getCamera()?.near).toBeCloseTo(0.1);
@@ -407,6 +419,31 @@ describe('SceneViewer', () => {
     expect(mockModule.__mockState.addSceneCalls[0]?.options['format']).toBe(
       GaussianSplats3D.SceneFormat.Ply,
     );
+  });
+
+  it('applies inverted camera poses without snapping them upright', async () => {
+    const events = new AppEvents();
+    const hostElement = {} as HTMLDivElement;
+    const viewer = new SceneViewer({ hostElement, events });
+
+    await viewer.init();
+
+    const poseCamera = new THREE.PerspectiveCamera(60, 1, 0.1, 1000);
+    poseCamera.position.set(-3, 1, 4);
+    poseCamera.up.set(0, -1, 0);
+    poseCamera.lookAt(new THREE.Vector3(-1, 1, 4));
+
+    viewer.applyCameraPose({
+      position: poseCamera.position.clone(),
+      quaternion: poseCamera.quaternion.clone(),
+      fov: 45,
+    });
+
+    expect(viewer.getCamera()?.quaternion.x).toBeCloseTo(poseCamera.quaternion.x);
+    expect(viewer.getCamera()?.quaternion.y).toBeCloseTo(poseCamera.quaternion.y);
+    expect(viewer.getCamera()?.quaternion.z).toBeCloseTo(poseCamera.quaternion.z);
+    expect(viewer.getCamera()?.quaternion.w).toBeCloseTo(poseCamera.quaternion.w);
+    expect(viewer.getCamera()?.up.toArray()).toEqual(poseCamera.up.toArray());
   });
 
   it('tightens the camera near plane for close inspection poses', async () => {
