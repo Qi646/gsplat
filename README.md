@@ -6,33 +6,22 @@ The active product code lives at the repo root in `client/` and `server/`. The i
 
 ## Current Status
 
-The root app currently implements the first vertical slice:
+- MVP requirements in `ASSIGNMENT.md`: 4/4 implemented in the root app.
+- Optional extras in `ASSIGNMENT.md`: 0/10 fully implemented, with partial progress on timeline editing, easing, deterministic export, and export cancellation.
+- Deliverables: the repo + README are present; the demo recording and one-page design note are still pending.
 
-- Load public `.ply`, `.splat`, and `.ksplat` scene URLs
-- Load verified sample presets through same-origin cached `.ply` and `.ksplat` routes
-- Compare the default `mkkellogg` renderer against an opt-in SparkJS renderer via query params
-- Show loading progress, FPS, and splat count
-- Provide Frame Scene, Reset View, and Walk Mode navigation
-- Capture camera keyframes from the active view
-- Reorder/delete keyframes, scrub the path, and preview smooth playback
-- Save and reload camera paths as JSON
-- Export the recorded path to `output.mp4` through the root FFmpeg-backed server pipeline
-- Serve a simple backend health endpoint and the production client build
-
-Not yet implemented at the repo root:
-
-- Advanced timeline editing beyond simple reorder + scrub
-- A user-facing export cancel button or editable export settings
+Precise requirement-by-requirement status lives in [ASSIGNMENT_PROGRESS.md](./ASSIGNMENT_PROGRESS.md). Keep that file updated whenever implementation or deliverable status changes relative to `ASSIGNMENT.md`.
 
 ## Repo Layout
 
 ```text
 .
-├── ASSIGNMENT.md      # take-home brief and evaluation criteria
-├── client/            # active Vite + TypeScript frontend
-├── server/            # active Express backend
-├── gsplat-viewer/     # imported reference implementation, kept for reference only
-└── AGENT_MEMORY.md    # durable implementation notes and milestones
+├── ASSIGNMENT.md           # take-home brief and evaluation criteria
+├── ASSIGNMENT_PROGRESS.md  # precise progress tracker against the assignment
+├── client/                 # active Vite + TypeScript frontend
+├── server/                 # active Express backend
+├── gsplat-viewer/          # imported reference implementation, kept for reference only
+└── AGENT_MEMORY.md         # durable implementation notes and milestones
 ```
 
 ## Prerequisites

@@ -30,6 +30,7 @@
 - Walk mode now uses an explicit `inactive` -> `armed` -> `active` lifecycle: clicking the button arms it, the next click inside the viewer requests pointer lock, `W/S` move along the camera look direction, `A/D` strafe, `Q/E` stay vertical, and exiting walk mode re-syncs the shared camera controls to the current view.
 - Both renderer adapters now use shared app-owned `TrackballControls`; the `mkkellogg` adapter disables the package's built-in controls, and camera-control `update()` no longer runs during walk mode, which prevents both renderers from re-aiming the camera back toward a stale target each frame while still allowing full inversion during normal inspection.
 - A root `README.md` now documents the active root workspace, current implemented slice, validated commands, and the fact that `gsplat-viewer/` is reference-only.
+- The repo now uses `ASSIGNMENT_PROGRESS.md` as the precise requirement-by-requirement progress tracker against `ASSIGNMENT.md`; update that file and the README summary whenever implementation or deliverable status changes.
 - `npm install` hit an `EACCES` cache issue under `/home/qi/.npm`; using `npm install --cache /tmp/npm-cache-gsplat-1` worked around it cleanly.
 - A local declaration file was added for `@mkkellogg/gaussian-splats-3d` because the installed package lacks TypeScript declarations.
 - The root server now has its own `vitest` + `supertest` harness to verify headers and `/api/health`, and the root `npm test` command runs both client and server test suites.
