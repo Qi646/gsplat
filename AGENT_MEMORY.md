@@ -4,6 +4,7 @@
 - Repo root `/home/qi/proj/gsplat_1` now has an initial import commit for the `gsplat-viewer` project.
 - The imported project lives under `gsplat-viewer/`.
 - A local archive copy exists at `gsplat-viewer.zip` and should stay untracked.
+- `ASSIGNMENT.md` is the tracked take-home brief and should be treated as the source of truth for repo scope/evaluation.
 - `ASSIGNMENT.md` describes a take-home Gaussian Splat Viewer -> camera path -> MP4 export app.
 - The actual app is under `gsplat-viewer/` as a Vite/TypeScript client plus an Express/FFmpeg server.
 - Source appears to implement most of the MVP already: scene loading/progress/FPS/splat count, frame/reset view, walk mode, keyframe recording/preview/scrubber/presets, path save/load, and MP4 export routes.
