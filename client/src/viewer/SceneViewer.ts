@@ -1,5 +1,6 @@
 import * as GaussianSplats3D from '@mkkellogg/gaussian-splats-3d';
 import * as THREE from 'three';
+import { formatLoadProgress } from '../lib/loadProgress';
 import type { AppEvents } from '../types';
 import { detectSceneFormat } from '../lib/sceneFormat';
 
@@ -64,11 +65,8 @@ export class SceneViewer {
 
       await this.viewer.addSplatScene(url, {
         format: this.toSceneFormat(detectSceneFormat(url)),
-        onProgress: (percent: number, _message: string, stage: unknown) => {
-          this.events.emit('scene:progress', {
-            percent: Math.round(percent),
-            message: `${this.stageToLabel(stage)} (${Math.round(percent)}%)`,
-          });
+        onProgress: (percent: number, progressLabel: string, stage: number) => {
+          this.events.emit('scene:progress', formatLoadProgress(percent, progressLabel, stage));
         },
       });
     } catch (error) {
@@ -172,17 +170,6 @@ export class SceneViewer {
       return GaussianSplats3D.SceneFormat.KSplat;
     }
     return GaussianSplats3D.SceneFormat.Ply;
-  }
-
-  private stageToLabel(stage: unknown): string {
-    const stageMap: Record<number, string> = {
-      0: 'Requesting',
-      1: 'Downloading',
-      2: 'Processing',
-      3: 'Uploading to GPU',
-    };
-
-    return stageMap[stage as number] ?? 'Loading';
   }
 
   private startRenderLoop(): void {

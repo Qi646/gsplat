@@ -14,7 +14,7 @@ declare module '@mkkellogg/gaussian-splats-3d' {
 
   export interface AddSplatSceneOptions {
     format: SceneFormat;
-    onProgress?: (percent: number, message: string, stage: unknown) => void;
+    onProgress?: (percent: number, progressLabel: string, stage: number) => void;
   }
 
   export enum SceneFormat {
@@ -22,7 +22,6 @@ declare module '@mkkellogg/gaussian-splats-3d' {
     Splat,
     KSplat,
   }
-
   export class Viewer {
     constructor(options: ViewerOptions);
     renderer: THREE.WebGLRenderer;
