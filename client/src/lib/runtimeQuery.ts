@@ -14,6 +14,6 @@ export function parseAppRuntimeQuery(search: string): AppRuntimeQuery {
   return {
     autoSceneUrl: rawScene && rawScene.trim() ? rawScene.trim() : null,
     e2eEnabled: params.get('e2e') === '1',
-    viewerMode: rawViewerMode === 'compat' ? 'compat' : 'default',
+    viewerMode: rawViewerMode === 'default' ? 'default' : 'compat',
   };
 }

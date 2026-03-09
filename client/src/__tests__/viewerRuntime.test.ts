@@ -1,13 +1,25 @@
 import { describe, expect, it } from 'vitest';
 import {
-  COMPATIBILITY_MODE_MESSAGE,
-  FORCED_COMPATIBILITY_MODE_MESSAGE,
+  DEFAULT_COMPATIBILITY_MODE_MESSAGE,
+  FAST_PATH_FALLBACK_MESSAGE,
   resolveViewerRuntimeConfig,
 } from '../viewer/viewerRuntime';
 
 describe('resolveViewerRuntimeConfig', () => {
-  it('uses the shared-memory worker path when cross-origin isolation is available', () => {
-    expect(resolveViewerRuntimeConfig(true)).toEqual({
+  it('defaults to the compatibility worker path for broader browser coverage', () => {
+    expect(resolveViewerRuntimeConfig(false)).toEqual({
+      compatibilityMode: true,
+      statusMessage: DEFAULT_COMPATIBILITY_MODE_MESSAGE,
+      warningMessage: null,
+      viewerOptions: {
+        gpuAcceleratedSort: false,
+        sharedMemoryForWorkers: false,
+      },
+    });
+  });
+
+  it('allows the fast shared-memory path to be requested explicitly when isolation is available', () => {
+    expect(resolveViewerRuntimeConfig(true, { viewerMode: 'default' })).toEqual({
       compatibilityMode: false,
       statusMessage: null,
       warningMessage: null,
@@ -18,12 +30,12 @@ describe('resolveViewerRuntimeConfig', () => {
     });
   });
 
-  it('falls back to the compatibility worker path when cross-origin isolation is unavailable', () => {
-    expect(resolveViewerRuntimeConfig(false)).toEqual({
+  it('falls back to compatibility mode when the fast path is requested without isolation', () => {
+    expect(resolveViewerRuntimeConfig(false, { viewerMode: 'default' })).toEqual({
       compatibilityMode: true,
-      statusMessage: COMPATIBILITY_MODE_MESSAGE,
+      statusMessage: FAST_PATH_FALLBACK_MESSAGE,
       warningMessage:
-        'Cross-origin isolation is unavailable; disabling shared-memory splat sorting for compatibility.',
+        'The fast shared-memory worker path was requested, but cross-origin isolation is unavailable; disabling shared-memory splat sorting for compatibility.',
       viewerOptions: {
         gpuAcceleratedSort: false,
         sharedMemoryForWorkers: false,
@@ -31,12 +43,11 @@ describe('resolveViewerRuntimeConfig', () => {
     });
   });
 
-  it('allows compatibility mode to be forced explicitly', () => {
+  it('keeps explicit compatibility mode as a no-op override', () => {
     expect(resolveViewerRuntimeConfig(true, { viewerMode: 'compat' })).toEqual({
       compatibilityMode: true,
-      statusMessage: FORCED_COMPATIBILITY_MODE_MESSAGE,
-      warningMessage:
-        'Compatibility mode was explicitly requested; disabling shared-memory splat sorting for compatibility.',
+      statusMessage: DEFAULT_COMPATIBILITY_MODE_MESSAGE,
+      warningMessage: null,
       viewerOptions: {
         gpuAcceleratedSort: false,
         sharedMemoryForWorkers: false,

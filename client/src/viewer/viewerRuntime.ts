@@ -12,11 +12,11 @@ export interface ViewerRuntimeConfig {
   viewerOptions: ViewerRuntimeOptions;
 }
 
-export const COMPATIBILITY_MODE_MESSAGE =
-  'Compatibility mode is active because cross-origin isolation is unavailable; scene loading may be slower.';
+export const DEFAULT_COMPATIBILITY_MODE_MESSAGE =
+  'Compatibility mode is active by default for broader browser coverage; scene loading may be slower.';
 
-export const FORCED_COMPATIBILITY_MODE_MESSAGE =
-  'Compatibility mode is active because it was explicitly requested; scene loading may be slower.';
+export const FAST_PATH_FALLBACK_MESSAGE =
+  'Compatibility mode is active because the fast path requires cross-origin isolation; scene loading may be slower.';
 
 export interface ViewerRuntimeOverrides {
   viewerMode?: ViewerMode | null;
@@ -26,12 +26,11 @@ export function resolveViewerRuntimeConfig(
   crossOriginIsolated: boolean | undefined,
   overrides: ViewerRuntimeOverrides = {}
 ): ViewerRuntimeConfig {
-  if (overrides.viewerMode === 'compat') {
+  if (overrides.viewerMode !== 'default') {
     return {
       compatibilityMode: true,
-      statusMessage: FORCED_COMPATIBILITY_MODE_MESSAGE,
-      warningMessage:
-        'Compatibility mode was explicitly requested; disabling shared-memory splat sorting for compatibility.',
+      statusMessage: DEFAULT_COMPATIBILITY_MODE_MESSAGE,
+      warningMessage: null,
       viewerOptions: {
         gpuAcceleratedSort: false,
         sharedMemoryForWorkers: false,
@@ -53,9 +52,9 @@ export function resolveViewerRuntimeConfig(
 
   return {
     compatibilityMode: true,
-    statusMessage: COMPATIBILITY_MODE_MESSAGE,
+    statusMessage: FAST_PATH_FALLBACK_MESSAGE,
     warningMessage:
-      'Cross-origin isolation is unavailable; disabling shared-memory splat sorting for compatibility.',
+      'The fast shared-memory worker path was requested, but cross-origin isolation is unavailable; disabling shared-memory splat sorting for compatibility.',
     viewerOptions: {
       gpuAcceleratedSort: false,
       sharedMemoryForWorkers: false,

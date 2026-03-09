@@ -6,7 +6,7 @@ describe('parseAppRuntimeQuery', () => {
     expect(parseAppRuntimeQuery('')).toEqual({
       autoSceneUrl: null,
       e2eEnabled: false,
-      viewerMode: 'default',
+      viewerMode: 'compat',
     });
   });
 
@@ -18,11 +18,19 @@ describe('parseAppRuntimeQuery', () => {
     });
   });
 
-  it('ignores unsupported viewer modes and blank scene values', () => {
-    expect(parseAppRuntimeQuery('?scene=%20%20&viewerMode=fast')).toEqual({
+  it('reads the explicit fast-path opt-in and ignores blank scene values', () => {
+    expect(parseAppRuntimeQuery('?scene=%20%20&viewerMode=default')).toEqual({
       autoSceneUrl: null,
       e2eEnabled: false,
       viewerMode: 'default',
+    });
+  });
+
+  it('falls back to compatibility mode for unsupported viewer modes', () => {
+    expect(parseAppRuntimeQuery('?viewerMode=fast')).toEqual({
+      autoSceneUrl: null,
+      e2eEnabled: false,
+      viewerMode: 'compat',
     });
   });
 });
