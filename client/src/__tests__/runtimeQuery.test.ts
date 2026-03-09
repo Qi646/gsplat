@@ -7,7 +7,7 @@ describe('parseAppRuntimeQuery', () => {
       autoSceneUrl: null,
       e2eEnabled: false,
       renderer: 'mkkellogg',
-      viewerMode: 'default',
+      viewerMode: null,
     });
   });
 
@@ -31,12 +31,12 @@ describe('parseAppRuntimeQuery', () => {
     });
   });
 
-  it('falls back to the default mode and renderer for unsupported values', () => {
+  it('falls back to the default compatibility mode and renderer for unsupported values', () => {
     expect(parseAppRuntimeQuery('?renderer=other&viewerMode=fast')).toEqual({
       autoSceneUrl: null,
       e2eEnabled: false,
       renderer: 'mkkellogg',
-      viewerMode: 'default',
+      viewerMode: null,
     });
   });
 });

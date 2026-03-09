@@ -15,6 +15,9 @@ export interface ViewerRuntimeConfig {
   viewerOptions: ViewerRuntimeOptions;
 }
 
+export const DEFAULT_COMPATIBILITY_MODE_MESSAGE =
+  'Compatibility mode is active by default; use ?viewerMode=default to opt into the faster shared-memory path for diagnostics.';
+
 export const COMPATIBILITY_MODE_MESSAGE =
   'Compatibility mode is active because the fast path requires cross-origin isolation; scene loading may be slower.';
 
@@ -29,6 +32,31 @@ export function resolveViewerRuntimeConfig(
   crossOriginIsolated: boolean | undefined,
   overrides: ViewerRuntimeOverrides = {}
 ): ViewerRuntimeConfig {
+  if (overrides.viewerMode === 'default') {
+    if (crossOriginIsolated) {
+      return {
+        compatibilityMode: false,
+        statusMessage: null,
+        warningMessage: null,
+        viewerOptions: {
+          gpuAcceleratedSort: true,
+          sharedMemoryForWorkers: true,
+        },
+      };
+    }
+
+    return {
+      compatibilityMode: true,
+      statusMessage: COMPATIBILITY_MODE_MESSAGE,
+      warningMessage:
+        'Cross-origin isolation is unavailable; disabling shared-memory splat sorting for compatibility.',
+      viewerOptions: {
+        gpuAcceleratedSort: false,
+        sharedMemoryForWorkers: false,
+      },
+    };
+  }
+
   if (overrides.viewerMode === 'compat') {
     return {
       compatibilityMode: true,
@@ -42,23 +70,10 @@ export function resolveViewerRuntimeConfig(
     };
   }
 
-  if (crossOriginIsolated) {
-    return {
-      compatibilityMode: false,
-      statusMessage: null,
-      warningMessage: null,
-      viewerOptions: {
-        gpuAcceleratedSort: true,
-        sharedMemoryForWorkers: true,
-      },
-    };
-  }
-
   return {
     compatibilityMode: true,
-    statusMessage: COMPATIBILITY_MODE_MESSAGE,
-    warningMessage:
-      'Cross-origin isolation is unavailable; disabling shared-memory splat sorting for compatibility.',
+    statusMessage: DEFAULT_COMPATIBILITY_MODE_MESSAGE,
+    warningMessage: null,
     viewerOptions: {
       gpuAcceleratedSort: false,
       sharedMemoryForWorkers: false,

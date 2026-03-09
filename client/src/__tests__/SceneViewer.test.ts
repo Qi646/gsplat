@@ -194,7 +194,7 @@ describe('SceneViewer', () => {
     globalThis.cancelAnimationFrame = originalCancelAnimationFrame;
   });
 
-  it('initializes the viewer with the host element and exposes the renderer canvas', async () => {
+  it('initializes the viewer in compatibility mode by default and exposes the renderer canvas', async () => {
     const events = new AppEvents();
     const hostElement = {} as HTMLDivElement;
     const viewer = new SceneViewer({ hostElement, events });
@@ -203,8 +203,8 @@ describe('SceneViewer', () => {
 
     expect(mockModule.__mockState.viewerOptions?.['rootElement']).toBe(hostElement);
     expect(mockModule.__mockState.viewerOptions?.['canvas']).toBeUndefined();
-    expect(mockModule.__mockState.viewerOptions?.['gpuAcceleratedSort']).toBe(true);
-    expect(mockModule.__mockState.viewerOptions?.['sharedMemoryForWorkers']).toBe(true);
+    expect(mockModule.__mockState.viewerOptions?.['gpuAcceleratedSort']).toBe(false);
+    expect(mockModule.__mockState.viewerOptions?.['sharedMemoryForWorkers']).toBe(false);
     expect(mockModule.__mockState.viewerOptions).not.toHaveProperty('integerBasedSort');
     expect(viewer.getRendererId()).toBe('mkkellogg');
     expect(viewer.getInteractionSurface()).toEqual(

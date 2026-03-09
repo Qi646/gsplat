@@ -5,7 +5,7 @@ export interface AppRuntimeQuery {
   autoSceneUrl: string | null;
   e2eEnabled: boolean;
   renderer: ViewerRendererId;
-  viewerMode: ViewerMode;
+  viewerMode: ViewerMode | null;
 }
 
 export function parseAppRuntimeQuery(search: string): AppRuntimeQuery {
@@ -18,6 +18,7 @@ export function parseAppRuntimeQuery(search: string): AppRuntimeQuery {
     autoSceneUrl: rawScene && rawScene.trim() ? rawScene.trim() : null,
     e2eEnabled: params.get('e2e') === '1',
     renderer: rawRenderer === 'spark' ? 'spark' : 'mkkellogg',
-    viewerMode: rawViewerMode === 'compat' ? 'compat' : 'default',
+    viewerMode:
+      rawViewerMode === 'default' ? 'default' : rawViewerMode === 'compat' ? 'compat' : null,
   };
 }

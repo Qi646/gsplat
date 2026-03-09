@@ -79,7 +79,7 @@ curl -I http://localhost:3001/
 Renderer comparison checks:
 
 ```bash
-http://localhost:5173/?renderer=mkkellogg&scene=/test-assets/smoke-grid.ply
+http://localhost:5173/?renderer=mkkellogg&viewerMode=default&scene=/test-assets/smoke-grid.ply
 http://localhost:5173/?renderer=mkkellogg&viewerMode=compat&scene=/test-assets/smoke-grid.ply
 http://localhost:5173/?renderer=spark&scene=/test-assets/smoke-grid.ply
 http://localhost:5173/?renderer=spark&scene=/api/presets/truck.ksplat
@@ -111,10 +111,10 @@ Notes:
 - `client/src/viewer/SceneViewer.ts` wraps `@mkkellogg/gaussian-splats-3d` through the package's `rootElement` + `getSplatMesh()` API surface and owns scene loading, render loop, framing, resizing, and FPS tracking.
 - `client/src/viewer/createViewerAdapter.ts` selects the active viewer adapter from the runtime query. The default adapter remains `@mkkellogg/gaussian-splats-3d`, while `client/src/viewer/SparkSceneViewer.ts` provides an opt-in SparkJS comparison path.
 - `client/src/lib/robustSceneBounds.ts` computes trimmed scene bounds from sampled splats so initial framing is less sensitive to outlier points in dense scenes.
-- `client/src/viewer/viewerRuntime.ts` restores the normal fast shared-memory worker path whenever cross-origin isolation is available, and keeps `?viewerMode=compat` as an explicit fallback for diagnostics.
+- `client/src/viewer/viewerRuntime.ts` keeps compatibility mode as the normal startup path and reserves `?viewerMode=default` as the explicit fast shared-memory diagnostic override when cross-origin isolation is available.
 - `client/src/controls/WalkControls.ts` now runs walk mode as an `inactive` -> `armed` -> `active` state machine: clicking `Walk Mode` arms it, the next click in the viewer requests pointer lock, `WASD` stays on the camera yaw plane, `Q/E` handle vertical motion, and leaving walk mode re-syncs orbit controls to the current camera view.
 - `client/src/lib/sceneFormat.ts` and `client/src/lib/scenePresets.ts` isolate URL format detection and preset scene configuration.
-- `client/src/lib/runtimeQuery.ts` and the `window.__GSPLAT_DEBUG__` hook expose test-only startup overrides and viewer diagnostics for browser regression coverage; no `viewerMode` query now means the normal default runtime, while `viewerMode=compat` explicitly opts into the fallback path.
+- `client/src/lib/runtimeQuery.ts` and the `window.__GSPLAT_DEBUG__` hook expose test-only startup overrides and viewer diagnostics for browser regression coverage; no `viewerMode` query now means the compatibility default, while `viewerMode=default` explicitly opts into the fast path for diagnostics.
 - `renderer=spark` switches the viewer adapter to SparkJS for renderer A/B comparisons. `viewerMode` only affects the default `mkkellogg` path.
 - `client/src/path/PathInterpolator.ts` and `client/src/path/KeyframeManager.ts` own keyframe capture, interpolation, preview playback, and path JSON serialization.
 - `client/src/export/ExportManager.ts` renders the active camera path into PNG frames at fixed `1280x720 @ 30 FPS`, uploads them to the backend export job, and restores the live viewer state after success or failure.
@@ -130,10 +130,10 @@ Notes:
 - The preset tab now serves verified `Garden`, `Stump`, and `Truck` scenes from same-origin `/api/presets/*.ksplat` routes backed by the server cache under `/tmp/gsplat-presets`.
 - Initial framing and `Frame Scene` now use robust sampled bounds that ignore low-alpha outliers before falling back to the raw mesh bounding box.
 - The app serves cross-origin isolation headers in both the Vite dev server and the Express production server so the faster shared-memory worker path remains available for explicit diagnostics.
-- Normal startup now uses the fast `mkkellogg` runtime when cross-origin isolation is available.
+- Normal startup now uses the compatibility `mkkellogg` runtime by default because the fast path still renders blank in at least some real environments.
 - Normal startup still uses the `mkkellogg` renderer by default. `?renderer=spark` is an explicit diagnostic path for comparing the same assets against SparkJS.
 - Default `mkkellogg` scene loads now apply a 180-degree X-axis rotation so the scene orientation matches Spark on the same assets.
-- `?viewerMode=compat` explicitly requests the slower compatibility fallback; if cross-origin isolation is unavailable, the viewer also falls back to compatibility mode and reports that state.
+- `?viewerMode=default` explicitly requests the faster shared-memory path for diagnostics; if cross-origin isolation is unavailable, the viewer falls back to compatibility mode and reports that state. `?viewerMode=compat` explicitly requests the slower compatibility path.
 - SparkJS scene loads currently use Spark's own render path plus local download/progress wiring; the app surfaces the active renderer in the status note and debug snapshot for A/B verification.
 - Successful scene changes clear the current camera path so keyframes remain scene-specific.
 - Walk mode is now an explicit click-to-enter flow: the button arms it, the next click inside the viewer captures mouse look, `Frame Scene` / `Reset View` pause until walk mode exits, and leaving walk mode restores orbit around the current view direction.
@@ -142,7 +142,7 @@ Notes:
 - Export currently uses fixed defaults of `1280x720 @ 30 FPS`, streams PNG frames to the same-origin backend, and downloads `output.mp4` when FFmpeg finishes.
 - Export progress is client-driven from rendered/uploaded frame counts plus a final `Encoding MP4 with FFmpeg…` phase. There is not yet a user-visible cancel button.
 - The committed browser smoke fixture lives at `client/public/test-assets/smoke-grid.ply` and is used by the Firefox Playwright regression test.
-- In the current host environment, the Firefox browser regression test fails before any scene load begins in both the default and `?viewerMode=compat` paths with `Init error: Error creating WebGL context.` The same symptom can be caused by Firefox lacking WebGL support in headless mode, so interpret it as an environment compatibility failure first and an app regression only after confirming raw Firefox WebGL works on the host.
+- In the current host environment, the Firefox browser regression test fails before any scene load begins in both the `?viewerMode=default` and `?viewerMode=compat` paths with `Init error: Error creating WebGL context.` The same symptom can be caused by Firefox lacking WebGL support in headless mode, so interpret it as an environment compatibility failure first and an app regression only after confirming raw Firefox WebGL works on the host.
 - The current client build emits a Vite warning from Spark's packaged WASM data URL during bundling, but the build still completes successfully.
 
 ## Development Guidance
