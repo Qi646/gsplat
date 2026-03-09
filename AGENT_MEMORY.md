@@ -11,6 +11,7 @@
 - The root app currently implements the first vertical slice only: scene loading, progress, FPS/splat stats, frame scene, reset view, walk mode, preset scene loading, a health route, and production static serving.
 - The root client ports/adapts the viewer baseline from the reference app but intentionally excludes camera-path editing and MP4 export for now.
 - Root validation is working: `npm test`, `npm run build`, `npm run dev`, `curl http://localhost:3001/api/health`, and `curl -I http://localhost:5173/` all passed on 2026-03-09.
+- A root `README.md` now documents the active root workspace, current implemented slice, validated commands, and the fact that `gsplat-viewer/` is reference-only.
 - `npm install` hit an `EACCES` cache issue under `/home/qi/.npm`; using `npm install --cache /tmp/npm-cache-gsplat-1` worked around it cleanly.
 - A local declaration file was added for `@mkkellogg/gaussian-splats-3d` because the installed package lacks TypeScript declarations.
 - There is a stray import artifact directory `gsplat-viewer/{client` that appears accidental.
