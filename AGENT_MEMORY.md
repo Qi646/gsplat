@@ -23,6 +23,8 @@
 - The root viewer wrapper now aligns with the installed `@mkkellogg/gaussian-splats-3d` package API: it mounts via `rootElement`, uses the package-managed renderer canvas for interaction, frames scenes from robust sampled splat bounds before falling back to `getSplatMesh().computeBoundingBox(true)`, and disables the package's built-in loading UI in favor of the app overlay.
 - The root viewer now rejects scene loads that resolve with zero splats or invalid bounds instead of emitting a false `scene:loaded` state that can leave the viewer black.
 - The root viewer runtime now forces `integerBasedSort: false` and `splatSortDistanceMapPrecision: 20` in both compatibility and fast modes, following the package guidance for dense scenes to reduce preset color-blob artifacts.
+- The root viewer runtime now detects Firefox user agents and forces a stricter safe compatibility profile there: `gpuAcceleratedSort: false`, `sharedMemoryForWorkers: false`, `enableSIMDInSort: false`, `integerBasedSort: false`, and `splatSortDistanceMapPrecision: 24`.
+- In Firefox, `?viewerMode=default` is now treated as a safety override request: the app stays in compatibility mode, reports that the fast path was ignored, and favors stable preset rendering over performance.
 - The root server now exposes `/api/presets/:presetId.ksplat`, lazily extracts verified `.ksplat` files from `https://projects.markkellogg.org/downloads/gaussian_splat_data.zip` via HTTP range requests, and caches them under `/tmp/gsplat-presets`.
 - Camera paths at the root use JSON keyframes `{ id, time, position, quaternion, fov }`, Catmull-Rom position interpolation, shortest-arc quaternion slerp, smoothstep timing, and FOV lerp.
 - Successful scene reloads now clear the current camera path so saved keyframes remain scene-specific.
@@ -54,6 +56,7 @@
 - When adapting `@mkkellogg/gaussian-splats-3d`, verify the installed package runtime API against its actual docs/runtime surface instead of trusting local declaration shims; the current package uses `rootElement` and `getSplatMesh()` rather than `canvas` and `scene`.
 - Prefer compatibility mode as the default runtime for user-facing browser coverage; keep the shared-memory/GPU-sort path as an explicit diagnostic opt-in via `?viewerMode=default`.
 - Prefer safer floating-point sort settings for user-facing dense scenes even on the fast-path runtime; keep `integerBasedSort` disabled and raise sort precision to 20 unless there is a measured reason to trade visuals for speed.
+- Prefer a Firefox-specific safe compatibility runtime over the shared-memory fast path when preset rendering becomes unstable; disable SIMD sorting and raise sort precision to 24 even if Firefox performance is lower.
 - Prefer robust sampled scene bounds for initial framing and `Frame Scene`; ignore low-alpha outlier splats before falling back to the raw mesh bounding box.
 - Keep the root camera-path UI lightweight: explicit move-up/move-down reordering, no drag-and-drop timeline editor yet.
 - Disable path import until a scene is loaded, and clear the current path on successful scene changes.
@@ -77,3 +80,4 @@
 - 2026-03-09: Replaced ad hoc remote presets with verified same-origin `.ksplat` preset routes backed by the upstream demo archive, added server-side archive extraction/cache tests, and switched viewer framing to robust sampled bounds with client unit coverage.
 - 2026-03-09: Added a deterministic local smoke fixture, test-only app debug hooks, and a Firefox Playwright regression harness; the harness currently reproduces Firefox startup failure with `Error creating WebGL context.` before scene load.
 - 2026-03-09: Changed runtime selection so normal startup defaults to compatibility mode, while `?viewerMode=default` explicitly opts into the fast shared-memory path for diagnostics.
+- 2026-03-09: Added a Firefox-safe runtime override that disables SIMD sorting, keeps Firefox on compatibility mode, raises sort precision to 24, and ignores `?viewerMode=default` in Firefox to avoid preset-render confetti corruption.

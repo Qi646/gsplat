@@ -124,6 +124,7 @@ type MockModule = typeof GaussianSplats3D & {
 describe('SceneViewer', () => {
   const mockModule = GaussianSplats3D as MockModule;
   const originalWindow = globalThis.window;
+  const originalNavigator = globalThis.navigator;
   const originalRequestAnimationFrame = globalThis.requestAnimationFrame;
   const originalCancelAnimationFrame = globalThis.cancelAnimationFrame;
   let startRenderLoopSpy: ReturnType<typeof vi.spyOn>;
@@ -147,6 +148,13 @@ describe('SceneViewer', () => {
       configurable: true,
       writable: true,
     });
+    Object.defineProperty(globalThis, 'navigator', {
+      value: {
+        userAgent: 'Mozilla/5.0 AppleWebKit/537.36 Chrome/126.0.0.0 Safari/537.36',
+      },
+      configurable: true,
+      writable: true,
+    });
 
     globalThis.requestAnimationFrame = ((callback: FrameRequestCallback) => {
       callback(0);
@@ -165,6 +173,11 @@ describe('SceneViewer', () => {
       configurable: true,
       writable: true,
     });
+    Object.defineProperty(globalThis, 'navigator', {
+      value: originalNavigator,
+      configurable: true,
+      writable: true,
+    });
 
     globalThis.requestAnimationFrame = originalRequestAnimationFrame;
     globalThis.cancelAnimationFrame = originalCancelAnimationFrame;
@@ -180,6 +193,7 @@ describe('SceneViewer', () => {
     expect(mockModule.__mockState.viewerOptions?.['rootElement']).toBe(hostElement);
     expect(mockModule.__mockState.viewerOptions?.['canvas']).toBeUndefined();
     expect(mockModule.__mockState.viewerOptions?.['integerBasedSort']).toBe(false);
+    expect(mockModule.__mockState.viewerOptions?.['enableSIMDInSort']).toBe(true);
     expect(mockModule.__mockState.viewerOptions?.['splatSortDistanceMapPrecision']).toBe(20);
     expect(viewer.getInteractionSurface()).toEqual(
       (viewer as unknown as { renderer: { domElement: unknown } }).renderer.domElement,
@@ -200,9 +214,49 @@ describe('SceneViewer', () => {
     expect(viewer.getDebugSnapshot().runtime.viewerOptions).toEqual({
       gpuAcceleratedSort: true,
       sharedMemoryForWorkers: true,
+      enableSIMDInSort: true,
       integerBasedSort: false,
       splatSortDistanceMapPrecision: 20,
     });
+  });
+
+  it('forces Firefox onto the safer runtime and ignores fast-path overrides', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    Object.defineProperty(globalThis, 'navigator', {
+      value: {
+        userAgent: 'Mozilla/5.0 Gecko/20100101 Firefox/136.0',
+      },
+      configurable: true,
+      writable: true,
+    });
+
+    const events = new AppEvents();
+    const hostElement = {} as HTMLDivElement;
+    const viewer = new SceneViewer({
+      hostElement,
+      events,
+      runtimeOverrides: { viewerMode: 'default' },
+    });
+
+    await viewer.init();
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      'The fast shared-memory viewer path was requested in Firefox, but Firefox now forces a safer compatibility runtime to avoid preset rendering corruption.',
+    );
+    expect(mockModule.__mockState.viewerOptions).toMatchObject({
+      gpuAcceleratedSort: false,
+      sharedMemoryForWorkers: false,
+      enableSIMDInSort: false,
+      integerBasedSort: false,
+      splatSortDistanceMapPrecision: 24,
+    });
+    expect(viewer.getDebugSnapshot().runtime).toMatchObject({
+      compatibilityMode: true,
+      compatibilityStatusMessage:
+        'Firefox is using a safer compatibility runtime to avoid preset rendering corruption; the fast-path request was ignored.',
+    });
+
+    warnSpy.mockRestore();
   });
 
   it('loads a scene, disables the package loading UI, and emits scene:loaded when bounds are valid', async () => {

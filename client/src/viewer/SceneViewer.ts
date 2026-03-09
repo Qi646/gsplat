@@ -1,5 +1,6 @@
 import * as GaussianSplats3D from '@mkkellogg/gaussian-splats-3d';
 import * as THREE from 'three';
+import { detectBrowserFamily } from '../lib/browserInfo';
 import { formatLoadProgress } from '../lib/loadProgress';
 import { computeRobustSceneBounds } from '../lib/robustSceneBounds';
 import type { AppEvents, InterpolatedPose, ViewerDebugSnapshot } from '../types';
@@ -34,6 +35,7 @@ export class SceneViewer {
   private runtimeViewerOptions: ViewerRuntimeOptions = {
     gpuAcceleratedSort: false,
     sharedMemoryForWorkers: false,
+    enableSIMDInSort: true,
     integerBasedSort: false,
     splatSortDistanceMapPrecision: 20,
   };
@@ -45,7 +47,11 @@ export class SceneViewer {
   }
 
   async init(): Promise<void> {
-    const runtimeConfig = resolveViewerRuntimeConfig(window.crossOriginIsolated, this.runtimeOverrides);
+    const runtimeConfig = resolveViewerRuntimeConfig(
+      window.crossOriginIsolated,
+      detectBrowserFamily(globalThis.navigator?.userAgent),
+      this.runtimeOverrides,
+    );
     this.compatibilityMode = runtimeConfig.compatibilityMode;
     this.compatibilityStatusMessage = runtimeConfig.statusMessage;
     this.runtimeViewerOptions = runtimeConfig.viewerOptions;

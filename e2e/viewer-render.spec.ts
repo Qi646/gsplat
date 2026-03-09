@@ -139,13 +139,14 @@ for (const viewerMode of ['default', 'compat'] satisfies ViewerMode[]) {
     expect(snapshot.viewer?.canvasSize.width).toBeGreaterThan(0);
     expect(snapshot.viewer?.canvasSize.height).toBeGreaterThan(0);
 
-    if (viewerMode === 'compat') {
-      expect(snapshot.viewer?.runtime.compatibilityMode).toBe(true);
-      expect(snapshot.viewer?.runtime.viewerOptions.gpuAcceleratedSort).toBe(false);
-      expect(snapshot.viewer?.runtime.viewerOptions.sharedMemoryForWorkers).toBe(false);
-    } else {
-      expect(snapshot.viewer?.runtime.viewerOptions.gpuAcceleratedSort).toBe(true);
-      expect(snapshot.viewer?.runtime.viewerOptions.sharedMemoryForWorkers).toBe(true);
+    expect(snapshot.viewer?.runtime.compatibilityMode).toBe(true);
+    expect(snapshot.viewer?.runtime.viewerOptions.gpuAcceleratedSort).toBe(false);
+    expect(snapshot.viewer?.runtime.viewerOptions.sharedMemoryForWorkers).toBe(false);
+    expect(snapshot.viewer?.runtime.viewerOptions.enableSIMDInSort).toBe(false);
+    expect(snapshot.viewer?.runtime.viewerOptions.integerBasedSort).toBe(false);
+
+    if (viewerMode === 'default') {
+      expect(snapshot.viewer?.runtime.compatibilityStatusMessage).toContain('fast-path request was ignored');
     }
 
     expect(loadedMetrics.brightPixels).toBeGreaterThan(blankMetrics.brightPixels + 20);

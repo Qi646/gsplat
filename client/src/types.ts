@@ -60,6 +60,7 @@ export interface ViewerDebugSnapshot {
     viewerOptions: {
       gpuAcceleratedSort: boolean;
       sharedMemoryForWorkers: boolean;
+      enableSIMDInSort: boolean;
       integerBasedSort: boolean;
       splatSortDistanceMapPrecision: number;
     };

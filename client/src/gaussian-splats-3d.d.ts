@@ -8,6 +8,7 @@ declare module '@mkkellogg/gaussian-splats-3d' {
     selfDrivenMode?: boolean;
     gpuAcceleratedSort?: boolean;
     sharedMemoryForWorkers?: boolean;
+    enableSIMDInSort?: boolean;
     integerBasedSort?: boolean;
     splatSortDistanceMapPrecision?: number;
   }

@@ -99,7 +99,7 @@ Notes:
 
 - `client/src/viewer/SceneViewer.ts` wraps `@mkkellogg/gaussian-splats-3d` through the package's `rootElement` + `getSplatMesh()` API surface and owns scene loading, render loop, framing, resizing, and FPS tracking.
 - `client/src/lib/robustSceneBounds.ts` computes trimmed scene bounds from sampled splats so initial framing is less sensitive to outlier points in dense scenes.
-- `client/src/viewer/viewerRuntime.ts` defaults the viewer to the slower compatibility worker path for broader browser coverage, keeps the shared-memory fast path behind `?viewerMode=default`, and forces safer floating-point splat sorting with higher distance-map precision to reduce dense-scene artifacting.
+- `client/src/viewer/viewerRuntime.ts` defaults the viewer to the slower compatibility worker path for broader browser coverage, keeps the shared-memory fast path behind `?viewerMode=default` for non-Firefox browsers, and forces stricter Firefox-safe sort settings to avoid preset corruption.
 - `client/src/controls/WalkControls.ts` adds pointer-lock WASD navigation on top of the viewer camera.
 - `client/src/lib/sceneFormat.ts` and `client/src/lib/scenePresets.ts` isolate URL format detection and preset scene configuration.
 - `client/src/lib/runtimeQuery.ts` and the `window.__GSPLAT_DEBUG__` hook expose test-only startup overrides and viewer diagnostics for browser regression coverage; no `viewerMode` query now means compatibility mode, while `viewerMode=default` explicitly opts into the fast path.
@@ -116,8 +116,9 @@ Notes:
 - Initial framing and `Frame Scene` now use robust sampled bounds that ignore low-alpha outliers before falling back to the raw mesh bounding box.
 - The app serves cross-origin isolation headers in both the Vite dev server and the Express production server so the faster shared-memory worker path remains available for explicit diagnostics.
 - Normal startup now uses compatibility mode by default for broader browser coverage and surfaces that state in the status note.
+- Firefox now always uses a stricter compatibility runtime with SIMD sorting disabled and sort precision raised to 24 to avoid preset-render corruption; in Firefox, `?viewerMode=default` is ignored and reported as a safety override.
 - Dense preset scenes now default to floating-point splat sorting with a higher distance-map precision to avoid the package's large-scene color-blob artifacts, at the cost of slower sort performance.
-- `?viewerMode=default` explicitly opts into the faster shared-memory worker path; if cross-origin isolation is unavailable, the viewer falls back to compatibility mode and reports that fallback state.
+- On non-Firefox browsers, `?viewerMode=default` explicitly opts into the faster shared-memory worker path; if cross-origin isolation is unavailable, the viewer falls back to compatibility mode and reports that fallback state.
 - Successful scene changes clear the current camera path so keyframes remain scene-specific.
 - Path import and path editing controls remain disabled until a scene has loaded successfully.
 - The committed browser smoke fixture lives at `client/public/test-assets/smoke-grid.ply` and is used by the Firefox Playwright regression test.
