@@ -6,14 +6,9 @@ import { computeRobustSceneBounds } from '../lib/robustSceneBounds';
 import type { AppEvents, InterpolatedPose, ViewerDebugSnapshot } from '../types';
 import { detectSceneFormat } from '../lib/sceneFormat';
 import { resolveViewerRuntimeConfig, type ViewerRuntimeOverrides, type ViewerRuntimeOptions } from './viewerRuntime';
+import type { ViewerAdapter, ViewerAdapterOptions } from './ViewerAdapter';
 
-export interface ViewerOptions {
-  hostElement: HTMLElement;
-  events: AppEvents;
-  runtimeOverrides?: ViewerRuntimeOverrides;
-}
-
-export class SceneViewer {
+export class SceneViewer implements ViewerAdapter {
   private hostElement: HTMLElement;
   private events: AppEvents;
   private runtimeOverrides: ViewerRuntimeOverrides;
@@ -40,7 +35,7 @@ export class SceneViewer {
     splatSortDistanceMapPrecision: 20,
   };
 
-  constructor(options: ViewerOptions) {
+  constructor(options: ViewerAdapterOptions) {
     this.hostElement = options.hostElement;
     this.events = options.events;
     this.runtimeOverrides = options.runtimeOverrides ?? {};
@@ -232,6 +227,10 @@ export class SceneViewer {
     return this.compatibilityStatusMessage;
   }
 
+  getRendererId(): 'mkkellogg' {
+    return 'mkkellogg';
+  }
+
   getDebugSnapshot(): ViewerDebugSnapshot {
     const internalViewer = this.viewer as (GaussianSplats3D.Viewer & {
       lastSortTime?: number;
@@ -240,6 +239,7 @@ export class SceneViewer {
     const gl = this.renderer?.getContext?.();
 
     return {
+      rendererId: this.getRendererId(),
       canvasSize: {
         width: this.renderer?.domElement.width ?? 0,
         height: this.renderer?.domElement.height ?? 0,

@@ -6,14 +6,18 @@ describe('parseAppRuntimeQuery', () => {
     expect(parseAppRuntimeQuery('')).toEqual({
       autoSceneUrl: null,
       e2eEnabled: false,
+      renderer: 'mkkellogg',
       viewerMode: 'compat',
     });
   });
 
-  it('reads the e2e flag, scene URL, and compatibility mode from the query string', () => {
-    expect(parseAppRuntimeQuery('?e2e=1&scene=%2Ftest-assets%2Fsmoke-grid.ply&viewerMode=compat')).toEqual({
+  it('reads the e2e flag, renderer, scene URL, and compatibility mode from the query string', () => {
+    expect(
+      parseAppRuntimeQuery('?e2e=1&renderer=spark&scene=%2Ftest-assets%2Fsmoke-grid.ply&viewerMode=compat'),
+    ).toEqual({
       autoSceneUrl: '/test-assets/smoke-grid.ply',
       e2eEnabled: true,
+      renderer: 'spark',
       viewerMode: 'compat',
     });
   });
@@ -22,14 +26,16 @@ describe('parseAppRuntimeQuery', () => {
     expect(parseAppRuntimeQuery('?scene=%20%20&viewerMode=default')).toEqual({
       autoSceneUrl: null,
       e2eEnabled: false,
+      renderer: 'mkkellogg',
       viewerMode: 'default',
     });
   });
 
-  it('falls back to compatibility mode for unsupported viewer modes', () => {
-    expect(parseAppRuntimeQuery('?viewerMode=fast')).toEqual({
+  it('falls back to compatibility mode and the default renderer for unsupported values', () => {
+    expect(parseAppRuntimeQuery('?renderer=other&viewerMode=fast')).toEqual({
       autoSceneUrl: null,
       e2eEnabled: false,
+      renderer: 'mkkellogg',
       viewerMode: 'compat',
     });
   });

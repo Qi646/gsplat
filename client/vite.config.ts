@@ -23,7 +23,7 @@ export default defineConfig({
     },
   },
   optimizeDeps: {
-    exclude: ['@mkkellogg/gaussian-splats-3d'],
+    exclude: ['@mkkellogg/gaussian-splats-3d', '@sparkjsdev/spark'],
   },
   build: {
     outDir: '../server/public',

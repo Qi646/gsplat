@@ -195,6 +195,7 @@ describe('SceneViewer', () => {
     expect(mockModule.__mockState.viewerOptions?.['integerBasedSort']).toBe(false);
     expect(mockModule.__mockState.viewerOptions?.['enableSIMDInSort']).toBe(true);
     expect(mockModule.__mockState.viewerOptions?.['splatSortDistanceMapPrecision']).toBe(20);
+    expect(viewer.getRendererId()).toBe('mkkellogg');
     expect(viewer.getInteractionSurface()).toEqual(
       (viewer as unknown as { renderer: { domElement: unknown } }).renderer.domElement,
     );
@@ -211,12 +212,17 @@ describe('SceneViewer', () => {
 
     await viewer.init();
 
-    expect(viewer.getDebugSnapshot().runtime.viewerOptions).toEqual({
-      gpuAcceleratedSort: true,
-      sharedMemoryForWorkers: true,
-      enableSIMDInSort: true,
-      integerBasedSort: false,
-      splatSortDistanceMapPrecision: 20,
+    expect(viewer.getDebugSnapshot()).toMatchObject({
+      rendererId: 'mkkellogg',
+      runtime: {
+        viewerOptions: {
+          gpuAcceleratedSort: true,
+          sharedMemoryForWorkers: true,
+          enableSIMDInSort: true,
+          integerBasedSort: false,
+          splatSortDistanceMapPrecision: 20,
+        },
+      },
     });
   });
 
@@ -250,6 +256,7 @@ describe('SceneViewer', () => {
       integerBasedSort: false,
       splatSortDistanceMapPrecision: 24,
     });
+    expect(viewer.getDebugSnapshot().rendererId).toBe('mkkellogg');
     expect(viewer.getDebugSnapshot().runtime).toMatchObject({
       compatibilityMode: true,
       compatibilityStatusMessage:

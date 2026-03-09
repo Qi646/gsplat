@@ -2,8 +2,9 @@ import { WalkControls } from './controls/WalkControls';
 import { parseAppRuntimeQuery } from './lib/runtimeQuery';
 import { SCENE_PRESETS } from './lib/scenePresets';
 import { KeyframeManager } from './path/KeyframeManager';
-import { AppEvents, type AppBootPhase, type Keyframe } from './types';
-import { SceneViewer } from './viewer/SceneViewer';
+import { AppEvents, type AppBootPhase, type Keyframe, type ViewerRendererId } from './types';
+import { createViewerAdapter } from './viewer/createViewerAdapter';
+import type { ViewerAdapter } from './viewer/ViewerAdapter';
 
 function $(selector: string): HTMLElement {
   const element = document.querySelector<HTMLElement>(selector);
@@ -29,9 +30,13 @@ function formatSeconds(seconds: number): string {
   return `${seconds.toFixed(1)}s`;
 }
 
+function formatRendererLabel(rendererId: ViewerRendererId): string {
+  return rendererId === 'spark' ? 'Spark' : 'mkkellogg';
+}
+
 async function main(): Promise<void> {
   const runtimeQuery = parseAppRuntimeQuery(window.location.search);
-  let viewer: SceneViewer | null = null;
+  let viewer: ViewerAdapter | null = null;
   let bootPhase: AppBootPhase = 'booting';
   let initErrorMessage: string | null = null;
   let currentStatusNote: string | null = null;
@@ -60,6 +65,7 @@ async function main(): Promise<void> {
   const getDebugSnapshot = () => ({
     bootPhase,
     initErrorMessage,
+    rendererId: runtimeQuery.renderer,
     statusNote: currentStatusNote,
     viewer: viewer?.getDebugSnapshot() ?? null,
   });
@@ -70,7 +76,7 @@ async function main(): Promise<void> {
     };
   }
 
-  viewer = new SceneViewer({
+  viewer = createViewerAdapter(runtimeQuery.renderer, {
     hostElement: viewerHost,
     events,
     runtimeOverrides: {
@@ -89,9 +95,12 @@ async function main(): Promise<void> {
   }
 
   const compatibilityStatusMessage = viewer.getCompatibilityStatusMessage();
+  const rendererLabel = formatRendererLabel(viewer.getRendererId());
 
   const setStatusNote = (message: string): void => {
-    currentStatusNote = compatibilityStatusMessage ? `${message} ${compatibilityStatusMessage}` : message;
+    currentStatusNote = [`Renderer: ${rendererLabel}.`, message, compatibilityStatusMessage]
+      .filter(Boolean)
+      .join(' ');
     statusNote.textContent = currentStatusNote;
   };
 
@@ -474,7 +483,7 @@ async function main(): Promise<void> {
     updatePathControlsState();
     const totalDuration = keyframeManager.getTotalDuration();
     if (totalDuration > 0 && Math.abs(keyframeManager.getCurrentTime() - totalDuration) < 0.001) {
-      statusNote.textContent = 'Preview complete.';
+      setStatusNote('Preview complete.');
     }
   });
 
@@ -483,9 +492,7 @@ async function main(): Promise<void> {
   });
 
   renderKeyframeList();
-  if (viewer.isCompatibilityMode()) {
-    setStatusNote('Ready to load a scene.');
-  }
+  setStatusNote('Ready to load a scene.');
   updatePathControlsState();
   updateTimelineUI(0, 0);
 

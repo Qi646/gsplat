@@ -7,6 +7,8 @@ export interface ScenePreset {
   description: string;
 }
 
+export type ViewerRendererId = 'mkkellogg' | 'spark';
+
 export interface SerializableVector3 {
   x: number;
   y: number;
@@ -42,6 +44,7 @@ export interface InterpolatedPose {
 }
 
 export interface ViewerDebugSnapshot {
+  rendererId: ViewerRendererId;
   canvasSize: {
     width: number;
     height: number;
@@ -63,7 +66,7 @@ export interface ViewerDebugSnapshot {
       enableSIMDInSort: boolean;
       integerBasedSort: boolean;
       splatSortDistanceMapPrecision: number;
-    };
+    } | null;
   };
   sceneCount: number;
   sceneLoaded: boolean;
@@ -77,6 +80,7 @@ export type AppBootPhase = 'booting' | 'viewer:initializing' | 'viewer:ready' | 
 export interface AppDebugSnapshot {
   bootPhase: AppBootPhase;
   initErrorMessage: string | null;
+  rendererId: ViewerRendererId;
   statusNote: string | null;
   viewer: ViewerDebugSnapshot | null;
 }
