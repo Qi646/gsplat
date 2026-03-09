@@ -74,6 +74,27 @@ curl -I http://localhost:5173/
 curl -I http://localhost:3001/
 ```
 
+## Firefox Regression Check
+
+First-time setup:
+
+```bash
+npm run playwright:install:firefox
+```
+
+Routine rerun:
+
+```bash
+npm run test:e2e:firefox
+```
+
+Notes:
+
+- The script builds the app, starts the production server on port `3310`, and runs the Playwright Firefox project from `e2e/viewer-render.spec.ts`.
+- Failure artifacts are written under `test-results/` as screenshots, videos, and traces.
+- If the suite fails before any scene load with `Init error: Error creating WebGL context.`, that demonstrates a real Firefox/WebGL compatibility failure in the current host environment, but it does not by itself prove an app-logic regression. Confirm that headless Firefox on the machine can create a bare `webgl` context before treating that failure as viewer-specific.
+- To inspect a trace, run `npx playwright show-trace test-results/<test-output-dir>/trace.zip`.
+
 ## Implementation Notes
 
 - `client/src/viewer/SceneViewer.ts` wraps `@mkkellogg/gaussian-splats-3d` through the package's `rootElement` + `getSplatMesh()` API surface and owns scene loading, render loop, framing, resizing, and FPS tracking.
@@ -95,7 +116,7 @@ curl -I http://localhost:3001/
 - Successful scene changes clear the current camera path so keyframes remain scene-specific.
 - Path import and path editing controls remain disabled until a scene has loaded successfully.
 - The committed browser smoke fixture lives at `client/public/test-assets/smoke-grid.ply` and is used by the Firefox Playwright regression test.
-- The Firefox browser regression test currently reproduces a viewer startup failure in this environment before any scene load begins: both default and forced compatibility modes fail with `Init error: Error creating WebGL context.`
+- In the current host environment, the Firefox browser regression test fails before any scene load begins: both default and forced compatibility modes fail with `Init error: Error creating WebGL context.` The same symptom can be caused by Firefox lacking WebGL support in headless mode, so interpret it as an environment compatibility failure first and an app regression only after confirming raw Firefox WebGL works on the host.
 
 ## Development Guidance
 

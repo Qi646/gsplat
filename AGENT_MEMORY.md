@@ -36,6 +36,8 @@
 - A new root Playwright Firefox harness (`playwright.config.ts`, `e2e/viewer-render.spec.ts`) runs against the built app on port `3310` and captures trace/video/screenshot artifacts under `test-results/`.
 - In this environment on 2026-03-09, the Firefox browser regression test reproduces a startup failure before any scene load in both default and forced compatibility modes: the page shows `Init error: Error creating WebGL context.`
 - Running Firefox browser automation inside the default sandbox failed because Playwright's Firefox process could not complete startup (`/proc/self/uid_map: EACCES`); the Firefox e2e run required an escalated command outside the sandbox.
+- A bare outside-sandbox Playwright Firefox probe on 2026-03-09 reported both `webgl` and `webgl2` unavailable on `about:blank`, so the Firefox e2e failure currently documents a host Firefox/WebGL compatibility problem rather than proving an app-logic regression by itself.
+- `README.md` now includes a Firefox rerun note: `npm run playwright:install:firefox` once, then `npm run test:e2e:firefox`, with failure artifacts under `test-results/` and guidance to confirm raw Firefox WebGL before classifying `Error creating WebGL context.` as a viewer bug.
 
 ## Decisions
 - Use a root `.gitignore` for repo-wide transient files and the root archive before the initial commit.
