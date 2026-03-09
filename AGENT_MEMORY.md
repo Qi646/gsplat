@@ -7,6 +7,7 @@
 
 ## Decisions
 - Use a root `.gitignore` for repo-wide transient files and the root archive before the initial commit.
+- For large or multi-feature tasks, prefer incremental code changes and incremental commits rather than one large end-of-task commit.
 
 ## Archived Plans
 - 2026-03-08: Created the initial import commit with `AGENTS.md`, `AGENT_MEMORY.md`, the root `.gitignore`, and the `gsplat-viewer/` source tree.
