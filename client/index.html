@@ -283,6 +283,124 @@
 
     .controls-list strong { color: var(--text); font-weight: 500; }
 
+    .path-actions {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 6px;
+      margin-bottom: 10px;
+    }
+
+    .path-secondary-actions {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 6px;
+      margin-bottom: 10px;
+    }
+
+    .timeline-row {
+      display: grid;
+      grid-template-columns: auto 1fr auto;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+
+    .scrubber-time {
+      font-size: 10px;
+      color: var(--muted);
+      min-width: 34px;
+      text-align: center;
+    }
+
+    #timeline-scrubber {
+      width: 100%;
+      accent-color: var(--accent);
+    }
+
+    .keyframe-list {
+      display: grid;
+      gap: 6px;
+    }
+
+    .kf-empty {
+      padding: 12px;
+      border: 1px dashed var(--border);
+      border-radius: 4px;
+      font-size: 10px;
+      line-height: 1.7;
+      color: var(--muted);
+      text-align: center;
+    }
+
+    .kf-item {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 10px;
+      padding: 10px;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      background: var(--surface2);
+      cursor: pointer;
+      transition: border-color 0.15s, transform 0.15s;
+    }
+
+    .kf-item:hover { border-color: rgba(0,229,255,0.35); }
+    .kf-item.selected { border-color: var(--accent); background: rgba(0,229,255,0.08); }
+
+    .kf-info {
+      min-width: 0;
+    }
+
+    .kf-topline {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 4px;
+      font-size: 10px;
+    }
+
+    .kf-index {
+      color: var(--text);
+      font-weight: 500;
+    }
+
+    .kf-time {
+      color: var(--accent);
+    }
+
+    .kf-pos {
+      font-size: 9px;
+      color: var(--muted);
+      line-height: 1.5;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .kf-actions {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .kf-action {
+      width: 24px;
+      height: 24px;
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      background: transparent;
+      color: var(--text);
+      font-family: var(--mono);
+      font-size: 11px;
+      cursor: pointer;
+      transition: border-color 0.15s, color 0.15s, background 0.15s;
+    }
+
+    .kf-action:hover { border-color: var(--accent); color: var(--accent); }
+    .kf-action:disabled { opacity: 0.35; cursor: not-allowed; pointer-events: none; }
+    .kf-action.danger:hover { border-color: var(--danger); color: var(--danger); }
+
     .note {
       font-size: 10px;
       line-height: 1.7;
@@ -373,6 +491,33 @@
           <div><strong>Orbit:</strong> left drag orbit, right drag pan, scroll zoom</div>
           <div><strong>Walk:</strong> click Walk Mode, then WASD + mouse look</div>
           <div><strong>Scene:</strong> Frame Scene fits bounds, Reset View returns to the default framing</div>
+        </div>
+      </div>
+
+      <div class="panel-section">
+        <div class="section-label">Camera Path</div>
+        <div class="path-actions">
+          <button class="btn" id="btn-add-kf" disabled>+ Add Keyframe</button>
+          <button class="btn" id="btn-clear-kfs" disabled>✕ Clear</button>
+        </div>
+        <div class="path-secondary-actions">
+          <button class="btn" id="btn-preview" disabled>▶ Preview</button>
+          <button class="btn" id="btn-save-path" disabled>⬇ Save</button>
+          <button class="btn" id="btn-load-path" disabled>⬆ Load</button>
+        </div>
+        <input type="file" id="path-file-input" accept=".json,application/json" hidden />
+
+        <div class="timeline-row">
+          <span class="scrubber-time" id="scrubber-time-left">0.0s</span>
+          <input type="range" id="timeline-scrubber" min="0" max="1000" value="0" disabled />
+          <span class="scrubber-time" id="scrubber-time-right">0.0s</span>
+        </div>
+
+        <div class="keyframe-list" id="keyframe-list">
+          <div class="kf-empty">
+            No keyframes yet.<br />
+            Explore the scene, then click <strong>Add Keyframe</strong>.
+          </div>
         </div>
       </div>
 

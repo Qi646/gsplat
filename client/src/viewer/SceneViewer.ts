@@ -1,7 +1,7 @@
 import * as GaussianSplats3D from '@mkkellogg/gaussian-splats-3d';
 import * as THREE from 'three';
 import { formatLoadProgress } from '../lib/loadProgress';
-import type { AppEvents } from '../types';
+import type { AppEvents, InterpolatedPose } from '../types';
 import { detectSceneFormat } from '../lib/sceneFormat';
 
 export interface ViewerOptions {
@@ -131,6 +131,28 @@ export class SceneViewer {
     this.camera.quaternion.copy(this.initialQuaternion);
     this.camera.fov = this.initialFov;
     this.camera.updateProjectionMatrix();
+    this.viewer?.controls?.update?.();
+  }
+
+  applyCameraPose(pose: InterpolatedPose): void {
+    if (!this.camera) {
+      return;
+    }
+
+    const currentTarget = this.viewer?.controls?.target as THREE.Vector3 | undefined;
+    const distanceToTarget = currentTarget ? currentTarget.distanceTo(this.camera.position) : 1;
+
+    this.camera.position.copy(pose.position);
+    this.camera.quaternion.copy(pose.quaternion);
+    this.camera.fov = pose.fov;
+    this.camera.updateProjectionMatrix();
+
+    if (currentTarget) {
+      const lookDirection = new THREE.Vector3(0, 0, -1).applyQuaternion(this.camera.quaternion);
+      const targetDistance = distanceToTarget > 0 ? distanceToTarget : 1;
+      currentTarget.copy(this.camera.position).addScaledVector(lookDirection, targetDistance);
+    }
+
     this.viewer?.controls?.update?.();
   }
 
