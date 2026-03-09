@@ -16,11 +16,15 @@
 - The upstream loader reports download progress as numeric stages `0/1/2` for download/processing/done; it does not export that enum at runtime.
 - The root client now formats scene-load progress from the raw loader label instead of rounding to whole percentages, so sub-1% download progress is visible and no longer appears stuck at `0%`.
 - The current root scene load remains non-progressive: the scene is not visible until processing finishes, and the progress bar resets to `0%` when the loader switches from download to processing.
+- The installed `@mkkellogg/gaussian-splats-3d` package does not honor the locally stubbed `workerConfig.crossOriginIsolated` option; real worker behavior must be controlled through supported viewer options such as `sharedMemoryForWorkers` and `gpuAcceleratedSort`.
+- The root app now serves `Cross-Origin-Opener-Policy: same-origin` and `Cross-Origin-Embedder-Policy: require-corp` in both Vite dev and the Express production server so the viewer can use shared-memory workers when available.
+- The root viewer now automatically falls back to `sharedMemoryForWorkers: false` and `gpuAcceleratedSort: false` when `window.crossOriginIsolated` is unavailable, and surfaces that compatibility mode in the UI status note instead of hanging in processing.
 - Camera paths at the root use JSON keyframes `{ id, time, position, quaternion, fov }`, Catmull-Rom position interpolation, shortest-arc quaternion slerp, smoothstep timing, and FOV lerp.
 - Successful scene reloads now clear the current camera path so saved keyframes remain scene-specific.
 - A root `README.md` now documents the active root workspace, current implemented slice, validated commands, and the fact that `gsplat-viewer/` is reference-only.
 - `npm install` hit an `EACCES` cache issue under `/home/qi/.npm`; using `npm install --cache /tmp/npm-cache-gsplat-1` worked around it cleanly.
 - A local declaration file was added for `@mkkellogg/gaussian-splats-3d` because the installed package lacks TypeScript declarations.
+- The root server now has its own `vitest` + `supertest` harness to verify headers and `/api/health`, and the root `npm test` command runs both client and server test suites.
 - There is a stray import artifact directory `gsplat-viewer/{client` that appears accidental.
 - A 2026-03-09 smoke check showed existing local listeners can occupy ports `3001` and `5173`; Vite auto-shifts to the next port, but the Express dev server still fails fast on `3001` with `EADDRINUSE`.
 
@@ -45,3 +49,4 @@
 - 2026-03-09: Repaired the root preset scene catalog, added preset catalog tests, and changed scene loads to replace the active scene instead of accumulating multiple scenes.
 - 2026-03-09: Fixed the root load-progress UI to use the library's real stage codes and raw fractional download progress, with unit coverage for progress formatting.
 - 2026-03-09: Completed the root camera-path milestone with keyframe capture, reorder/delete, smooth preview playback, scrubbing, and path JSON save/load.
+- 2026-03-09: Fixed the scene-load stall by adding COOP/COEP headers in dev/prod, switching the viewer to supported worker options, and adding a compatibility fallback plus server header tests.
