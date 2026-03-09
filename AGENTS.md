@@ -16,6 +16,7 @@ These instructions apply to the entire repository rooted here.
 - Thorough validation is mandatory at each milestone step: add sufficient tests and run build/unit/integration verification before considering progress complete.
 - Use virtual environments when appropriate (e.g., Python tooling/dependencies: `python -m venv .venv`).
 - Save notable experiences (what worked, what did not work, and similar learnings) in `AGENTS.md` or `AGENT_MEMORY.md` when appropriate.
+- Always document current expected behaviour in repo-facing docs when behavior changes or when user-visible limitations/quirks are clarified.
 - Treat severe blockers (missing required toolchains, blocked core commands, and similar hard prerequisites) as stop conditions: report the blocker and wait for resolution instead of proceeding speculatively.
 - For large or multi-feature work, make and commit incremental changes as progress is made; do not batch all changes into one final commit.
 - Treat `gsplat-viewer/` as read-only reference material. Product work should happen at the repo root; copy/adapt useful files out of `gsplat-viewer/` instead of modifying it in place.

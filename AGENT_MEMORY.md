@@ -15,6 +15,7 @@
 - `client/src/viewer/SceneViewer.ts` now replaces any existing splat scene before loading a new preset or URL so the root app behaves as a single-scene viewer.
 - The upstream loader reports download progress as numeric stages `0/1/2` for download/processing/done; it does not export that enum at runtime.
 - The root client now formats scene-load progress from the raw loader label instead of rounding to whole percentages, so sub-1% download progress is visible and no longer appears stuck at `0%`.
+- The current root scene load remains non-progressive: the scene is not visible until processing finishes, and the progress bar resets to `0%` when the loader switches from download to processing.
 - Camera paths at the root use JSON keyframes `{ id, time, position, quaternion, fov }`, Catmull-Rom position interpolation, shortest-arc quaternion slerp, smoothstep timing, and FOV lerp.
 - Successful scene reloads now clear the current camera path so saved keyframes remain scene-specific.
 - A root `README.md` now documents the active root workspace, current implemented slice, validated commands, and the fact that `gsplat-viewer/` is reference-only.
@@ -32,6 +33,7 @@
 - When adapting `@mkkellogg/gaussian-splats-3d`, rely on local constants for loader-status codes instead of assuming the package exports its internal `LoaderStatus` symbol.
 - Keep the root camera-path UI lightweight: explicit move-up/move-down reordering, no drag-and-drop timeline editor yet.
 - Disable path import until a scene is loaded, and clear the current path on successful scene changes.
+- Always document current expected behaviour in repo-facing docs when behavior changes or when user-visible limitations/quirks are clarified.
 
 ## Active Plan
 - Next milestone should add the export manager and FFmpeg-backed server routes at the repo root.

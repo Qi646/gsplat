@@ -79,6 +79,14 @@ curl -I http://localhost:5173/
 - `client/src/path/PathInterpolator.ts` and `client/src/path/KeyframeManager.ts` own keyframe capture, interpolation, preview playback, and path JSON serialization.
 - `server/src/index.ts` currently exposes `/api/health` and serves the production client build when present.
 
+## Current Expected Behaviour
+
+- Scene loads are single-scene. Loading a preset or URL replaces the previously loaded scene.
+- Scene loading is currently non-progressive. The scene is not visible until processing completes.
+- The progress bar reflects download progress first, then resets to `0%` when the loader switches into processing. The UI does not yet expose granular processing sub-steps.
+- Successful scene changes clear the current camera path so keyframes remain scene-specific.
+- Path import and path editing controls remain disabled until a scene has loaded successfully.
+
 ## Development Guidance
 
 - Treat `ASSIGNMENT.md` as the scope brief and success criteria.
