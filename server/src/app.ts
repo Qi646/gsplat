@@ -3,12 +3,19 @@ import express from 'express';
 import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
+import {
+  ExportServiceError,
+  FfmpegExportService,
+  type ExportJobSettings,
+  type ExportService,
+} from './exportService.js';
 import { PresetArchiveService } from './presetArchive.js';
 
 export interface AppOptions {
   clientBuildDir: string;
   clientIndexPath: string;
   corsOrigin: string;
+  exportService: ExportService;
   presetService: PresetService;
   serveClientBuild: boolean;
 }
@@ -37,11 +44,13 @@ export function createApp(options: Partial<AppOptions> = {}): express.Express {
   const clientBuildDir = options.clientBuildDir ?? path.join(process.cwd(), 'public');
   const clientIndexPath = options.clientIndexPath ?? path.join(clientBuildDir, 'index.html');
   const corsOrigin = options.corsOrigin ?? 'http://localhost:5173';
+  const exportService = options.exportService ?? new FfmpegExportService();
   const presetService = options.presetService ?? new PresetArchiveService();
   const serveClientBuild = options.serveClientBuild ?? existsSync(clientIndexPath);
 
   app.use(applyCrossOriginIsolationHeaders);
   app.use(cors({ origin: corsOrigin }));
+  app.use(express.json({ limit: '1mb' }));
 
   app.get('/api/health', (_request, response) => {
     response.json({ ok: true });
@@ -68,6 +77,65 @@ export function createApp(options: Partial<AppOptions> = {}): express.Express {
     }
   });
 
+  app.post('/api/export/jobs', async (request, response) => {
+    try {
+      const settings = request.body as Partial<ExportJobSettings> | undefined;
+      const job = await exportService.createJob({
+        fps: Number(settings?.fps),
+        height: Number(settings?.height),
+        width: Number(settings?.width),
+      });
+      response.status(201).json(job);
+    } catch (error) {
+      sendExportError(response, error, 'Could not start export job.');
+    }
+  });
+
+  app.post(
+    '/api/export/jobs/:jobId/frame',
+    express.raw({ limit: '20mb', type: 'image/png' }),
+    async (request, response) => {
+      const { jobId = '' } = request.params;
+      if (!Buffer.isBuffer(request.body)) {
+        response.status(400).json({ error: 'Export frame body must be PNG image bytes.' });
+        return;
+      }
+
+      try {
+        await exportService.appendFrame(jobId, request.body);
+        response.status(204).end();
+      } catch (error) {
+        sendExportError(response, error, 'Could not append export frame.');
+      }
+    },
+  );
+
+  app.post('/api/export/jobs/:jobId/finalize', async (request, response) => {
+    const { jobId = '' } = request.params;
+
+    try {
+      const video = await exportService.finalizeJob(jobId);
+      response
+        .set('Cache-Control', 'no-store')
+        .set('Content-Disposition', 'attachment; filename="output.mp4"')
+        .type('video/mp4')
+        .send(video);
+    } catch (error) {
+      sendExportError(response, error, 'Could not finalize export.');
+    }
+  });
+
+  app.delete('/api/export/jobs/:jobId', async (request, response) => {
+    const { jobId = '' } = request.params;
+
+    try {
+      await exportService.cancelJob(jobId);
+      response.status(204).end();
+    } catch (error) {
+      sendExportError(response, error, 'Could not cancel export.');
+    }
+  });
+
   if (serveClientBuild) {
     app.use(express.static(clientBuildDir));
 
@@ -81,4 +149,18 @@ export function createApp(options: Partial<AppOptions> = {}): express.Express {
   }
 
   return app;
+}
+
+function sendExportError(
+  response: express.Response,
+  error: unknown,
+  fallbackMessage: string,
+): void {
+  if (error instanceof ExportServiceError) {
+    response.status(error.statusCode).json({ error: error.message });
+    return;
+  }
+
+  console.error(fallbackMessage, error);
+  response.status(502).json({ error: fallbackMessage });
 }
