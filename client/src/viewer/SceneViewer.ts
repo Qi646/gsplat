@@ -4,6 +4,7 @@ import { formatLoadProgress } from '../lib/loadProgress';
 import { computeRobustSceneBounds } from '../lib/robustSceneBounds';
 import type { AppEvents, InterpolatedPose, ViewerDebugSnapshot } from '../types';
 import { detectSceneFormat } from '../lib/sceneFormat';
+import { applyAdaptiveCameraFrustum } from './adaptiveCameraFrustum';
 import { resolveViewerRuntimeConfig, type ViewerRuntimeOverrides, type ViewerRuntimeOptions } from './viewerRuntime';
 import type { ViewerAdapter, ViewerAdapterOptions } from './ViewerAdapter';
 
@@ -31,6 +32,8 @@ export class SceneViewer implements ViewerAdapter {
   private runtimeViewerOptions: ViewerRuntimeOptions = {
     gpuAcceleratedSort: false,
     sharedMemoryForWorkers: false,
+    integerBasedSort: false,
+    splatSortDistanceMapPrecision: 20,
   };
 
   constructor(options: ViewerAdapterOptions) {
@@ -126,7 +129,7 @@ export class SceneViewer implements ViewerAdapter {
 
     this.renderer.setSize(width, height, false);
     this.camera.aspect = width / Math.max(height, 1);
-    this.camera.updateProjectionMatrix();
+    this.syncCameraProjection(true);
   }
 
   setFrameHook(frameHook: (() => void) | null): void {
@@ -160,6 +163,7 @@ export class SceneViewer implements ViewerAdapter {
   renderNow(): void {
     this.frameHook?.();
     this.viewer?.update();
+    this.syncCameraProjection();
     this.viewer?.render();
   }
 
@@ -189,6 +193,7 @@ export class SceneViewer implements ViewerAdapter {
 
     this.camera.position.copy(targetPosition);
     this.camera.lookAt(center);
+    this.syncCameraProjection(true);
     this.viewer?.controls?.target?.copy(center);
     this.viewer?.controls?.update?.();
     return true;
@@ -202,7 +207,7 @@ export class SceneViewer implements ViewerAdapter {
     this.camera.position.copy(this.initialPosition);
     this.camera.quaternion.copy(this.initialQuaternion);
     this.camera.fov = this.initialFov;
-    this.camera.updateProjectionMatrix();
+    this.syncCameraProjection(true);
     this.viewer?.controls?.update?.();
   }
 
@@ -217,7 +222,7 @@ export class SceneViewer implements ViewerAdapter {
     this.camera.position.copy(pose.position);
     this.camera.quaternion.copy(pose.quaternion);
     this.camera.fov = pose.fov;
-    this.camera.updateProjectionMatrix();
+    this.syncCameraProjection(true);
 
     if (currentTarget) {
       const lookDirection = new THREE.Vector3(0, 0, -1).applyQuaternion(this.camera.quaternion);
@@ -274,6 +279,10 @@ export class SceneViewer implements ViewerAdapter {
 
     return {
       rendererId: this.getRendererId(),
+      camera: {
+        near: this.camera?.near ?? 0,
+        far: this.camera?.far ?? 0,
+      },
       canvasSize: {
         width: this.renderer?.domElement.width ?? 0,
         height: this.renderer?.domElement.height ?? 0,
@@ -331,6 +340,7 @@ export class SceneViewer implements ViewerAdapter {
 
       this.frameHook?.();
       this.viewer?.update();
+      this.syncCameraProjection();
       this.viewer?.render();
       this.animationFrameId = requestAnimationFrame(tick);
     };
@@ -399,6 +409,20 @@ export class SceneViewer implements ViewerAdapter {
     this.initialPosition.copy(this.camera.position);
     this.initialQuaternion.copy(this.camera.quaternion);
     this.initialFov = this.camera.fov;
+  }
+
+  private syncCameraProjection(forceProjectionUpdate = false): void {
+    if (!this.camera) {
+      return;
+    }
+
+    const frustumChanged = this.hasUsableSceneBounds()
+      ? applyAdaptiveCameraFrustum(this.camera, this.sceneBounds)
+      : false;
+
+    if (forceProjectionUpdate || frustumChanged) {
+      this.camera.updateProjectionMatrix();
+    }
   }
 
   private hasUsableSceneBounds(): boolean {

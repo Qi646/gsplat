@@ -45,6 +45,10 @@ export interface InterpolatedPose {
 
 export interface ViewerDebugSnapshot {
   rendererId: ViewerRendererId;
+  camera: {
+    near: number;
+    far: number;
+  };
   canvasSize: {
     width: number;
     height: number;

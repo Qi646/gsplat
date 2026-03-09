@@ -7,6 +7,7 @@ import {
 } from '../lib/robustSceneBounds';
 import { detectSceneFormat } from '../lib/sceneFormat';
 import type { InterpolatedPose, ViewerDebugSnapshot } from '../types';
+import { applyAdaptiveCameraFrustum } from './adaptiveCameraFrustum';
 import type { ViewerAdapter, ViewerAdapterOptions } from './ViewerAdapter';
 
 const SPARK_VIEW_OPTIONS = {
@@ -140,7 +141,7 @@ export class SparkSceneViewer implements ViewerAdapter {
 
     this.renderer.setSize(safeWidth, safeHeight, false);
     this.camera.aspect = safeWidth / safeHeight;
-    this.camera.updateProjectionMatrix();
+    this.syncCameraProjection(true);
   }
 
   setFrameHook(frameHook: (() => void) | null): void {
@@ -169,6 +170,7 @@ export class SparkSceneViewer implements ViewerAdapter {
   renderNow(): void {
     this.frameHook?.();
     this.controls?.update();
+    this.syncCameraProjection();
     if (this.scene && this.camera) {
       this.renderer?.render(this.scene, this.camera);
     }
@@ -200,6 +202,7 @@ export class SparkSceneViewer implements ViewerAdapter {
 
     this.camera.position.copy(targetPosition);
     this.controls.target.copy(center);
+    this.syncCameraProjection(true);
     this.controls.update();
     return true;
   }
@@ -212,7 +215,7 @@ export class SparkSceneViewer implements ViewerAdapter {
     this.camera.position.copy(this.initialPosition);
     this.camera.quaternion.copy(this.initialQuaternion);
     this.camera.fov = this.initialFov;
-    this.camera.updateProjectionMatrix();
+    this.syncCameraProjection(true);
     this.controls.target.copy(this.initialTarget);
     this.controls.update();
   }
@@ -227,7 +230,7 @@ export class SparkSceneViewer implements ViewerAdapter {
     this.camera.position.copy(pose.position);
     this.camera.quaternion.copy(pose.quaternion);
     this.camera.fov = pose.fov;
-    this.camera.updateProjectionMatrix();
+    this.syncCameraProjection(true);
 
     const lookDirection = new THREE.Vector3(0, 0, -1).applyQuaternion(this.camera.quaternion);
     const targetDistance = distanceToTarget > 0 ? distanceToTarget : 1;
@@ -273,6 +276,10 @@ export class SparkSceneViewer implements ViewerAdapter {
 
     return {
       rendererId: this.getRendererId(),
+      camera: {
+        near: this.camera?.near ?? 0,
+        far: this.camera?.far ?? 0,
+      },
       canvasSize: {
         width: this.renderer?.domElement.width ?? 0,
         height: this.renderer?.domElement.height ?? 0,
@@ -335,6 +342,7 @@ export class SparkSceneViewer implements ViewerAdapter {
 
       this.frameHook?.();
       this.controls?.update();
+      this.syncCameraProjection();
       if (this.scene && this.camera) {
         this.renderer?.render(this.scene, this.camera);
       }
@@ -401,6 +409,20 @@ export class SparkSceneViewer implements ViewerAdapter {
     this.initialTarget.copy(this.controls.target);
     this.initialQuaternion.copy(this.camera.quaternion);
     this.initialFov = this.camera.fov;
+  }
+
+  private syncCameraProjection(forceProjectionUpdate = false): void {
+    if (!this.camera) {
+      return;
+    }
+
+    const frustumChanged = this.hasUsableSceneBounds()
+      ? applyAdaptiveCameraFrustum(this.camera, this.sceneBounds)
+      : false;
+
+    if (forceProjectionUpdate || frustumChanged) {
+      this.camera.updateProjectionMatrix();
+    }
   }
 
   private hasUsableSceneBounds(): boolean {

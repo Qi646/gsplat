@@ -46,6 +46,10 @@ class FakeViewer implements ViewerAdapter {
 
   getDebugSnapshot(): ViewerDebugSnapshot {
     return {
+      camera: {
+        far: this.camera.far,
+        near: this.camera.near,
+      },
       canvasSize: {
         clientHeight: 360,
         clientWidth: 640,

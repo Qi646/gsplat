@@ -329,12 +329,42 @@ describe('SparkSceneViewer', () => {
     expect(viewer.isSceneLoaded()).toBe(true);
     expect(viewer.getDebugSnapshot()).toMatchObject({
       rendererId: 'spark',
+      camera: {
+        near: 0.1,
+      },
       runtime: {
         compatibilityMode: false,
         viewerOptions: null,
       },
       splatCount: 128,
     });
+    expect(viewer.getCamera()?.far).toBeGreaterThan(10);
+  });
+
+  it('tightens the Spark camera near plane for close inspection poses', async () => {
+    const events = new AppEvents();
+    const hostElement = {
+      clientHeight: 600,
+      clientWidth: 800,
+      replaceChildren: vi.fn(),
+    } as unknown as HTMLDivElement;
+    const viewer = new SparkSceneViewer({ hostElement, events });
+
+    await viewer.init();
+    await viewer.loadScene('/api/presets/truck.ksplat');
+
+    const sceneBounds = (viewer as unknown as { sceneBounds: THREE.Box3 }).sceneBounds;
+    const closePosition = sceneBounds.getCenter(new THREE.Vector3());
+
+    viewer.applyCameraPose({
+      position: closePosition,
+      quaternion: new THREE.Quaternion(),
+      fov: 60,
+    });
+
+    expect(viewer.getCamera()?.near).toBeLessThan(0.1);
+    expect(viewer.getCamera()?.near).toBeGreaterThanOrEqual(0.01);
+    expect(viewer.getCamera()?.far).toBeGreaterThan((viewer.getCamera()?.near ?? 0) + 10);
   });
 
   it('fails scene loads that resolve with zero splats', async () => {

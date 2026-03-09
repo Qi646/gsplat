@@ -15,6 +15,8 @@ describe('resolveViewerRuntimeConfig', () => {
       viewerOptions: {
         gpuAcceleratedSort: false,
         sharedMemoryForWorkers: false,
+        integerBasedSort: false,
+        splatSortDistanceMapPrecision: 20,
       },
     });
   });
@@ -27,6 +29,8 @@ describe('resolveViewerRuntimeConfig', () => {
       viewerOptions: {
         gpuAcceleratedSort: false,
         sharedMemoryForWorkers: false,
+        integerBasedSort: false,
+        splatSortDistanceMapPrecision: 20,
       },
     });
   });
@@ -39,6 +43,8 @@ describe('resolveViewerRuntimeConfig', () => {
       viewerOptions: {
         gpuAcceleratedSort: true,
         sharedMemoryForWorkers: true,
+        integerBasedSort: false,
+        splatSortDistanceMapPrecision: 20,
       },
     });
   });
@@ -52,6 +58,8 @@ describe('resolveViewerRuntimeConfig', () => {
       viewerOptions: {
         gpuAcceleratedSort: false,
         sharedMemoryForWorkers: false,
+        integerBasedSort: false,
+        splatSortDistanceMapPrecision: 20,
       },
     });
   });
@@ -65,6 +73,8 @@ describe('resolveViewerRuntimeConfig', () => {
       viewerOptions: {
         gpuAcceleratedSort: false,
         sharedMemoryForWorkers: false,
+        integerBasedSort: false,
+        splatSortDistanceMapPrecision: 20,
       },
     });
   });
@@ -77,6 +87,8 @@ describe('resolveViewerRuntimeConfig', () => {
       viewerOptions: {
         gpuAcceleratedSort: true,
         sharedMemoryForWorkers: true,
+        integerBasedSort: false,
+        splatSortDistanceMapPrecision: 20,
       },
     });
   });
@@ -89,6 +101,8 @@ describe('resolveViewerRuntimeConfig', () => {
       viewerOptions: {
         gpuAcceleratedSort: false,
         sharedMemoryForWorkers: false,
+        integerBasedSort: false,
+        splatSortDistanceMapPrecision: 20,
       },
     });
   });

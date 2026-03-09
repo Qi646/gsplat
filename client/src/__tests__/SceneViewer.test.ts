@@ -205,7 +205,8 @@ describe('SceneViewer', () => {
     expect(mockModule.__mockState.viewerOptions?.['canvas']).toBeUndefined();
     expect(mockModule.__mockState.viewerOptions?.['gpuAcceleratedSort']).toBe(false);
     expect(mockModule.__mockState.viewerOptions?.['sharedMemoryForWorkers']).toBe(false);
-    expect(mockModule.__mockState.viewerOptions).not.toHaveProperty('integerBasedSort');
+    expect(mockModule.__mockState.viewerOptions?.['integerBasedSort']).toBe(false);
+    expect(mockModule.__mockState.viewerOptions?.['splatSortDistanceMapPrecision']).toBe(20);
     expect(viewer.getRendererId()).toBe('mkkellogg');
     expect(viewer.getInteractionSurface()).toEqual(
       (viewer as unknown as { renderer: { domElement: unknown } }).renderer.domElement,
@@ -270,6 +271,8 @@ describe('SceneViewer', () => {
         viewerOptions: {
           gpuAcceleratedSort: true,
           sharedMemoryForWorkers: true,
+          integerBasedSort: false,
+          splatSortDistanceMapPrecision: 20,
         },
       },
     });
@@ -299,6 +302,8 @@ describe('SceneViewer', () => {
     expect(mockModule.__mockState.viewerOptions).toMatchObject({
       gpuAcceleratedSort: true,
       sharedMemoryForWorkers: true,
+      integerBasedSort: false,
+      splatSortDistanceMapPrecision: 20,
     });
     expect(viewer.getDebugSnapshot().rendererId).toBe('mkkellogg');
     expect(viewer.getDebugSnapshot().runtime).toMatchObject({
@@ -324,10 +329,35 @@ describe('SceneViewer', () => {
     expect(mockModule.__mockState.addSceneCalls[0]?.options['rotation']).toEqual([1, 0, 0, 0]);
     expect(viewer.isSceneLoaded()).toBe(true);
     expect(onLoaded).toHaveBeenCalledWith({ splatCount: 1024 });
+    expect(viewer.getCamera()?.near).toBeCloseTo(0.1);
+    expect(viewer.getCamera()?.far).toBeGreaterThan(20);
+    expect(viewer.getDebugSnapshot().camera).toEqual({
+      near: viewer.getCamera()?.near ?? 0,
+      far: viewer.getCamera()?.far ?? 0,
+    });
 
     const sceneBounds = (viewer as unknown as { sceneBounds: THREE.Box3 }).sceneBounds;
     expect(sceneBounds.min.toArray()).toEqual([-2, -1, -3]);
     expect(sceneBounds.max.toArray()).toEqual([4, 5, 6]);
+  });
+
+  it('tightens the camera near plane for close inspection poses', async () => {
+    const events = new AppEvents();
+    const hostElement = {} as HTMLDivElement;
+    const viewer = new SceneViewer({ hostElement, events });
+
+    await viewer.init();
+    await viewer.loadScene('/api/presets/truck.ksplat');
+
+    viewer.applyCameraPose({
+      position: new THREE.Vector3(1, 2, 2),
+      quaternion: new THREE.Quaternion(),
+      fov: 60,
+    });
+
+    expect(viewer.getCamera()?.near).toBeLessThan(0.1);
+    expect(viewer.getCamera()?.near).toBeGreaterThanOrEqual(0.01);
+    expect(viewer.getCamera()?.far).toBeGreaterThan((viewer.getCamera()?.near ?? 0) + 10);
   });
 
   it('uses robust sampled bounds to ignore splat outliers when framing a scene', async () => {
