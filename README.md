@@ -12,13 +12,15 @@ The root app currently implements the first vertical slice:
 - Load sample presets for quick validation
 - Show loading progress, FPS, and splat count
 - Provide Frame Scene, Reset View, and Walk Mode navigation
+- Capture camera keyframes from the active view
+- Reorder/delete keyframes, scrub the path, and preview smooth playback
+- Save and reload camera paths as JSON
 - Serve a simple backend health endpoint and the production client build
 
 Not yet implemented at the repo root:
 
-- Camera-path recording and playback
 - MP4 export / FFmpeg pipeline
-- Path save/load and timeline editing
+- Advanced timeline editing beyond simple reorder + scrub
 
 ## Repo Layout
 
@@ -74,6 +76,7 @@ curl -I http://localhost:5173/
 - `client/src/viewer/SceneViewer.ts` wraps `@mkkellogg/gaussian-splats-3d` and owns scene loading, render loop, framing, resizing, and FPS tracking.
 - `client/src/controls/WalkControls.ts` adds pointer-lock WASD navigation on top of the viewer camera.
 - `client/src/lib/sceneFormat.ts` and `client/src/lib/scenePresets.ts` isolate URL format detection and preset scene configuration.
+- `client/src/path/PathInterpolator.ts` and `client/src/path/KeyframeManager.ts` own keyframe capture, interpolation, preview playback, and path JSON serialization.
 - `server/src/index.ts` currently exposes `/api/health` and serves the production client build when present.
 
 ## Development Guidance
@@ -84,10 +87,8 @@ curl -I http://localhost:5173/
 
 ## Next Milestone
 
-The next milestone is camera-path recording at the repo root:
+The next milestone is the FFmpeg-backed export pipeline:
 
-- add keyframe capture from the active camera
-- support preview playback with smooth interpolation
-- add simple path list management and path JSON save/load
-
-After that, add the FFmpeg-backed export pipeline in `server/`.
+- add root client export controls that render frames along the recorded path
+- add root server routes that stream PNG frames into FFmpeg and return `output.mp4`
+- surface export progress and failure states cleanly in the client
