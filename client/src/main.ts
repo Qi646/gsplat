@@ -592,6 +592,7 @@ async function main(): Promise<void> {
 
   renderKeyframeList();
   setStatusNote('Ready to load a scene.');
+  setWalkModeUI(walkState);
   updateExportButton();
   updatePathControlsState();
   updateTimelineUI(0, 0);

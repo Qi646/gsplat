@@ -26,6 +26,7 @@
 - The root server now exposes `/api/presets/:presetId.ksplat`, lazily extracts verified `.ksplat` files from `https://projects.markkellogg.org/downloads/gaussian_splat_data.zip` via HTTP range requests, and caches them under `/tmp/gsplat-presets`.
 - Camera paths at the root use JSON keyframes `{ id, time, position, quaternion, fov }`, Catmull-Rom position interpolation, shortest-arc quaternion slerp, smoothstep timing, and FOV lerp.
 - Successful scene reloads now clear the current camera path so saved keyframes remain scene-specific.
+- Walk mode now uses an explicit `inactive` -> `armed` -> `active` lifecycle: clicking the button arms it, the next click inside the viewer requests pointer lock, `WASD` moves on the yaw plane while `Q/E` stay vertical, and exiting walk mode re-syncs orbit controls to the current view.
 - A root `README.md` now documents the active root workspace, current implemented slice, validated commands, and the fact that `gsplat-viewer/` is reference-only.
 - `npm install` hit an `EACCES` cache issue under `/home/qi/.npm`; using `npm install --cache /tmp/npm-cache-gsplat-1` worked around it cleanly.
 - A local declaration file was added for `@mkkellogg/gaussian-splats-3d` because the installed package lacks TypeScript declarations.
@@ -92,3 +93,4 @@
 - 2026-03-09: Added a renderer-adapter seam plus an opt-in SparkJS diagnostic viewer behind `?renderer=spark`, surfaced the active renderer in app/debug status, and validated the new path with unit coverage plus passing root `npm test` / `npm run build`.
 - 2026-03-09: Restored the fast shared-memory `mkkellogg` runtime as the default when cross-origin isolation is available, changed `?viewerMode=compat` into the explicit fallback switch, and applied a 180-degree X-axis rotation to default scene loads so `mkkellogg` matches Spark orientation on the same assets.
 - 2026-03-09: Completed the FFmpeg export milestone with a shared viewer-capture seam, a client-side export manager + UI, backend FFmpeg job routes, server/client unit coverage, and passing root `npm test` / `npm run build` plus a real built-service FFmpeg smoke encode.
+- 2026-03-09: Reworked walk mode into an armed pointer-lock flow, added grounded yaw-plane movement plus orbit-target resync on exit, covered the new control/viewer seams with unit tests, and documented the updated navigation UX.

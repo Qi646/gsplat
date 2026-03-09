@@ -13,7 +13,7 @@ class FakeEventTarget {
     }
 
     const listenersForType = this.listeners.get(type) ?? new Set<Listener>();
-    listenersForType.add(listener as Listener);
+    listenersForType.add(listener as unknown as Listener);
     this.listeners.set(type, listenersForType);
   }
 
@@ -22,7 +22,7 @@ class FakeEventTarget {
       return;
     }
 
-    this.listeners.get(type)?.delete(listener as Listener);
+    this.listeners.get(type)?.delete(listener as unknown as Listener);
   }
 
   dispatchEvent(event: { type: string; [key: string]: unknown }): void {

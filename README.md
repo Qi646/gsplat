@@ -112,7 +112,7 @@ Notes:
 - `client/src/viewer/createViewerAdapter.ts` selects the active viewer adapter from the runtime query. The default adapter remains `@mkkellogg/gaussian-splats-3d`, while `client/src/viewer/SparkSceneViewer.ts` provides an opt-in SparkJS comparison path.
 - `client/src/lib/robustSceneBounds.ts` computes trimmed scene bounds from sampled splats so initial framing is less sensitive to outlier points in dense scenes.
 - `client/src/viewer/viewerRuntime.ts` restores the normal fast shared-memory worker path whenever cross-origin isolation is available, and keeps `?viewerMode=compat` as an explicit fallback for diagnostics.
-- `client/src/controls/WalkControls.ts` adds pointer-lock WASD navigation on top of the viewer camera.
+- `client/src/controls/WalkControls.ts` now runs walk mode as an `inactive` -> `armed` -> `active` state machine: clicking `Walk Mode` arms it, the next click in the viewer requests pointer lock, `WASD` stays on the camera yaw plane, `Q/E` handle vertical motion, and leaving walk mode re-syncs orbit controls to the current camera view.
 - `client/src/lib/sceneFormat.ts` and `client/src/lib/scenePresets.ts` isolate URL format detection and preset scene configuration.
 - `client/src/lib/runtimeQuery.ts` and the `window.__GSPLAT_DEBUG__` hook expose test-only startup overrides and viewer diagnostics for browser regression coverage; no `viewerMode` query now means the normal default runtime, while `viewerMode=compat` explicitly opts into the fallback path.
 - `renderer=spark` switches the viewer adapter to SparkJS for renderer A/B comparisons. `viewerMode` only affects the default `mkkellogg` path.
@@ -136,6 +136,7 @@ Notes:
 - `?viewerMode=compat` explicitly requests the slower compatibility fallback; if cross-origin isolation is unavailable, the viewer also falls back to compatibility mode and reports that state.
 - SparkJS scene loads currently use Spark's own render path plus local download/progress wiring; the app surfaces the active renderer in the status note and debug snapshot for A/B verification.
 - Successful scene changes clear the current camera path so keyframes remain scene-specific.
+- Walk mode is now an explicit click-to-enter flow: the button arms it, the next click inside the viewer captures mouse look, `Frame Scene` / `Reset View` pause until walk mode exits, and leaving walk mode restores orbit around the current view direction.
 - Path import and path editing controls remain disabled until a scene has loaded successfully.
 - MP4 export requires a loaded scene plus at least two keyframes. While export is running, scene/path controls and viewer pointer interaction are locked until the job completes or fails.
 - Export currently uses fixed defaults of `1280x720 @ 30 FPS`, streams PNG frames to the same-origin backend, and downloads `output.mp4` when FFmpeg finishes.
