@@ -33,6 +33,8 @@ export class SceneViewer {
   private runtimeViewerOptions: ViewerRuntimeOptions = {
     gpuAcceleratedSort: false,
     sharedMemoryForWorkers: false,
+    integerBasedSort: false,
+    splatSortDistanceMapPrecision: 20,
   };
 
   constructor(options: ViewerOptions) {

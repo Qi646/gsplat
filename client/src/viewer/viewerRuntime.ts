@@ -1,6 +1,8 @@
 export interface ViewerRuntimeOptions {
   gpuAcceleratedSort: boolean;
   sharedMemoryForWorkers: boolean;
+  integerBasedSort: boolean;
+  splatSortDistanceMapPrecision: number;
 }
 
 export type ViewerMode = 'default' | 'compat';
@@ -18,6 +20,11 @@ export const DEFAULT_COMPATIBILITY_MODE_MESSAGE =
 export const FAST_PATH_FALLBACK_MESSAGE =
   'Compatibility mode is active because the fast path requires cross-origin isolation; scene loading may be slower.';
 
+const SAFE_SORT_VIEWER_OPTIONS = {
+  integerBasedSort: false,
+  splatSortDistanceMapPrecision: 20,
+} as const;
+
 export interface ViewerRuntimeOverrides {
   viewerMode?: ViewerMode | null;
 }
@@ -34,6 +41,7 @@ export function resolveViewerRuntimeConfig(
       viewerOptions: {
         gpuAcceleratedSort: false,
         sharedMemoryForWorkers: false,
+        ...SAFE_SORT_VIEWER_OPTIONS,
       },
     };
   }
@@ -46,6 +54,7 @@ export function resolveViewerRuntimeConfig(
       viewerOptions: {
         gpuAcceleratedSort: true,
         sharedMemoryForWorkers: true,
+        ...SAFE_SORT_VIEWER_OPTIONS,
       },
     };
   }
@@ -58,6 +67,7 @@ export function resolveViewerRuntimeConfig(
     viewerOptions: {
       gpuAcceleratedSort: false,
       sharedMemoryForWorkers: false,
+      ...SAFE_SORT_VIEWER_OPTIONS,
     },
   };
 }

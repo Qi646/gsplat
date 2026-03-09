@@ -60,6 +60,8 @@ export interface ViewerDebugSnapshot {
     viewerOptions: {
       gpuAcceleratedSort: boolean;
       sharedMemoryForWorkers: boolean;
+      integerBasedSort: boolean;
+      splatSortDistanceMapPrecision: number;
     };
   };
   sceneCount: number;

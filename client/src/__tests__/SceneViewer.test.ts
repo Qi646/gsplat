@@ -153,9 +153,30 @@ describe('SceneViewer', () => {
 
     expect(mockModule.__mockState.viewerOptions?.['rootElement']).toBe(hostElement);
     expect(mockModule.__mockState.viewerOptions?.['canvas']).toBeUndefined();
+    expect(mockModule.__mockState.viewerOptions?.['integerBasedSort']).toBe(false);
+    expect(mockModule.__mockState.viewerOptions?.['splatSortDistanceMapPrecision']).toBe(20);
     expect(viewer.getInteractionSurface()).toEqual(
       (viewer as unknown as { renderer: { domElement: unknown } }).renderer.domElement,
     );
+  });
+
+  it('surfaces the active runtime viewer options in the debug snapshot', async () => {
+    const events = new AppEvents();
+    const hostElement = {} as HTMLDivElement;
+    const viewer = new SceneViewer({
+      hostElement,
+      events,
+      runtimeOverrides: { viewerMode: 'default' },
+    });
+
+    await viewer.init();
+
+    expect(viewer.getDebugSnapshot().runtime.viewerOptions).toEqual({
+      gpuAcceleratedSort: true,
+      sharedMemoryForWorkers: true,
+      integerBasedSort: false,
+      splatSortDistanceMapPrecision: 20,
+    });
   });
 
   it('loads a scene, disables the package loading UI, and emits scene:loaded when bounds are valid', async () => {
