@@ -40,7 +40,9 @@
 - The root app now supports test-only startup query params via `client/src/lib/runtimeQuery.ts`: `?e2e=1` enables `window.__GSPLAT_DEBUG__`, no `viewerMode` param means the normal fast/default runtime, `?viewerMode=compat` explicitly requests the compatibility fallback, and `?scene=...` can auto-load a fixture URL.
 - The root app now exposes an app-level debug snapshot during startup so browser tests can distinguish `booting`, `viewer:initializing`, `viewer:ready`, and `viewer:init-error` phases instead of only observing the UI.
 - The root app now also supports `?renderer=spark` as an explicit diagnostic renderer override; the default remains `mkkellogg`, and the active renderer is surfaced in both the app status note and `window.__GSPLAT_DEBUG__`.
+- Changes to shared viewer behavior or capabilities must be propagated across both renderer paths (`mkkellogg` and `spark`) so both continue working at any given time.
 - A new root Playwright Firefox harness (`playwright.config.ts`, `e2e/viewer-render.spec.ts`) runs against the built app on port `3310` and captures trace/video/screenshot artifacts under `test-results/`.
+- The Firefox Playwright harness now expects `viewerMode=default` to stay on the fast/default path and only expects compatibility mode when `viewerMode=compat` is explicitly requested.
 - In this environment on 2026-03-09, the Firefox browser regression test reproduces a startup failure before any scene load in both default and forced compatibility modes: the page shows `Init error: Error creating WebGL context.`
 - Running Firefox browser automation inside the default sandbox failed because Playwright's Firefox process could not complete startup (`/proc/self/uid_map: EACCES`); the Firefox e2e run required an escalated command outside the sandbox.
 - A bare outside-sandbox Playwright Firefox probe on 2026-03-09 reported both `webgl` and `webgl2` unavailable on `about:blank`, so the Firefox e2e failure currently documents a host Firefox/WebGL compatibility problem rather than proving an app-logic regression by itself.
@@ -54,6 +56,7 @@
 - As of 2026-03-09, `npm test` and `npm run build` both pass again at the repo root after the renderer-adapter + SparkJS comparison spike.
 - The current client build emits a Spark-related Vite warning about a packaged WASM data URL remaining unresolved until runtime; the build still completes successfully.
 - After the export milestone on 2026-03-09, root `npm test` and `npm run build` passed again, and the existing Spark WASM/runtime warning remained non-fatal during build.
+- After aligning the Firefox e2e expectations with the current default runtime on 2026-03-09, root `npm test` and `npm run build` passed again; the existing Spark WASM/runtime warning remained non-fatal during build.
 
 ## Decisions
 - Use a root `.gitignore` for repo-wide transient files and the root archive before the initial commit.
@@ -65,6 +68,7 @@
 - When adapting `@mkkellogg/gaussian-splats-3d`, verify the installed package runtime API against its actual docs/runtime surface instead of trusting local declaration shims; the current package uses `rootElement` and `getSplatMesh()` rather than `canvas` and `scene`.
 - Prefer keeping renderer comparisons behind an explicit diagnostic query override (`?renderer=spark`) instead of changing the default viewer path until A/B evidence shows Spark is materially better on the same assets.
 - Prefer the `mkkellogg` path as the default renderer for take-home alignment, but keep Spark available behind `?renderer=spark` as a comparison/debug path.
+- Keep the `mkkellogg` and `spark` renderer implementations aligned for shared app features and behavioral fixes; do not let one renderer path drift into a broken or unsupported state.
 - Prefer the default fast shared-memory runtime when cross-origin isolation is present, and use `?viewerMode=compat` only as an explicit fallback/debug override.
 - Prefer robust sampled scene bounds for initial framing and `Frame Scene`; ignore low-alpha outlier splats before falling back to the raw mesh bounding box.
 - Keep the root camera-path UI lightweight: explicit move-up/move-down reordering, no drag-and-drop timeline editor yet.

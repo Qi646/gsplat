@@ -139,15 +139,20 @@ for (const viewerMode of ['default', 'compat'] satisfies ViewerMode[]) {
     expect(snapshot.viewer?.canvasSize.width).toBeGreaterThan(0);
     expect(snapshot.viewer?.canvasSize.height).toBeGreaterThan(0);
 
-    expect(snapshot.viewer?.runtime.compatibilityMode).toBe(true);
-    expect(snapshot.viewer?.runtime.viewerOptions.gpuAcceleratedSort).toBe(false);
-    expect(snapshot.viewer?.runtime.viewerOptions.sharedMemoryForWorkers).toBe(false);
-    expect(snapshot.viewer?.runtime.viewerOptions.enableSIMDInSort).toBe(false);
-    expect(snapshot.viewer?.runtime.viewerOptions.integerBasedSort).toBe(false);
-
     if (viewerMode === 'default') {
-      expect(snapshot.viewer?.runtime.compatibilityStatusMessage).toContain('fast-path request was ignored');
+      expect(snapshot.viewer?.runtime.compatibilityMode).toBe(false);
+      expect(snapshot.viewer?.runtime.compatibilityStatusMessage).toBeNull();
+      expect(snapshot.viewer?.runtime.viewerOptions.gpuAcceleratedSort).toBe(true);
+      expect(snapshot.viewer?.runtime.viewerOptions.sharedMemoryForWorkers).toBe(true);
+    } else {
+      expect(snapshot.viewer?.runtime.compatibilityMode).toBe(true);
+      expect(snapshot.viewer?.runtime.compatibilityStatusMessage).toContain('explicitly requested');
+      expect(snapshot.viewer?.runtime.viewerOptions.gpuAcceleratedSort).toBe(false);
+      expect(snapshot.viewer?.runtime.viewerOptions.sharedMemoryForWorkers).toBe(false);
     }
+
+    expect(snapshot.viewer?.runtime.viewerOptions.enableSIMDInSort).toBeUndefined();
+    expect(snapshot.viewer?.runtime.viewerOptions.integerBasedSort).toBeUndefined();
 
     expect(loadedMetrics.brightPixels).toBeGreaterThan(blankMetrics.brightPixels + 20);
     expect(loadedMetrics.averageBrightness).toBeGreaterThan(blankMetrics.averageBrightness + 1);

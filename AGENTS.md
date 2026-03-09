@@ -20,6 +20,7 @@ These instructions apply to the entire repository rooted here.
 - Treat severe blockers (missing required toolchains, blocked core commands, and similar hard prerequisites) as stop conditions: report the blocker and wait for resolution instead of proceeding speculatively.
 - For large or multi-feature work, make and commit incremental changes as progress is made; do not batch all changes into one final commit.
 - Treat `gsplat-viewer/` as read-only reference material. Product work should happen at the repo root; copy/adapt useful files out of `gsplat-viewer/` instead of modifying it in place.
+- Keep the `mkkellogg` and `spark` renderer paths in sync for shared app capabilities and behavior changes; when one changes, propagate the corresponding change to the other so both keep working.
 
 ## Memory File
 - Path: `AGENT_MEMORY.md`
