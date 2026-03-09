@@ -208,7 +208,7 @@ describe('WalkControls', () => {
     expect(camera.position.toArray()).toEqual([0, 0, 0]);
   });
 
-  it('moves forward on the yaw plane even when the camera is pitched', () => {
+  it('moves forward in the full look direction when the camera is pitched', () => {
     const yaw = Math.PI / 3;
     const pitch = Math.PI / 4;
     camera.quaternion.setFromEuler(new THREE.Euler(pitch, yaw, 0, 'YXZ'));
@@ -224,11 +224,35 @@ describe('WalkControls', () => {
     controls.update();
 
     const expected = new THREE.Vector3(0, 0, -1)
-      .applyQuaternion(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw))
+      .applyQuaternion(camera.quaternion)
       .multiplyScalar(0.2);
 
     expect(camera.position.x).toBeCloseTo(expected.x);
-    expect(camera.position.y).toBeCloseTo(0);
+    expect(camera.position.y).toBeCloseTo(expected.y);
+    expect(camera.position.z).toBeCloseTo(expected.z);
+  });
+
+  it('moves backward opposite the look direction when the camera is pitched', () => {
+    const yaw = -Math.PI / 6;
+    const pitch = -Math.PI / 5;
+    camera.quaternion.setFromEuler(new THREE.Euler(pitch, yaw, 0, 'YXZ'));
+
+    const controls = new WalkControls({
+      camera,
+      canvas: canvas as unknown as HTMLCanvasElement,
+    });
+
+    activateControls(controls);
+    dispatchKey('keydown', 'KeyS');
+    now = 1000;
+    controls.update();
+
+    const expected = new THREE.Vector3(0, 0, -1)
+      .applyQuaternion(camera.quaternion)
+      .multiplyScalar(-0.2);
+
+    expect(camera.position.x).toBeCloseTo(expected.x);
+    expect(camera.position.y).toBeCloseTo(expected.y);
     expect(camera.position.z).toBeCloseTo(expected.z);
   });
 

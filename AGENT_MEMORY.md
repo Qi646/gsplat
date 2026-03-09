@@ -27,7 +27,7 @@
 - The root server now exposes `/api/presets/:presetId.ksplat`, lazily extracts verified `.ksplat` files from `https://projects.markkellogg.org/downloads/gaussian_splat_data.zip` via HTTP range requests, and caches them under `/tmp/gsplat-presets`.
 - Camera paths at the root use JSON keyframes `{ id, time, position, quaternion, fov }`, Catmull-Rom position interpolation, shortest-arc quaternion slerp, smoothstep timing, and FOV lerp.
 - Successful scene reloads now clear the current camera path so saved keyframes remain scene-specific.
-- Walk mode now uses an explicit `inactive` -> `armed` -> `active` lifecycle: clicking the button arms it, the next click inside the viewer requests pointer lock, `WASD` moves on the yaw plane while `Q/E` stay vertical, and exiting walk mode re-syncs orbit controls to the current view.
+- Walk mode now uses an explicit `inactive` -> `armed` -> `active` lifecycle: clicking the button arms it, the next click inside the viewer requests pointer lock, `W/S` move along the camera look direction, `A/D` strafe, `Q/E` stay vertical, and exiting walk mode re-syncs orbit controls to the current view.
 - A root `README.md` now documents the active root workspace, current implemented slice, validated commands, and the fact that `gsplat-viewer/` is reference-only.
 - `npm install` hit an `EACCES` cache issue under `/home/qi/.npm`; using `npm install --cache /tmp/npm-cache-gsplat-1` worked around it cleanly.
 - A local declaration file was added for `@mkkellogg/gaussian-splats-3d` because the installed package lacks TypeScript declarations.
@@ -58,6 +58,7 @@
 - The current client build emits a Spark-related Vite warning about a packaged WASM data URL remaining unresolved until runtime; the build still completes successfully.
 - After the export milestone on 2026-03-09, root `npm test` and `npm run build` passed again, and the existing Spark WASM/runtime warning remained non-fatal during build.
 - After restoring compatibility mode as the startup default on 2026-03-09, root `npm test` and `npm run build` passed again; the existing Spark WASM/runtime warning remained non-fatal during build.
+- After switching walk mode to fly-through movement on 2026-03-09, root `npm test` and `npm run build` passed again; the existing Spark WASM/runtime warning remained non-fatal during build.
 
 ## Decisions
 - Use a root `.gitignore` for repo-wide transient files and the root archive before the initial commit.
@@ -99,4 +100,4 @@
 - 2026-03-09: Restored the fast shared-memory `mkkellogg` runtime as the default when cross-origin isolation is available, changed `?viewerMode=compat` into the explicit fallback switch, and applied a 180-degree X-axis rotation to default scene loads so `mkkellogg` matches Spark orientation on the same assets.
 - 2026-03-09: Switched startup back to compatibility mode after a real-user report confirmed the fast/default path still rendered blank; `?viewerMode=default` is now the explicit diagnostic override for the shared-memory path.
 - 2026-03-09: Completed the FFmpeg export milestone with a shared viewer-capture seam, a client-side export manager + UI, backend FFmpeg job routes, server/client unit coverage, and passing root `npm test` / `npm run build` plus a real built-service FFmpeg smoke encode.
-- 2026-03-09: Reworked walk mode into an armed pointer-lock flow, added grounded yaw-plane movement plus orbit-target resync on exit, covered the new control/viewer seams with unit tests, and documented the updated navigation UX.
+- 2026-03-09: Reworked walk mode into an armed pointer-lock flow, then updated it to fly-through movement so `W/S` follow the full look direction while `A/D` strafe and `Q/E` stay vertical; orbit-target re-sync on exit and control/viewer test coverage remain in place.

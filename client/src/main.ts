@@ -19,8 +19,8 @@ function setWalkModeUI(state: WalkControlState): void {
   const engaged = state !== 'inactive';
   const hudMessage =
     state === 'armed'
-      ? 'WALK MODE · Click in the viewer to enter · WASD move · Mouse look · Q/E vertical · ESC exit'
-      : 'WALK MODE · WASD move · Mouse look · Q/E vertical · Shift sprint · ESC exit';
+      ? 'WALK MODE · Click in the viewer to enter · WASD fly · Mouse look · Q/E vertical · ESC exit'
+      : 'WALK MODE · WASD fly · Mouse look · Q/E vertical · Shift sprint · ESC exit';
 
   $('#btn-walk-mode').classList.toggle('active', engaged);
   $('#walkmode-hud').classList.toggle('visible', engaged);

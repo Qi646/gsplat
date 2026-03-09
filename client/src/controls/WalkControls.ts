@@ -20,7 +20,6 @@ export class WalkControls {
   private readonly onStateChange?: (state: WalkControlState) => void;
   private keys: Record<string, boolean> = {};
   private readonly euler = new THREE.Euler(0, 0, 0, 'YXZ');
-  private readonly yawQuaternion = new THREE.Quaternion();
   private readonly forward = new THREE.Vector3();
   private readonly right = new THREE.Vector3();
   private readonly up = new THREE.Vector3(0, 1, 0);
@@ -112,9 +111,8 @@ export class WalkControls {
     const sprinting = this.keys['ShiftLeft'] || this.keys['ShiftRight'];
     const distance = this.moveSpeed * (sprinting ? this.sprintMult : 1) * deltaSeconds;
 
-    this.yawQuaternion.setFromAxisAngle(this.up, this.euler.y);
-    this.forward.set(0, 0, -1).applyQuaternion(this.yawQuaternion).normalize();
-    this.right.set(1, 0, 0).applyQuaternion(this.yawQuaternion).normalize();
+    this.forward.set(0, 0, -1).applyQuaternion(this.camera.quaternion).normalize();
+    this.right.set(1, 0, 0).applyQuaternion(this.camera.quaternion).normalize();
 
     if (this.keys['KeyW'] || this.keys['ArrowUp']) {
       this.camera.position.addScaledVector(this.forward, distance);
