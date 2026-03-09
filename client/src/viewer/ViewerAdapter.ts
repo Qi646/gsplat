@@ -14,7 +14,7 @@ export interface ViewerAdapter {
   resize(width: number, height: number): void;
   setFrameHook(frameHook: (() => void) | null): void;
   setNavigationMode(mode: 'orbit' | 'walk'): void;
-  syncOrbitTargetFromCamera(distance?: number): void;
+  resumeOrbitFromCamera(distance?: number): void;
   renderNow(): void;
   captureFrame(): Promise<Blob>;
   frameScene(): boolean;

@@ -10,8 +10,8 @@ import type { InterpolatedPose, ViewerDebugSnapshot } from '../types';
 import { applyAdaptiveCameraFrustum } from './adaptiveCameraFrustum';
 import {
   createViewerOrbitControls,
+  resumeOrbitControlsFromCamera,
   setOrbitControlsNavigationMode,
-  syncOrbitControlsTargetFromCamera,
   updateOrbitControls,
   type NavigationMode,
 } from './orbitControls';
@@ -158,13 +158,13 @@ export class SparkSceneViewer implements ViewerAdapter {
     setOrbitControlsNavigationMode(this.controls, mode);
   }
 
-  syncOrbitTargetFromCamera(distance?: number): void {
+  resumeOrbitFromCamera(distance?: number): void {
     if (!this.camera || !this.controls) {
       return;
     }
 
-    syncOrbitControlsTargetFromCamera(this.camera, this.controls, distance);
-    updateOrbitControls(this.controls, 'orbit');
+    this.navigationMode = 'orbit';
+    resumeOrbitControlsFromCamera(this.camera, this.controls, distance);
   }
 
   renderNow(): void {

@@ -68,6 +68,7 @@
 - A global Codex MCP server named `chrome-devtools` is now registered in `~/.codex/config.toml` and points to `/home/qi/.codex/memories/chrome-devtools-mcp-xvfb`.
 - The `chrome-devtools-mcp-xvfb` wrapper starts `Xvfb :99` on demand, uses `/tmp/chrome-devtools-mcp` for `npm` and XDG caches, enables MCP experimental screencast support, and prefers the Playwright-managed Chromium at `/home/qi/.codex/memories/playwright-browsers/chromium-1208/chrome-linux64/chrome`, falling back to `/usr/bin/chromium`.
 - On 2026-03-09, the known-good MCP browser runtime on this host was validated outside the sandbox by launching that Playwright Chromium under `Xvfb` and confirming a live DevTools endpoint on `http://127.0.0.1:9223/json/version`.
+- Walk-mode exit now resumes orbit through an atomic handoff in both renderer adapters: the orbit target is aligned from the live camera pose before orbit controls are re-enabled, so pressing `Esc` preserves the exact walk view for subsequent keyframe capture.
 
 ## Decisions
 - Use a root `.gitignore` for repo-wide transient files and the root archive before the initial commit.
@@ -83,6 +84,7 @@
 - Prefer compatibility mode as the default startup runtime until the fast shared-memory path is proven reliable in real user environments; keep `?viewerMode=default` available as the explicit diagnostic override.
 - Prefer robust sampled scene bounds for initial framing and `Frame Scene`; ignore low-alpha outlier splats before falling back to the raw mesh bounding box.
 - For shared navigation behavior, keep orbit-control ownership in the app layer for both renderers and never let orbit-control updates run while walk mode is active.
+- When leaving active walk mode, align the orbit target from the live camera pose before re-enabling orbit controls so the view does not drift before keyframe capture.
 - Keep the root camera-path UI lightweight: explicit move-up/move-down reordering, no drag-and-drop timeline editor yet.
 - Keep the root MP4 export UI lightweight for the MVP: one `Export MP4` action, fixed `1280x720 @ 30 FPS` defaults, same-origin PNG-to-FFmpeg streaming, no user-editable settings, and no cancel button yet.
 - Disable path import until a scene is loaded, and clear the current path on successful scene changes.
@@ -114,3 +116,4 @@
 - 2026-03-09: Restored the `mkkellogg` safe-sort defaults in all runtime branches, added shared adaptive near/far camera frustum logic across both renderer adapters, exposed the active planes in debug snapshots, and validated the close-range stability fix with passing root `npm test` / `npm run build`.
 - 2026-03-09: Moved both renderer adapters onto shared app-owned orbit controls, disabled `mkkellogg` built-in controls, and stopped orbit-control updates during walk mode so close inspection and fly-through movement no longer fight stale orbit targets; validated with targeted client tests and a passing client build.
 - 2026-03-09: Configured a global `chrome-devtools` Codex MCP server for this host via an Xvfb-backed wrapper and a Playwright-managed Chromium fallback after sandboxed Chromium launches failed with the Arch crashpad error.
+- 2026-03-09: Fixed walk-mode exit drift by adding a shared atomic orbit-resume handoff across both renderer adapters, preserving the live camera pose when `Esc` returns to orbit controls, with passing root `npm test` / `npm run build`.

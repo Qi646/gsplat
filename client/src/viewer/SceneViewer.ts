@@ -8,6 +8,7 @@ import { detectSceneFormat } from '../lib/sceneFormat';
 import { applyAdaptiveCameraFrustum } from './adaptiveCameraFrustum';
 import {
   createViewerOrbitControls,
+  resumeOrbitControlsFromCamera,
   setOrbitControlsNavigationMode,
   syncOrbitControlsTargetFromCamera,
   updateOrbitControls,
@@ -154,13 +155,13 @@ export class SceneViewer implements ViewerAdapter {
     setOrbitControlsNavigationMode(this.controls, mode);
   }
 
-  syncOrbitTargetFromCamera(distance?: number): void {
+  resumeOrbitFromCamera(distance?: number): void {
     if (!this.camera) {
       return;
     }
 
-    syncOrbitControlsTargetFromCamera(this.camera, this.controls, distance);
-    updateOrbitControls(this.controls, 'orbit');
+    this.navigationMode = 'orbit';
+    resumeOrbitControlsFromCamera(this.camera, this.controls, distance);
   }
 
   renderNow(): void {

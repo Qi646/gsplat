@@ -286,7 +286,7 @@ describe('SparkSceneViewer', () => {
     await expect(frame.text()).resolves.toBe('spark-frame');
   });
 
-  it('disables orbit controls for walk mode and re-syncs the orbit target from the camera view', async () => {
+  it('resumes orbit from the live walk pose without changing the camera', async () => {
     const events = new AppEvents();
     const hostElement = {
       clientHeight: 600,
@@ -305,17 +305,22 @@ describe('SparkSceneViewer', () => {
     controls.target.set(1, 2, -2);
     viewer.getCamera()?.position.set(1, 2, 3);
     viewer.getCamera()?.lookAt(new THREE.Vector3(6, 2, 3));
+    const beforePosition = viewer.getCamera()?.position.clone();
+    const before = viewer.getCamera()?.quaternion.clone();
 
     viewer.setNavigationMode('walk');
     expect(controls.enabled).toBe(false);
 
-    viewer.syncOrbitTargetFromCamera();
+    viewer.resumeOrbitFromCamera();
+    expect(controls.enabled).toBe(true);
+    expect(viewer.getCamera()?.position.toArray()).toEqual(beforePosition?.toArray());
+    expect(viewer.getCamera()?.quaternion.x).toBeCloseTo(before?.x ?? 0);
+    expect(viewer.getCamera()?.quaternion.y).toBeCloseTo(before?.y ?? 0);
+    expect(viewer.getCamera()?.quaternion.z).toBeCloseTo(before?.z ?? 0);
+    expect(viewer.getCamera()?.quaternion.w).toBeCloseTo(before?.w ?? 1);
     expect(controls.target.x).toBeCloseTo(6);
     expect(controls.target.y).toBeCloseTo(2);
     expect(controls.target.z).toBeCloseTo(3);
-
-    viewer.setNavigationMode('orbit');
-    expect(controls.enabled).toBe(true);
   });
 
   it('preserves the camera heading during walk-mode renders', async () => {

@@ -30,6 +30,20 @@ export function setOrbitControlsNavigationMode(
   }
 }
 
+export function resumeOrbitControlsFromCamera(
+  camera: THREE.PerspectiveCamera,
+  controls: OrbitControls | null,
+  distance?: number,
+): void {
+  if (!controls) {
+    return;
+  }
+
+  syncOrbitControlsTargetFromCamera(camera, controls, distance);
+  controls.enabled = true;
+  controls.update();
+}
+
 export function updateOrbitControls(
   controls: OrbitControls | null,
   mode: NavigationMode,

@@ -140,10 +140,14 @@ async function main(): Promise<void> {
       const previousState = walkState;
       walkState = nextState;
       setWalkModeUI(walkState);
-      viewer.setNavigationMode(walkState === 'inactive' ? 'orbit' : 'walk');
-
-      if (walkState === 'inactive' && previousState === 'active') {
-        viewer.syncOrbitTargetFromCamera();
+      if (walkState === 'inactive') {
+        if (previousState === 'active') {
+          viewer.resumeOrbitFromCamera();
+        } else {
+          viewer.setNavigationMode('orbit');
+        }
+      } else {
+        viewer.setNavigationMode('walk');
       }
 
       if (walkState === 'active') {
