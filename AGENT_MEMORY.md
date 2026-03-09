@@ -26,6 +26,7 @@
 - Scene loads now preserve their native asset orientation in both renderer adapters; the app no longer applies the previous blanket 180-degree X-axis correction on load.
 - The root server now exposes `/api/presets/:presetId.:extension`, lazily extracts verified `.ksplat` files from `https://projects.markkellogg.org/downloads/gaussian_splat_data.zip`, directly downloads the lightweight Luigi `.ply` preset from `https://huggingface.co/datasets/dylanebert/3dgs/resolve/main/luigi/luigi.ply`, and caches all preset assets under `/tmp/gsplat-presets`.
 - Camera paths at the root use JSON keyframes `{ id, time, position, quaternion, fov }`, Catmull-Rom position interpolation, shortest-arc quaternion slerp, smoothstep timing, and FOV lerp.
+- The root viewer now includes a toggleable default-on screen-space SVG overlay for camera path lines, numbered keyframe markers, and keyframe frustum gizmos; it is shared across both renderer adapters and hidden during MP4 export.
 - Successful scene reloads now clear the current camera path so saved keyframes remain scene-specific.
 - Walk mode now uses an explicit `inactive` -> `armed` -> `active` lifecycle: clicking the button arms it, the next click inside the viewer requests pointer lock, `W/S` move along the camera look direction, `A/D` strafe, `Q/E` stay vertical, and exiting walk mode re-syncs the shared camera controls to the current view.
 - Both renderer adapters now use shared app-owned `TrackballControls`; the `mkkellogg` adapter disables the package's built-in controls, and camera-control `update()` no longer runs during walk mode, which prevents both renderers from re-aiming the camera back toward a stale target each frame while still allowing full inversion during normal inspection.
@@ -89,6 +90,7 @@
 - For shared navigation behavior, keep camera-control ownership in the app layer for both renderers and never let camera-control updates run while walk mode is active.
 - When leaving active walk mode, align the camera target and derived up vector from the live camera pose before re-enabling the shared camera controls so the view does not drift or snap upright before keyframe capture.
 - Keep the root camera-path UI lightweight: explicit move-up/move-down reordering, no drag-and-drop timeline editor yet.
+- Prefer a shared projected SVG overlay for camera-path visuals so both renderer adapters show the same path/frustum guidance without depending on renderer-specific helper-scene ordering.
 - Keep the root MP4 export UI lightweight for the MVP: one `Export MP4` action, fixed `1280x720 @ 30 FPS` defaults, same-origin PNG-to-FFmpeg streaming, no user-editable settings, and no cancel button yet.
 - Disable path import until a scene is loaded, and clear the current path on successful scene changes.
 - Always document current expected behaviour in repo-facing docs when behavior changes or when user-visible limitations/quirks are clarified.
@@ -123,3 +125,4 @@
 - 2026-03-09: Generalized the preset pipeline to mixed-format same-origin routes, added the lightweight cached `Luigi` `.ply` preset, extended server/client preset tests, and revalidated with passing root `npm test` / `npm run build`.
 - 2026-03-09: Removed the blanket scene X-flip, moved both renderers onto shared unconstrained `TrackballControls`, preserved inverted camera poses across walk/pose handoff, updated navigation copy/docs, and revalidated with passing root `npm test` / `npm run build`.
 - 2026-03-09: Fixed MP4 export failing in remotely opened forwarded `localhost:5173` sessions with `Renderer: mkkellogg. 'fetch' called on an object that does not implement interface Window.` by binding ambient/global `fetch` to `globalThis` inside the shared client `ExportManager`; keep regression coverage for both the default ambient path and explicitly injected `globalThis.fetch`.
+- 2026-03-09: Added a shared toggleable camera-path overlay using projected SVG path/frustum visuals across both renderer adapters, extended client coverage for overlay math plus bounds accessors, updated README/assignment progress docs, and revalidated with passing root `npm test` / `npm run build`.

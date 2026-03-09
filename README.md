@@ -109,6 +109,7 @@ Notes:
 - `client/src/lib/runtimeQuery.ts` and the `window.__GSPLAT_DEBUG__` hook expose test-only startup overrides and viewer diagnostics for browser regression coverage; no `viewerMode` query now means the compatibility default, while `viewerMode=default` explicitly opts into the fast path for diagnostics. The per-renderer debug snapshot now also includes the active camera `near` / `far` planes.
 - `renderer=spark` switches the viewer adapter to SparkJS for renderer A/B comparisons. `viewerMode` only affects the default `mkkellogg` path.
 - `client/src/path/PathInterpolator.ts` and `client/src/path/KeyframeManager.ts` own keyframe capture, interpolation, preview playback, and path JSON serialization.
+- `client/src/path/cameraPathVisuals.ts` and `client/src/path/CameraPathOverlay.ts` project the recorded camera path into a shared SVG overlay so both renderer adapters show the same numbered keyframes, movement path, and frustum gizmos.
 - `client/src/export/ExportManager.ts` renders the active camera path into PNG frames at fixed `1280x720 @ 30 FPS`, uploads them to the backend export job, and restores the live viewer state after success or failure.
 - `server/src/presetArchive.ts` caches preset assets under `/tmp/gsplat-presets`, mixing archive-backed verified `.ksplat` entries with direct-download `.ply` presets behind the same preset routes exposed by `server/src/app.ts`.
 - `server/src/exportService.ts` owns FFmpeg export jobs and powers `/api/export/jobs`, `/api/export/jobs/:jobId/frame`, `/api/export/jobs/:jobId/finalize`, and `/api/export/jobs/:jobId`.
@@ -130,10 +131,12 @@ Notes:
 - `?viewerMode=default` explicitly requests the faster shared-memory path for diagnostics; if cross-origin isolation is unavailable, the viewer falls back to compatibility mode and reports that state. `?viewerMode=compat` explicitly requests the slower compatibility path.
 - SparkJS scene loads currently use Spark's own render path plus local download/progress wiring; the app surfaces the active renderer in the status note and debug snapshot for A/B verification.
 - Successful scene changes clear the current camera path so keyframes remain scene-specific.
+- Once a scene is loaded and at least one keyframe exists, `Path Visuals` is enabled by default and overlays numbered keyframe markers, frustum gizmos, and the interpolated movement path in the viewer. The toggle hides or restores those visuals without changing the underlying keyframes.
 - Both renderer adapters now use the app's own unconstrained trackball-style camera controls instead of mixing app-owned walk mode with renderer-owned updates. Walk mode no longer re-aims the camera back toward a stale target on each render tick.
 - Walk mode is now an explicit click-to-enter fly-through flow: the button arms it, the next click inside the viewer captures mouse look, `W/S` move in the current view direction, `A/D` strafe, `Q/E` move vertically, `Frame Scene` / `Reset View` pause until walk mode exits, and leaving walk mode restores the current camera-control view without shifting the camera pose that was visible in walk mode.
 - Path import and path editing controls remain disabled until a scene has loaded successfully.
 - MP4 export requires a loaded scene plus at least two keyframes. While export is running, scene/path controls and viewer pointer interaction are locked until the job completes or fails.
+- The camera-path overlay is viewer-only guidance. It is hidden during export and is not burned into the captured MP4 frames.
 - Export currently uses fixed defaults of `1280x720 @ 30 FPS`, streams PNG frames to the same-origin backend, and downloads `output.mp4` when FFmpeg finishes.
 - Export progress is client-driven from rendered/uploaded frame counts plus a final `Encoding MP4 with FFmpeg…` phase. There is not yet a user-visible cancel button.
 - The committed browser smoke fixture lives at `client/public/test-assets/smoke-grid.ply` and is used by the Firefox Playwright regression test.
