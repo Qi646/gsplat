@@ -1,6 +1,7 @@
 import * as GaussianSplats3D from '@mkkellogg/gaussian-splats-3d';
 import * as THREE from 'three';
 import { formatLoadProgress } from '../lib/loadProgress';
+import { computeRobustSceneBounds } from '../lib/robustSceneBounds';
 import type { AppEvents, InterpolatedPose, ViewerDebugSnapshot } from '../types';
 import { detectSceneFormat } from '../lib/sceneFormat';
 import { resolveViewerRuntimeConfig, type ViewerRuntimeOverrides, type ViewerRuntimeOptions } from './viewerRuntime';
@@ -311,9 +312,16 @@ export class SceneViewer {
     }
 
     try {
-      const box = this.viewer.getSplatMesh().computeBoundingBox(true);
-      if (this.isFiniteBox(box)) {
-        this.sceneBounds.copy(box);
+      const splatMesh = this.viewer.getSplatMesh();
+      const robustBox = computeRobustSceneBounds(splatMesh);
+      if (robustBox && this.isFiniteBox(robustBox)) {
+        this.sceneBounds.copy(robustBox);
+        return;
+      }
+
+      const rawBox = splatMesh.computeBoundingBox(true);
+      if (this.isFiniteBox(rawBox)) {
+        this.sceneBounds.copy(rawBox);
       }
     } catch {
       this.sceneBounds.makeEmpty();

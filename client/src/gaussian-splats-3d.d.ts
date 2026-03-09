@@ -26,6 +26,8 @@ declare module '@mkkellogg/gaussian-splats-3d' {
 
   export interface SplatMesh {
     getSplatCount(): number;
+    getSplatCenter(globalIndex: number, outCenter: THREE.Vector3, applySceneTransform?: boolean): void;
+    getSplatColor(globalIndex: number, outColor: THREE.Vector4): void;
     computeBoundingBox(applySceneTransforms?: boolean, sceneIndex?: number): THREE.Box3;
   }
 

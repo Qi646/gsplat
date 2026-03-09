@@ -22,10 +22,12 @@ describe('SCENE_PRESETS', () => {
     }
   });
 
-  it('points the Truck preset at the truck asset', () => {
-    const truckPreset = SCENE_PRESETS.find(preset => preset.name === 'Truck');
-
-    expect(truckPreset).toBeDefined();
-    expect(truckPreset?.url).toContain('/truck.splat');
+  it('uses the verified same-origin ksplat preset routes', () => {
+    expect(SCENE_PRESETS.map(preset => preset.name)).toEqual(['Garden', 'Stump', 'Truck']);
+    expect(SCENE_PRESETS.map(preset => preset.url)).toEqual([
+      '/api/presets/garden.ksplat',
+      '/api/presets/stump.ksplat',
+      '/api/presets/truck.ksplat',
+    ]);
   });
 });

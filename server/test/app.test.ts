@@ -9,6 +9,8 @@ describe('createApp', () => {
   let tempDir: string | null = null;
 
   afterEach(async () => {
+    vi.restoreAllMocks();
+
     if (tempDir) {
       await rm(tempDir, { force: true, recursive: true });
       tempDir = null;
@@ -87,6 +89,8 @@ describe('createApp', () => {
   });
 
   it('returns 502 when preset extraction fails', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
     const app = createApp({
       presetService: createPresetService({
         getPresetFilePath: vi.fn(async () => {

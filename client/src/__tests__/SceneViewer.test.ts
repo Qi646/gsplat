@@ -12,11 +12,33 @@ vi.mock('@mkkellogg/gaussian-splats-3d', async () => {
     splatCount: 0,
     boundsMin: [-1, -1, -1] as [number, number, number],
     boundsMax: [1, 1, 1] as [number, number, number],
+    sampleCenters: [] as Array<[number, number, number]>,
+    sampleColors: [] as Array<[number, number, number, number]>,
   };
 
   class MockSplatMesh {
     getSplatCount(): number {
       return state.splatCount;
+    }
+
+    getSplatCenter(globalSplatIndex: number, outCenter: THREE.Vector3): void {
+      const sample = state.sampleCenters[globalSplatIndex % Math.max(state.sampleCenters.length, 1)];
+      if (!sample) {
+        outCenter.set(0, 0, 0);
+        return;
+      }
+
+      outCenter.set(sample[0], sample[1], sample[2]);
+    }
+
+    getSplatColor(globalSplatIndex: number, outColor: THREE.Vector4): void {
+      const sample = state.sampleColors[globalSplatIndex % Math.max(state.sampleColors.length, 1)];
+      if (!sample) {
+        outColor.set(0, 0, 0, 0);
+        return;
+      }
+
+      outColor.set(sample[0], sample[1], sample[2], sample[3]);
     }
 
     computeBoundingBox(): THREE.Box3 {
@@ -94,6 +116,8 @@ type MockModule = typeof GaussianSplats3D & {
     splatCount: number;
     boundsMin: [number, number, number];
     boundsMax: [number, number, number];
+    sampleCenters: Array<[number, number, number]>;
+    sampleColors: Array<[number, number, number, number]>;
   };
 };
 
@@ -112,6 +136,8 @@ describe('SceneViewer', () => {
     mockModule.__mockState.splatCount = 1024;
     mockModule.__mockState.boundsMin = [-2, -1, -3];
     mockModule.__mockState.boundsMax = [4, 5, 6];
+    mockModule.__mockState.sampleCenters = [];
+    mockModule.__mockState.sampleColors = [];
 
     Object.defineProperty(globalThis, 'window', {
       value: {
@@ -197,6 +223,30 @@ describe('SceneViewer', () => {
     const sceneBounds = (viewer as unknown as { sceneBounds: THREE.Box3 }).sceneBounds;
     expect(sceneBounds.min.toArray()).toEqual([-2, -1, -3]);
     expect(sceneBounds.max.toArray()).toEqual([4, 5, 6]);
+  });
+
+  it('uses robust sampled bounds to ignore splat outliers when framing a scene', async () => {
+    const events = new AppEvents();
+    const hostElement = {} as HTMLDivElement;
+    const viewer = new SceneViewer({ hostElement, events });
+
+    mockModule.__mockState.splatCount = 200;
+    mockModule.__mockState.boundsMin = [-100, -50, -100];
+    mockModule.__mockState.boundsMax = [120, 60, 100];
+    mockModule.__mockState.sampleCenters = [
+      [-100, 0, 0],
+      [120, 0, 0],
+      ...Array.from({ length: 198 }, (_, index) => [index / 10, 1 + (index % 5), -5 + (index % 10)] as [number, number, number]),
+    ];
+    mockModule.__mockState.sampleColors = mockModule.__mockState.sampleCenters.map(() => [255, 255, 255, 255]);
+
+    await viewer.init();
+    await viewer.loadScene('/api/presets/garden.ksplat');
+
+    const sceneBounds = (viewer as unknown as { sceneBounds: THREE.Box3 }).sceneBounds;
+    expect(sceneBounds.min.x).toBeGreaterThan(-10);
+    expect(sceneBounds.max.x).toBeLessThan(30);
+    expect(sceneBounds.max.z).toBeLessThan(10);
   });
 
   it('emits scene:error and rejects the load when the scene contains no splats', async () => {

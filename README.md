@@ -9,7 +9,7 @@ The active product code lives at the repo root in `client/` and `server/`. The i
 The root app currently implements the first vertical slice:
 
 - Load public `.ply`, `.splat`, and `.ksplat` scene URLs
-- Load sample presets for quick validation
+- Load verified sample presets through same-origin `.ksplat` routes
 - Show loading progress, FPS, and splat count
 - Provide Frame Scene, Reset View, and Walk Mode navigation
 - Capture camera keyframes from the active view
@@ -98,12 +98,13 @@ Notes:
 ## Implementation Notes
 
 - `client/src/viewer/SceneViewer.ts` wraps `@mkkellogg/gaussian-splats-3d` through the package's `rootElement` + `getSplatMesh()` API surface and owns scene loading, render loop, framing, resizing, and FPS tracking.
+- `client/src/lib/robustSceneBounds.ts` computes trimmed scene bounds from sampled splats so initial framing is less sensitive to outlier points in dense scenes.
 - `client/src/viewer/viewerRuntime.ts` defaults the viewer to the slower compatibility worker path for broader browser coverage, keeps the shared-memory fast path behind `?viewerMode=default`, and forces safer floating-point splat sorting with higher distance-map precision to reduce dense-scene artifacting.
 - `client/src/controls/WalkControls.ts` adds pointer-lock WASD navigation on top of the viewer camera.
 - `client/src/lib/sceneFormat.ts` and `client/src/lib/scenePresets.ts` isolate URL format detection and preset scene configuration.
 - `client/src/lib/runtimeQuery.ts` and the `window.__GSPLAT_DEBUG__` hook expose test-only startup overrides and viewer diagnostics for browser regression coverage; no `viewerMode` query now means compatibility mode, while `viewerMode=default` explicitly opts into the fast path.
 - `client/src/path/PathInterpolator.ts` and `client/src/path/KeyframeManager.ts` own keyframe capture, interpolation, preview playback, and path JSON serialization.
-- `server/src/app.ts` owns the Express app, including COOP/COEP headers for the production server and `/api/health`.
+- `server/src/presetArchive.ts` downloads verified `.ksplat` entries from the upstream demo archive, caches them under `/tmp/gsplat-presets`, and backs the preset routes exposed by `server/src/app.ts`.
 
 ## Current Expected Behaviour
 
@@ -111,6 +112,8 @@ Notes:
 - Scene loading is currently non-progressive. The scene is not visible until processing completes.
 - The progress bar reflects download progress first, then resets to `0%` when the loader switches into processing. The UI does not yet expose granular processing sub-steps.
 - Once the UI reaches `loaded`, the viewer is expected to have framed a visible scene. Loads that resolve with zero splats or invalid bounds now fail into the error state instead of reporting a false `loaded` status.
+- The preset tab now serves verified `Garden`, `Stump`, and `Truck` scenes from same-origin `/api/presets/*.ksplat` routes backed by the server cache under `/tmp/gsplat-presets`.
+- Initial framing and `Frame Scene` now use robust sampled bounds that ignore low-alpha outliers before falling back to the raw mesh bounding box.
 - The app serves cross-origin isolation headers in both the Vite dev server and the Express production server so the faster shared-memory worker path remains available for explicit diagnostics.
 - Normal startup now uses compatibility mode by default for broader browser coverage and surfaces that state in the status note.
 - Dense preset scenes now default to floating-point splat sorting with a higher distance-map precision to avoid the package's large-scene color-blob artifacts, at the cost of slower sort performance.
