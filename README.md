@@ -16,12 +16,13 @@ The root app currently implements the first vertical slice:
 - Capture camera keyframes from the active view
 - Reorder/delete keyframes, scrub the path, and preview smooth playback
 - Save and reload camera paths as JSON
+- Export the recorded path to `output.mp4` through the root FFmpeg-backed server pipeline
 - Serve a simple backend health endpoint and the production client build
 
 Not yet implemented at the repo root:
 
-- MP4 export / FFmpeg pipeline
 - Advanced timeline editing beyond simple reorder + scrub
+- A user-facing export cancel button or editable export settings
 
 ## Repo Layout
 
@@ -37,7 +38,7 @@ Not yet implemented at the repo root:
 ## Prerequisites
 
 - Node.js 18+
-- FFmpeg is not required for the current root milestone, but it will be required once export work starts
+- FFmpeg on `PATH`
 
 ## Quick Start
 
@@ -116,7 +117,9 @@ Notes:
 - `client/src/lib/runtimeQuery.ts` and the `window.__GSPLAT_DEBUG__` hook expose test-only startup overrides and viewer diagnostics for browser regression coverage; no `viewerMode` query now means the normal default runtime, while `viewerMode=compat` explicitly opts into the fallback path.
 - `renderer=spark` switches the viewer adapter to SparkJS for renderer A/B comparisons. `viewerMode` only affects the default `mkkellogg` path.
 - `client/src/path/PathInterpolator.ts` and `client/src/path/KeyframeManager.ts` own keyframe capture, interpolation, preview playback, and path JSON serialization.
+- `client/src/export/ExportManager.ts` renders the active camera path into PNG frames at fixed `1280x720 @ 30 FPS`, uploads them to the backend export job, and restores the live viewer state after success or failure.
 - `server/src/presetArchive.ts` downloads verified `.ksplat` entries from the upstream demo archive, caches them under `/tmp/gsplat-presets`, and backs the preset routes exposed by `server/src/app.ts`.
+- `server/src/exportService.ts` owns FFmpeg export jobs and powers `/api/export/jobs`, `/api/export/jobs/:jobId/frame`, `/api/export/jobs/:jobId/finalize`, and `/api/export/jobs/:jobId`.
 
 ## Current Expected Behaviour
 
@@ -134,6 +137,9 @@ Notes:
 - SparkJS scene loads currently use Spark's own render path plus local download/progress wiring; the app surfaces the active renderer in the status note and debug snapshot for A/B verification.
 - Successful scene changes clear the current camera path so keyframes remain scene-specific.
 - Path import and path editing controls remain disabled until a scene has loaded successfully.
+- MP4 export requires a loaded scene plus at least two keyframes. While export is running, scene/path controls and viewer pointer interaction are locked until the job completes or fails.
+- Export currently uses fixed defaults of `1280x720 @ 30 FPS`, streams PNG frames to the same-origin backend, and downloads `output.mp4` when FFmpeg finishes.
+- Export progress is client-driven from rendered/uploaded frame counts plus a final `Encoding MP4 with FFmpeg…` phase. There is not yet a user-visible cancel button.
 - The committed browser smoke fixture lives at `client/public/test-assets/smoke-grid.ply` and is used by the Firefox Playwright regression test.
 - In the current host environment, the Firefox browser regression test fails before any scene load begins in both the default and `?viewerMode=compat` paths with `Init error: Error creating WebGL context.` The same symptom can be caused by Firefox lacking WebGL support in headless mode, so interpret it as an environment compatibility failure first and an app regression only after confirming raw Firefox WebGL works on the host.
 - The current client build emits a Vite warning from Spark's packaged WASM data URL during bundling, but the build still completes successfully.
@@ -146,8 +152,8 @@ Notes:
 
 ## Next Milestone
 
-The next milestone is the FFmpeg-backed export pipeline:
+The next milestone is Firefox/renderer follow-up plus deliverable polish:
 
-- add root client export controls that render frames along the recorded path
-- add root server routes that stream PNG frames into FFmpeg and return `output.mp4`
-- surface export progress and failure states cleanly in the client
+- investigate the Firefox `Init error: Error creating WebGL context.` startup failure now captured by the Playwright regression harness
+- capture/update the demo recording and one-page design note around the now-implemented export pipeline
+- decide whether any optional extras should be added after the core deliverable is fully documented

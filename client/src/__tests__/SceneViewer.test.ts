@@ -8,6 +8,7 @@ vi.mock('@mkkellogg/gaussian-splats-3d', async () => {
     viewerOptions: null as Record<string, unknown> | null,
     addSceneCalls: [] as Array<{ url: string; options: Record<string, unknown> }>,
     removeSceneCalls: [] as Array<{ indexes: number[]; showLoadingUI?: boolean }>,
+    renderCalls: 0,
     sceneCount: 0,
     splatCount: 0,
     boundsMin: [-1, -1, -1] as [number, number, number],
@@ -51,7 +52,12 @@ vi.mock('@mkkellogg/gaussian-splats-3d', async () => {
 
   class MockViewer {
     renderer = {
-      domElement: { requestPointerLock() {} },
+      domElement: {
+        requestPointerLock() {},
+        toBlob(callback: BlobCallback) {
+          callback(new Blob(['scene-frame'], { type: 'image/png' }));
+        },
+      },
       setPixelRatio() {},
       setSize() {},
     } as unknown as THREE.WebGLRenderer;
@@ -87,7 +93,9 @@ vi.mock('@mkkellogg/gaussian-splats-3d', async () => {
 
     update(): void {}
 
-    render(): void {}
+    render(): void {
+      state.renderCalls += 1;
+    }
 
     dispose(): void {}
   }
@@ -112,6 +120,7 @@ type MockModule = typeof GaussianSplats3D & {
     viewerOptions: Record<string, unknown> | null;
     addSceneCalls: Array<{ url: string; options: Record<string, unknown> }>;
     removeSceneCalls: Array<{ indexes: number[]; showLoadingUI?: boolean }>;
+    renderCalls: number;
     sceneCount: number;
     splatCount: number;
     boundsMin: [number, number, number];
@@ -133,6 +142,7 @@ describe('SceneViewer', () => {
     mockModule.__mockState.viewerOptions = null;
     mockModule.__mockState.addSceneCalls = [];
     mockModule.__mockState.removeSceneCalls = [];
+    mockModule.__mockState.renderCalls = 0;
     mockModule.__mockState.sceneCount = 0;
     mockModule.__mockState.splatCount = 1024;
     mockModule.__mockState.boundsMin = [-2, -1, -3];
@@ -199,6 +209,19 @@ describe('SceneViewer', () => {
     expect(viewer.getInteractionSurface()).toEqual(
       (viewer as unknown as { renderer: { domElement: unknown } }).renderer.domElement,
     );
+  });
+
+  it('renders immediately and captures PNG frames from the renderer canvas', async () => {
+    const events = new AppEvents();
+    const hostElement = {} as HTMLDivElement;
+    const viewer = new SceneViewer({ hostElement, events });
+
+    await viewer.init();
+    viewer.renderNow();
+    const frame = await viewer.captureFrame();
+
+    expect(mockModule.__mockState.renderCalls).toBe(1);
+    await expect(frame.text()).resolves.toBe('scene-frame');
   });
 
   it('surfaces the active runtime viewer options in the debug snapshot', async () => {

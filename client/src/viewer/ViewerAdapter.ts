@@ -13,6 +13,8 @@ export interface ViewerAdapter {
   loadScene(url: string): Promise<void>;
   resize(width: number, height: number): void;
   setFrameHook(frameHook: (() => void) | null): void;
+  renderNow(): void;
+  captureFrame(): Promise<Blob>;
   frameScene(): boolean;
   resetView(): void;
   applyCameraPose(pose: InterpolatedPose): void;

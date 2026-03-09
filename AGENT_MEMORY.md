@@ -8,8 +8,8 @@
 - `ASSIGNMENT.md` describes a take-home Gaussian Splat Viewer -> camera path -> MP4 export app.
 - `gsplat-viewer/` is reference-only and should not be modified for product work.
 - The actual app now starts at the repo root as a workspace split with `client/` and `server/`.
-- The root app now implements the viewer baseline plus the camera-path MVP: keyframe capture, delete/reorder, smooth preview playback, timeline scrubbing, and camera-path JSON save/load.
-- The root client ports/adapts the viewer baseline from the reference app and now includes a lightweight root-only path system; MP4 export is still not implemented at the repo root.
+- The root app now implements the viewer baseline plus the camera-path MVP: keyframe capture, delete/reorder, smooth preview playback, timeline scrubbing, camera-path JSON save/load, and FFmpeg-backed MP4 export.
+- The root client ports/adapts the viewer baseline from the reference app and now includes a lightweight root-only path system plus a fixed-default export manager; advanced timeline editing and configurable export settings are still not implemented at the repo root.
 - Root validation is working: `npm test`, `npm run build`, `npm run dev`, `curl http://localhost:3001/api/health`, and `curl -I http://localhost:5173/` all passed on 2026-03-09.
 - The root preset catalog now uses verified same-origin `.ksplat` presets backed by the upstream demo archive; the current preset set is `Garden`, `Stump`, and `Truck`.
 - `client/src/viewer/SceneViewer.ts` now replaces any existing splat scene before loading a new preset or URL so the root app behaves as a single-scene viewer.
@@ -46,8 +46,13 @@
 - `README.md` now includes a Firefox rerun note: `npm run playwright:install:firefox` once, then `npm run test:e2e:firefox`, with failure artifacts under `test-results/` and guidance to confirm raw Firefox WebGL before classifying `Error creating WebGL context.` as a viewer bug.
 - The root client now has a renderer-adapter seam: `client/src/viewer/createViewerAdapter.ts` selects between the existing `@mkkellogg/gaussian-splats-3d` path and a new SparkJS path in `client/src/viewer/SparkSceneViewer.ts`, while camera-path code continues to talk to a small shared viewer interface.
 - The SparkJS diagnostic path uses `@sparkjsdev/spark` + Three.js `OrbitControls`, emits the same scene load events as the default viewer, supports `.ply` / `.splat` / `.ksplat`, and applies Spark-friendly high-quality sort defaults (`sort32: true`, `sortRadial: false`, `stochastic: false`) for renderer A/B checks.
+- The root viewer adapter interface now also supports export capture via `renderNow()` and `captureFrame()`, so both the default `mkkellogg` path and the SparkJS comparison path can participate in the same MP4 export workflow.
+- `client/src/export/ExportManager.ts` now renders path poses directly from `PathInterpolator`, resizes the active viewer to fixed `1280x720 @ 30 FPS`, uploads PNG frames to the backend, restores the previous camera/viewport state afterward, and drives export progress entirely from client-known frame counts plus a final encoding phase.
+- The root server now exposes `/api/export/jobs`, `/api/export/jobs/:jobId/frame`, `/api/export/jobs/:jobId/finalize`, and `/api/export/jobs/:jobId` backed by `server/src/exportService.ts`, which spawns FFmpeg, streams PNG frames through stdin, returns `output.mp4`, and cleans temp job state on success, failure, or cancel.
+- A built-service smoke check on 2026-03-09 successfully encoded a tiny real MP4 through `server/dist/exportService.js` and the local `ffmpeg` binary after feeding it a generated 2x2 PNG frame fixture from `/tmp`.
 - As of 2026-03-09, `npm test` and `npm run build` both pass again at the repo root after the renderer-adapter + SparkJS comparison spike.
 - The current client build emits a Spark-related Vite warning about a packaged WASM data URL remaining unresolved until runtime; the build still completes successfully.
+- After the export milestone on 2026-03-09, root `npm test` and `npm run build` passed again, and the existing Spark WASM/runtime warning remained non-fatal during build.
 
 ## Decisions
 - Use a root `.gitignore` for repo-wide transient files and the root archive before the initial commit.
@@ -62,14 +67,14 @@
 - Prefer the default fast shared-memory runtime when cross-origin isolation is present, and use `?viewerMode=compat` only as an explicit fallback/debug override.
 - Prefer robust sampled scene bounds for initial framing and `Frame Scene`; ignore low-alpha outlier splats before falling back to the raw mesh bounding box.
 - Keep the root camera-path UI lightweight: explicit move-up/move-down reordering, no drag-and-drop timeline editor yet.
+- Keep the root MP4 export UI lightweight for the MVP: one `Export MP4` action, fixed `1280x720 @ 30 FPS` defaults, same-origin PNG-to-FFmpeg streaming, no user-editable settings, and no cancel button yet.
 - Disable path import until a scene is loaded, and clear the current path on successful scene changes.
 - Always document current expected behaviour in repo-facing docs when behavior changes or when user-visible limitations/quirks are clarified.
 - For browser-level viewer regressions, prefer the committed local smoke fixture plus the app debug snapshot over remote presets so failures separate browser startup, viewer init, scene load, and visible render phases.
 
 ## Active Plan
-- Next milestone should add the export manager and FFmpeg-backed server routes at the repo root.
-- After the export milestone, the next viewer-specific bug follow-up should investigate the Firefox `Error creating WebGL context.` startup failure now captured by the Playwright regression harness.
-- After export is stable, finish deliverable polish: README/demo/design note cleanup and any selected extras.
+- Next viewer-specific bug follow-up should investigate the Firefox `Error creating WebGL context.` startup failure now captured by the Playwright regression harness.
+- After the Firefox follow-up, finish deliverable polish: README/demo/design note cleanup and any selected extras.
 
 ## Archived Plans
 - 2026-03-08: Created the initial import commit with `AGENTS.md`, `AGENT_MEMORY.md`, the root `.gitignore`, and the `gsplat-viewer/` source tree.
@@ -86,3 +91,4 @@
 - 2026-03-09: Added a Firefox-safe runtime override that disables SIMD sorting, keeps Firefox on compatibility mode, raises sort precision to 24, and ignores `?viewerMode=default` in Firefox to avoid preset-render confetti corruption.
 - 2026-03-09: Added a renderer-adapter seam plus an opt-in SparkJS diagnostic viewer behind `?renderer=spark`, surfaced the active renderer in app/debug status, and validated the new path with unit coverage plus passing root `npm test` / `npm run build`.
 - 2026-03-09: Restored the fast shared-memory `mkkellogg` runtime as the default when cross-origin isolation is available, changed `?viewerMode=compat` into the explicit fallback switch, and applied a 180-degree X-axis rotation to default scene loads so `mkkellogg` matches Spark orientation on the same assets.
+- 2026-03-09: Completed the FFmpeg export milestone with a shared viewer-capture seam, a client-side export manager + UI, backend FFmpeg job routes, server/client unit coverage, and passing root `npm test` / `npm run build` plus a real built-service FFmpeg smoke encode.

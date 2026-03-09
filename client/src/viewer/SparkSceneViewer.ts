@@ -147,6 +147,23 @@ export class SparkSceneViewer implements ViewerAdapter {
     this.frameHook = frameHook;
   }
 
+  renderNow(): void {
+    this.frameHook?.();
+    this.controls?.update();
+    if (this.scene && this.camera) {
+      this.renderer?.render(this.scene, this.camera);
+    }
+  }
+
+  async captureFrame(): Promise<Blob> {
+    const surface = this.getInteractionSurface();
+    if (!surface) {
+      throw new Error('Viewer capture surface is unavailable.');
+    }
+
+    return canvasToBlob(surface);
+  }
+
   frameScene(): boolean {
     if (!this.camera || !this.controls || !this.hasUsableSceneBounds()) {
       return false;
@@ -470,4 +487,17 @@ function interpolateQuantile(sortedValues: number[], quantile: number): number {
 
 function isFiniteBox(box: THREE.Box3): boolean {
   return [box.min.x, box.min.y, box.min.z, box.max.x, box.max.y, box.max.z].every(Number.isFinite);
+}
+
+function canvasToBlob(canvas: HTMLCanvasElement): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob(blob => {
+      if (!blob) {
+        reject(new Error('Viewer capture produced an empty frame.'));
+        return;
+      }
+
+      resolve(blob);
+    }, 'image/png');
+  });
 }

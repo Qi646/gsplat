@@ -8,13 +8,18 @@ vi.mock('three', async () => {
       clientHeight: 0,
       clientWidth: 0,
       height: 0,
+      toBlob(callback: BlobCallback) {
+        callback(new Blob(['spark-frame'], { type: 'image/png' }));
+      },
       width: 0,
     } as unknown as HTMLCanvasElement & {
       clientHeight: number;
       clientWidth: number;
       height: number;
+      toBlob: (callback: BlobCallback) => void;
       width: number;
     };
+    renderCount = 0;
 
     dispose(): void {}
 
@@ -30,7 +35,9 @@ vi.mock('three', async () => {
       };
     }
 
-    render(): void {}
+    render(): void {
+      this.renderCount += 1;
+    }
 
     setClearColor(): void {}
 
@@ -244,6 +251,29 @@ describe('SparkSceneViewer', () => {
       },
     });
     expect(viewer.getInteractionSurface()).toBeTruthy();
+  });
+
+  it('renders immediately and captures PNG frames from the Spark canvas', async () => {
+    const events = new AppEvents();
+    const hostElement = {
+      clientHeight: 600,
+      clientWidth: 800,
+      replaceChildren: vi.fn(),
+    } as unknown as HTMLDivElement;
+    const viewer = new SparkSceneViewer({ hostElement, events });
+
+    await viewer.init();
+    viewer.renderNow();
+    const frame = await viewer.captureFrame();
+
+    expect(
+      (
+        viewer as unknown as {
+          renderer: { renderCount: number };
+        }
+      ).renderer.renderCount,
+    ).toBe(1);
+    await expect(frame.text()).resolves.toBe('spark-frame');
   });
 
   it('loads scenes through Spark with renderer-aware debug info', async () => {

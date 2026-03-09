@@ -1,4 +1,5 @@
 import { WalkControls } from './controls/WalkControls';
+import { DEFAULT_EXPORT_SETTINGS, ExportManager, type ExportProgress } from './export/ExportManager';
 import { parseAppRuntimeQuery } from './lib/runtimeQuery';
 import { SCENE_PRESETS } from './lib/scenePresets';
 import { KeyframeManager } from './path/KeyframeManager';
@@ -34,6 +35,15 @@ function formatRendererLabel(rendererId: ViewerRendererId): string {
   return rendererId === 'spark' ? 'Spark' : 'mkkellogg';
 }
 
+function downloadBlob(blob: Blob, fileName: string): void {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = fileName;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
 async function main(): Promise<void> {
   const runtimeQuery = parseAppRuntimeQuery(window.location.search);
   let viewer: ViewerAdapter | null = null;
@@ -48,6 +58,8 @@ async function main(): Promise<void> {
   const previewButton = $('#btn-preview') as HTMLButtonElement;
   const savePathButton = $('#btn-save-path') as HTMLButtonElement;
   const loadPathButton = $('#btn-load-path') as HTMLButtonElement;
+  const exportButton = $('#btn-export-mp4') as HTMLButtonElement;
+  const exportNote = $('#export-note');
   const pathFileInput = $('#path-file-input') as HTMLInputElement;
   const timelineScrubber = $('#timeline-scrubber') as HTMLInputElement;
   const scrubberTimeLeft = $('#scrubber-time-left');
@@ -112,6 +124,7 @@ async function main(): Promise<void> {
 
   const walkControls = new WalkControls({ camera, canvas: interactionSurface });
   const keyframeManager = new KeyframeManager({ viewer, events });
+  const exportManager = new ExportManager({ viewer });
   viewer.setFrameHook(() => {
     if (walkControls.isActive()) {
       walkControls.update();
@@ -119,10 +132,41 @@ async function main(): Promise<void> {
   });
 
   let selectedKeyframeId: string | null = null;
+  const defaultExportNote = `${DEFAULT_EXPORT_SETTINGS.width}x${DEFAULT_EXPORT_SETTINGS.height} · ${DEFAULT_EXPORT_SETTINGS.fps} FPS via FFmpeg`;
 
   const updatePreviewButton = () => {
     previewButton.classList.toggle('active', keyframeManager.isPreviewActive());
     previewButton.textContent = keyframeManager.isPreviewActive() ? '■ Stop' : '▶ Preview';
+  };
+
+  const updateExportButton = (progress?: ExportProgress | null) => {
+    if (!exportManager.isExporting()) {
+      exportButton.textContent = '⬇ Export MP4';
+      exportNote.textContent = defaultExportNote;
+      return;
+    }
+
+    const percent = Math.round(progress?.percent ?? 0);
+    exportButton.textContent = `⬇ Exporting ${percent}%`;
+    exportNote.textContent = progress?.message ?? 'Exporting path to MP4…';
+  };
+
+  const setSceneSourceEnabled = (enabled: boolean) => {
+    sceneUrlInput.disabled = !enabled;
+    loadButton.disabled = !enabled;
+
+    document.querySelectorAll<HTMLButtonElement>('.source-tab').forEach(button => {
+      button.disabled = !enabled;
+    });
+
+    document.querySelectorAll<HTMLButtonElement>('.preset-btn').forEach(button => {
+      button.disabled = !enabled;
+    });
+  };
+
+  const setExportInteractionLock = (active: boolean) => {
+    viewerHost.style.pointerEvents = active ? 'none' : '';
+    keyframeList.classList.toggle('disabled', active);
   };
 
   const updateTimelineUI = (timeSeconds: number, durationSeconds: number) => {
@@ -136,15 +180,20 @@ async function main(): Promise<void> {
     const keyframeCount = keyframeManager.getKeyframes().length;
     const sceneLoaded = viewer.isSceneLoaded();
     const previewActive = keyframeManager.isPreviewActive();
+    const exportActive = exportManager.isExporting();
 
-    addKeyframeButton.disabled = !sceneLoaded;
-    clearKeyframesButton.disabled = keyframeCount === 0;
-    previewButton.disabled = !sceneLoaded || keyframeCount < 2;
-    savePathButton.disabled = keyframeCount === 0;
-    loadPathButton.disabled = !sceneLoaded;
-    timelineScrubber.disabled = !sceneLoaded || keyframeCount < 2;
-    setSceneButtonsEnabled(sceneLoaded, previewActive);
+    addKeyframeButton.disabled = !sceneLoaded || exportActive;
+    clearKeyframesButton.disabled = keyframeCount === 0 || exportActive;
+    previewButton.disabled = !sceneLoaded || keyframeCount < 2 || exportActive;
+    savePathButton.disabled = keyframeCount === 0 || exportActive;
+    loadPathButton.disabled = !sceneLoaded || exportActive;
+    timelineScrubber.disabled = !sceneLoaded || keyframeCount < 2 || exportActive;
+    exportButton.disabled = !sceneLoaded || keyframeCount < 2 || exportActive;
+    setSceneButtonsEnabled(sceneLoaded, previewActive || exportActive);
+    setSceneSourceEnabled(!exportActive);
+    setExportInteractionLock(exportActive);
     updatePreviewButton();
+    updateExportButton();
   };
 
   const renderKeyframeList = () => {
@@ -395,12 +444,7 @@ async function main(): Promise<void> {
   savePathButton.addEventListener('click', () => {
     const path = keyframeManager.toJSON();
     const blob = new Blob([JSON.stringify(path, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement('a');
-    anchor.href = url;
-    anchor.download = 'camera-path.json';
-    anchor.click();
-    URL.revokeObjectURL(url);
+    downloadBlob(blob, 'camera-path.json');
     setStatusNote(`Saved camera path with ${path.keyframes.length} keyframe${path.keyframes.length === 1 ? '' : 's'}.`);
   });
 
@@ -433,6 +477,36 @@ async function main(): Promise<void> {
     keyframeManager.seekToTime(normalizedTime * keyframeManager.getTotalDuration());
     selectedKeyframeId = null;
     renderKeyframeList();
+  });
+
+  exportButton.addEventListener('click', async () => {
+    if (walkControls.isActive()) {
+      walkControls.disable();
+      setWalkModeUI(false);
+    }
+
+    keyframeManager.stopPreview();
+
+    const exportPromise = exportManager.exportPath(keyframeManager.getKeyframes(), {
+      onProgress: progress => {
+        updateExportButton(progress);
+        setStatusNote(progress.message);
+      },
+    });
+
+    updatePathControlsState();
+
+    try {
+      const result = await exportPromise;
+      downloadBlob(result.blob, result.fileName);
+      setStatusNote(
+        `Export complete. Downloaded ${result.fileName} with ${result.totalFrames} frame${result.totalFrames === 1 ? '' : 's'}.`,
+      );
+    } catch (error) {
+      setStatusNote(error instanceof Error ? error.message : 'MP4 export failed.');
+    } finally {
+      updatePathControlsState();
+    }
   });
 
   events.on('scene:progress', ({ percent, message }) => {
@@ -493,6 +567,7 @@ async function main(): Promise<void> {
 
   renderKeyframeList();
   setStatusNote('Ready to load a scene.');
+  updateExportButton();
   updatePathControlsState();
   updateTimelineUI(0, 0);
 
