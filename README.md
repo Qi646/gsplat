@@ -108,8 +108,9 @@ Notes:
 
 ## Implementation Notes
 
-- `client/src/viewer/SceneViewer.ts` wraps `@mkkellogg/gaussian-splats-3d` through the package's `rootElement` + `getSplatMesh()` API surface and owns scene loading, render loop, framing, resizing, and FPS tracking.
+- `client/src/viewer/SceneViewer.ts` wraps `@mkkellogg/gaussian-splats-3d` through the package's `rootElement` + `getSplatMesh()` API surface, disables the package's built-in orbit controls, and owns scene loading, render loop, framing, resizing, and FPS tracking.
 - `client/src/viewer/createViewerAdapter.ts` selects the active viewer adapter from the runtime query. The default adapter remains `@mkkellogg/gaussian-splats-3d`, while `client/src/viewer/SparkSceneViewer.ts` provides an opt-in SparkJS comparison path.
+- `client/src/viewer/orbitControls.ts` now centralizes the shared app-owned orbit-control setup and target-sync logic used by both renderer adapters so orbit and walk mode stay aligned.
 - `client/src/lib/robustSceneBounds.ts` computes trimmed scene bounds from sampled splats so initial framing is less sensitive to outlier points in dense scenes.
 - `client/src/viewer/viewerRuntime.ts` keeps compatibility mode as the normal startup path, reserves `?viewerMode=default` as the explicit fast shared-memory diagnostic override when cross-origin isolation is available, and keeps the default renderer on the safer floating-point sort settings (`integerBasedSort: false`, `splatSortDistanceMapPrecision: 20`) in both runtime branches.
 - `client/src/viewer/adaptiveCameraFrustum.ts` derives scene-aware camera near/far planes from the current robust scene bounds, and both renderer adapters re-apply those planes as the camera moves so close inspection can get materially nearer without relying on fixed `0.1 / 1000` clipping planes.
@@ -139,6 +140,7 @@ Notes:
 - `?viewerMode=default` explicitly requests the faster shared-memory path for diagnostics; if cross-origin isolation is unavailable, the viewer falls back to compatibility mode and reports that state. `?viewerMode=compat` explicitly requests the slower compatibility path.
 - SparkJS scene loads currently use Spark's own render path plus local download/progress wiring; the app surfaces the active renderer in the status note and debug snapshot for A/B verification.
 - Successful scene changes clear the current camera path so keyframes remain scene-specific.
+- Both renderer adapters now use the app's own orbit controls instead of mixing app-owned walk mode with renderer-owned orbit updates. Walk mode no longer re-aims the camera back toward a stale orbit target on each render tick.
 - Walk mode is now an explicit click-to-enter fly-through flow: the button arms it, the next click inside the viewer captures mouse look, `W/S` move in the current view direction, `A/D` strafe, `Q/E` move vertically, `Frame Scene` / `Reset View` pause until walk mode exits, and leaving walk mode restores orbit around the current view direction.
 - Path import and path editing controls remain disabled until a scene has loaded successfully.
 - MP4 export requires a loaded scene plus at least two keyframes. While export is running, scene/path controls and viewer pointer interaction are locked until the job completes or fails.
