@@ -133,6 +133,30 @@ export class SceneViewer implements ViewerAdapter {
     this.frameHook = frameHook;
   }
 
+  setNavigationMode(mode: 'orbit' | 'walk'): void {
+    if (this.viewer?.controls) {
+      this.viewer.controls.enabled = mode === 'orbit';
+      this.viewer.controls.update?.();
+    }
+  }
+
+  syncOrbitTargetFromCamera(distance?: number): void {
+    if (!this.camera) {
+      return;
+    }
+
+    const target = this.viewer?.controls?.target;
+    if (!target) {
+      return;
+    }
+
+    const currentDistance = target.distanceTo(this.camera.position);
+    const targetDistance = distance ?? (currentDistance > 0 ? currentDistance : 1);
+    const lookDirection = new THREE.Vector3(0, 0, -1).applyQuaternion(this.camera.quaternion);
+    target.copy(this.camera.position).addScaledVector(lookDirection, targetDistance);
+    this.viewer?.controls?.update?.();
+  }
+
   renderNow(): void {
     this.frameHook?.();
     this.viewer?.update();

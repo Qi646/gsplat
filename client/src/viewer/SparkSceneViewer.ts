@@ -147,6 +147,25 @@ export class SparkSceneViewer implements ViewerAdapter {
     this.frameHook = frameHook;
   }
 
+  setNavigationMode(mode: 'orbit' | 'walk'): void {
+    if (this.controls) {
+      this.controls.enabled = mode === 'orbit';
+      this.controls.update();
+    }
+  }
+
+  syncOrbitTargetFromCamera(distance?: number): void {
+    if (!this.camera || !this.controls) {
+      return;
+    }
+
+    const currentDistance = this.controls.target.distanceTo(this.camera.position);
+    const targetDistance = distance ?? (currentDistance > 0 ? currentDistance : 1);
+    const lookDirection = new THREE.Vector3(0, 0, -1).applyQuaternion(this.camera.quaternion);
+    this.controls.target.copy(this.camera.position).addScaledVector(lookDirection, targetDistance);
+    this.controls.update();
+  }
+
   renderNow(): void {
     this.frameHook?.();
     this.controls?.update();

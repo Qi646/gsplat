@@ -49,6 +49,7 @@ declare module '@mkkellogg/gaussian-splats-3d' {
     renderer: THREE.WebGLRenderer;
     camera: THREE.PerspectiveCamera;
     controls?: {
+      enabled?: boolean;
       target?: THREE.Vector3;
       update?: () => void;
     };

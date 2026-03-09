@@ -112,6 +112,10 @@ class FakeViewer implements ViewerAdapter {
 
   setFrameHook(): void {}
 
+  setNavigationMode(): void {}
+
+  syncOrbitTargetFromCamera(): void {}
+
   applyCameraPose(pose: { position: THREE.Vector3; quaternion: THREE.Quaternion; fov: number }): void {
     this.camera.position.copy(pose.position);
     this.camera.quaternion.copy(pose.quaternion);

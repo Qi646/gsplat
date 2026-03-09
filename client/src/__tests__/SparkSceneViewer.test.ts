@@ -63,6 +63,7 @@ vi.mock('three/examples/jsm/controls/OrbitControls.js', async () => {
   class MockOrbitControls {
     target = new THREE.Vector3();
     enableDamping = false;
+    enabled = true;
 
     constructor(
       _camera: THREE.PerspectiveCamera,
@@ -274,6 +275,38 @@ describe('SparkSceneViewer', () => {
       ).renderer.renderCount,
     ).toBe(1);
     await expect(frame.text()).resolves.toBe('spark-frame');
+  });
+
+  it('disables orbit controls for walk mode and re-syncs the orbit target from the camera view', async () => {
+    const events = new AppEvents();
+    const hostElement = {
+      clientHeight: 600,
+      clientWidth: 800,
+      replaceChildren: vi.fn(),
+    } as unknown as HTMLDivElement;
+    const viewer = new SparkSceneViewer({ hostElement, events });
+
+    await viewer.init();
+
+    const controls = (viewer as unknown as {
+      camera: THREE.PerspectiveCamera;
+      controls: { enabled: boolean; target: THREE.Vector3 };
+    }).controls;
+
+    controls.target.set(1, 2, -2);
+    viewer.getCamera()?.position.set(1, 2, 3);
+    viewer.getCamera()?.lookAt(new THREE.Vector3(6, 2, 3));
+
+    viewer.setNavigationMode('walk');
+    expect(controls.enabled).toBe(false);
+
+    viewer.syncOrbitTargetFromCamera();
+    expect(controls.target.x).toBeCloseTo(6);
+    expect(controls.target.y).toBeCloseTo(2);
+    expect(controls.target.z).toBeCloseTo(3);
+
+    viewer.setNavigationMode('orbit');
+    expect(controls.enabled).toBe(true);
   });
 
   it('loads scenes through Spark with renderer-aware debug info', async () => {

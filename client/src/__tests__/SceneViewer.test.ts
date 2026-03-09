@@ -63,6 +63,7 @@ vi.mock('@mkkellogg/gaussian-splats-3d', async () => {
     } as unknown as THREE.WebGLRenderer;
     camera = new THREE.PerspectiveCamera(60, 1, 0.1, 1000);
     controls = {
+      enabled: true,
       target: new THREE.Vector3(),
       update() {},
     };
@@ -222,6 +223,34 @@ describe('SceneViewer', () => {
 
     expect(mockModule.__mockState.renderCalls).toBe(1);
     await expect(frame.text()).resolves.toBe('scene-frame');
+  });
+
+  it('disables orbit controls for walk mode and re-syncs the orbit target from the camera view', async () => {
+    const events = new AppEvents();
+    const hostElement = {} as HTMLDivElement;
+    const viewer = new SceneViewer({ hostElement, events });
+
+    await viewer.init();
+
+    const internalViewer = (viewer as unknown as {
+      camera: THREE.PerspectiveCamera;
+      viewer: { controls: { enabled: boolean; target: THREE.Vector3 } };
+    }).viewer;
+
+    internalViewer.controls.target.set(1, 2, -2);
+    viewer.getCamera()?.position.set(1, 2, 3);
+    viewer.getCamera()?.lookAt(new THREE.Vector3(6, 2, 3));
+
+    viewer.setNavigationMode('walk');
+    expect(internalViewer.controls.enabled).toBe(false);
+
+    viewer.syncOrbitTargetFromCamera();
+    expect(internalViewer.controls.target.x).toBeCloseTo(6);
+    expect(internalViewer.controls.target.y).toBeCloseTo(2);
+    expect(internalViewer.controls.target.z).toBeCloseTo(3);
+
+    viewer.setNavigationMode('orbit');
+    expect(internalViewer.controls.enabled).toBe(true);
   });
 
   it('surfaces the active runtime viewer options in the debug snapshot', async () => {

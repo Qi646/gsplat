@@ -1,4 +1,4 @@
-import { WalkControls } from './controls/WalkControls';
+import { WalkControls, type WalkControlState } from './controls/WalkControls';
 import { DEFAULT_EXPORT_SETTINGS, ExportManager, type ExportProgress } from './export/ExportManager';
 import { parseAppRuntimeQuery } from './lib/runtimeQuery';
 import { SCENE_PRESETS } from './lib/scenePresets';
@@ -15,16 +15,24 @@ function $(selector: string): HTMLElement {
   return element;
 }
 
-function setWalkModeUI(active: boolean): void {
-  $('#btn-walk-mode').classList.toggle('active', active);
-  $('#walkmode-hud').classList.toggle('visible', active);
+function setWalkModeUI(state: WalkControlState): void {
+  const engaged = state !== 'inactive';
+  const hudMessage =
+    state === 'armed'
+      ? 'WALK MODE · Click in the viewer to enter · WASD move · Mouse look · Q/E vertical · ESC exit'
+      : 'WALK MODE · WASD move · Mouse look · Q/E vertical · Shift sprint · ESC exit';
+
+  $('#btn-walk-mode').classList.toggle('active', engaged);
+  $('#walkmode-hud').classList.toggle('visible', engaged);
+  $('#walkmode-hud').textContent = hudMessage;
 }
 
-function setSceneButtonsEnabled(enabled: boolean, previewActive = false): void {
-  for (const selector of ['#btn-frame-scene', '#btn-reset-view', '#btn-walk-mode']) {
-    const button = $(selector) as HTMLButtonElement;
-    button.disabled = !enabled || previewActive;
-  }
+function setSceneButtonsEnabled(sceneLoaded: boolean, previewActive: boolean, walkState: WalkControlState): void {
+  const walkModeEngaged = walkState !== 'inactive';
+
+  ($('#btn-frame-scene') as HTMLButtonElement).disabled = !sceneLoaded || previewActive || walkModeEngaged;
+  ($('#btn-reset-view') as HTMLButtonElement).disabled = !sceneLoaded || previewActive || walkModeEngaged;
+  ($('#btn-walk-mode') as HTMLButtonElement).disabled = !sceneLoaded || previewActive;
 }
 
 function formatSeconds(seconds: number): string {
@@ -122,9 +130,29 @@ async function main(): Promise<void> {
     throw new Error('Viewer camera or interaction surface is unavailable after initialization');
   }
 
-  const walkControls = new WalkControls({ camera, canvas: interactionSurface });
   const keyframeManager = new KeyframeManager({ viewer, events });
   const exportManager = new ExportManager({ viewer });
+  let walkState: WalkControlState = 'inactive';
+  const walkControls = new WalkControls({
+    camera,
+    canvas: interactionSurface,
+    onStateChange: nextState => {
+      const previousState = walkState;
+      walkState = nextState;
+      setWalkModeUI(walkState);
+      viewer.setNavigationMode(walkState === 'inactive' ? 'orbit' : 'walk');
+
+      if (walkState === 'inactive' && previousState === 'active') {
+        viewer.syncOrbitTargetFromCamera();
+      }
+
+      if (walkState === 'active') {
+        setStatusNote('Walk mode active. Press Esc to return to orbit controls.');
+      }
+
+      updatePathControlsState();
+    },
+  });
   viewer.setFrameHook(() => {
     if (walkControls.isActive()) {
       walkControls.update();
@@ -189,11 +217,17 @@ async function main(): Promise<void> {
     loadPathButton.disabled = !sceneLoaded || exportActive;
     timelineScrubber.disabled = !sceneLoaded || keyframeCount < 2 || exportActive;
     exportButton.disabled = !sceneLoaded || keyframeCount < 2 || exportActive;
-    setSceneButtonsEnabled(sceneLoaded, previewActive || exportActive);
+    setSceneButtonsEnabled(sceneLoaded, previewActive || exportActive, walkState);
     setSceneSourceEnabled(!exportActive);
     setExportInteractionLock(exportActive);
     updatePreviewButton();
     updateExportButton();
+  };
+
+  const stopWalkMode = () => {
+    if (walkState !== 'inactive') {
+      walkControls.disable();
+    }
   };
 
   const renderKeyframeList = () => {
@@ -299,22 +333,24 @@ async function main(): Promise<void> {
 
   resizeViewer();
   window.addEventListener('resize', resizeViewer);
-  window.addEventListener('beforeunload', () => viewer.dispose());
+  window.addEventListener('beforeunload', () => {
+    stopWalkMode();
+    viewer.dispose();
+  });
 
   const loadScene = async (url: string) => {
+    stopWalkMode();
     keyframeManager.stopPreview();
     loadingOverlay.classList.remove('hidden');
     progressFill.style.width = '0%';
     progressLabel.textContent = 'Starting…';
     setStatusNote('Loading scene…');
     statScene.textContent = 'loading';
-    setSceneButtonsEnabled(false);
+    setSceneButtonsEnabled(false, false, walkState);
     addKeyframeButton.disabled = true;
     previewButton.disabled = true;
     loadPathButton.disabled = true;
     timelineScrubber.disabled = true;
-    setWalkModeUI(false);
-    walkControls.disable();
 
     try {
       await viewer.loadScene(url);
@@ -383,18 +419,14 @@ async function main(): Promise<void> {
   });
 
   ($('#btn-walk-mode') as HTMLButtonElement).addEventListener('click', () => {
-    if (walkControls.isActive()) {
-      walkControls.disable();
-      setWalkModeUI(false);
+    if (walkState !== 'inactive') {
+      stopWalkMode();
+      setStatusNote('Walk mode exited. Orbit controls restored.');
       return;
     }
 
     walkControls.enable();
-    setWalkModeUI(true);
-  });
-
-  document.addEventListener('walkmode:exit', () => {
-    setWalkModeUI(false);
+    setStatusNote('Walk mode armed. Click in the viewer to capture mouse look.');
   });
 
   addKeyframeButton.addEventListener('click', () => {
@@ -428,10 +460,7 @@ async function main(): Promise<void> {
       return;
     }
 
-    if (walkControls.isActive()) {
-      walkControls.disable();
-      setWalkModeUI(false);
-    }
+    stopWalkMode();
 
     if (keyframeManager.startPreview()) {
       selectedKeyframeId = null;
@@ -480,11 +509,7 @@ async function main(): Promise<void> {
   });
 
   exportButton.addEventListener('click', async () => {
-    if (walkControls.isActive()) {
-      walkControls.disable();
-      setWalkModeUI(false);
-    }
-
+    stopWalkMode();
     keyframeManager.stopPreview();
 
     const exportPromise = exportManager.exportPath(keyframeManager.getKeyframes(), {
