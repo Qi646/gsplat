@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { formatLoadProgress } from '../lib/loadProgress';
 import type { AppEvents, InterpolatedPose } from '../types';
 import { detectSceneFormat } from '../lib/sceneFormat';
+import { resolveViewerRuntimeConfig } from './viewerRuntime';
 
 export interface ViewerOptions {
   canvas: HTMLCanvasElement;
@@ -26,6 +27,8 @@ export class SceneViewer {
   private fpsSamples: number[] = [];
   private animationFrameId: number | null = null;
   private frameHook: (() => void) | null = null;
+  private compatibilityMode = false;
+  private compatibilityStatusMessage: string | null = null;
 
   constructor(options: ViewerOptions) {
     this.canvas = options.canvas;
@@ -33,13 +36,20 @@ export class SceneViewer {
   }
 
   async init(): Promise<void> {
+    const runtimeConfig = resolveViewerRuntimeConfig(window.crossOriginIsolated);
+    this.compatibilityMode = runtimeConfig.compatibilityMode;
+    this.compatibilityStatusMessage = runtimeConfig.statusMessage;
+
+    if (runtimeConfig.warningMessage) {
+      console.warn(runtimeConfig.warningMessage);
+    }
+
     this.viewer = new GaussianSplats3D.Viewer({
       canvas: this.canvas,
       initialCameraPosition: [0, 0, 3],
       initialCameraLookAt: [0, 0, 0],
       selfDrivenMode: false,
-      useWorkers: true,
-      workerConfig: { crossOriginIsolated: false },
+      ...runtimeConfig.viewerOptions,
     });
 
     await this.viewer.init();
@@ -175,6 +185,14 @@ export class SceneViewer {
 
   isSceneLoaded(): boolean {
     return this.sceneLoaded;
+  }
+
+  isCompatibilityMode(): boolean {
+    return this.compatibilityMode;
+  }
+
+  getCompatibilityStatusMessage(): string | null {
+    return this.compatibilityStatusMessage;
   }
 
   dispose(): void {

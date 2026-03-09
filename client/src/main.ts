@@ -53,6 +53,11 @@ async function main(): Promise<void> {
   const events = new AppEvents();
   const viewer = new SceneViewer({ canvas, events });
   await viewer.init();
+  const compatibilityStatusMessage = viewer.getCompatibilityStatusMessage();
+
+  const setStatusNote = (message: string): void => {
+    statusNote.textContent = compatibilityStatusMessage ? `${message} ${compatibilityStatusMessage}` : message;
+  };
 
   const camera = viewer.getCamera();
   if (!camera) {
@@ -141,7 +146,7 @@ async function main(): Promise<void> {
         event.stopPropagation();
         if (keyframeManager.moveKeyframe(keyframe.id, -1)) {
           selectedKeyframeId = keyframe.id;
-          statusNote.textContent = `Moved keyframe ${index + 1} earlier in the path.`;
+          setStatusNote(`Moved keyframe ${index + 1} earlier in the path.`);
           renderKeyframeList();
           updatePathControlsState();
         }
@@ -157,7 +162,7 @@ async function main(): Promise<void> {
         event.stopPropagation();
         if (keyframeManager.moveKeyframe(keyframe.id, 1)) {
           selectedKeyframeId = keyframe.id;
-          statusNote.textContent = `Moved keyframe ${index + 1} later in the path.`;
+          setStatusNote(`Moved keyframe ${index + 1} later in the path.`);
           renderKeyframeList();
           updatePathControlsState();
         }
@@ -174,7 +179,7 @@ async function main(): Promise<void> {
           if (selectedKeyframeId === keyframe.id) {
             selectedKeyframeId = null;
           }
-          statusNote.textContent = `Deleted keyframe ${index + 1}.`;
+          setStatusNote(`Deleted keyframe ${index + 1}.`);
           renderKeyframeList();
           updatePathControlsState();
         }
@@ -185,7 +190,7 @@ async function main(): Promise<void> {
       item.addEventListener('click', () => {
         selectedKeyframeId = keyframe.id;
         keyframeManager.seekToTime(keyframe.time);
-        statusNote.textContent = `Jumped to keyframe ${index + 1}.`;
+        setStatusNote(`Jumped to keyframe ${index + 1}.`);
         renderKeyframeList();
       });
 
@@ -210,7 +215,7 @@ async function main(): Promise<void> {
     loadingOverlay.classList.remove('hidden');
     progressFill.style.width = '0%';
     progressLabel.textContent = 'Starting…';
-    statusNote.textContent = 'Loading scene…';
+    setStatusNote('Loading scene…');
     statScene.textContent = 'loading';
     setSceneButtonsEnabled(false);
     addKeyframeButton.disabled = true;
@@ -227,11 +232,11 @@ async function main(): Promise<void> {
       renderKeyframeList();
       updatePathControlsState();
       updateTimelineUI(0, 0);
-      statusNote.textContent = 'Scene loaded. Capture keyframes, scrub the path, or preview a camera move.';
+      setStatusNote('Scene loaded. Capture keyframes, scrub the path, or preview a camera move.');
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown load error';
       progressLabel.textContent = `Error: ${message}`;
-      statusNote.textContent = 'Scene load failed. Try another public URL or preset.';
+      setStatusNote('Scene load failed. Try another public URL or preset.');
       updatePathControlsState();
     }
   };
@@ -310,7 +315,7 @@ async function main(): Promise<void> {
     selectedKeyframeId = keyframe.id;
     renderKeyframeList();
     updatePathControlsState();
-    statusNote.textContent = `Captured keyframe ${keyframeManager.getKeyframes().length} at ${formatSeconds(keyframe.time)}.`;
+    setStatusNote(`Captured keyframe ${keyframeManager.getKeyframes().length} at ${formatSeconds(keyframe.time)}.`);
   });
 
   clearKeyframesButton.addEventListener('click', () => {
@@ -322,13 +327,13 @@ async function main(): Promise<void> {
     keyframeManager.clear();
     renderKeyframeList();
     updatePathControlsState();
-    statusNote.textContent = 'Camera path cleared.';
+    setStatusNote('Camera path cleared.');
   });
 
   previewButton.addEventListener('click', () => {
     if (keyframeManager.isPreviewActive()) {
       keyframeManager.stopPreview();
-      statusNote.textContent = 'Preview stopped.';
+      setStatusNote('Preview stopped.');
       return;
     }
 
@@ -341,7 +346,7 @@ async function main(): Promise<void> {
       selectedKeyframeId = null;
       renderKeyframeList();
       updatePathControlsState();
-      statusNote.textContent = 'Previewing camera path.';
+      setStatusNote('Previewing camera path.');
     }
   });
 
@@ -354,7 +359,7 @@ async function main(): Promise<void> {
     anchor.download = 'camera-path.json';
     anchor.click();
     URL.revokeObjectURL(url);
-    statusNote.textContent = `Saved camera path with ${path.keyframes.length} keyframe${path.keyframes.length === 1 ? '' : 's'}.`;
+    setStatusNote(`Saved camera path with ${path.keyframes.length} keyframe${path.keyframes.length === 1 ? '' : 's'}.`);
   });
 
   loadPathButton.addEventListener('click', () => {
@@ -373,9 +378,9 @@ async function main(): Promise<void> {
       selectedKeyframeId = path.keyframes[0]?.id ?? null;
       renderKeyframeList();
       updatePathControlsState();
-      statusNote.textContent = `Loaded camera path with ${path.keyframes.length} keyframe${path.keyframes.length === 1 ? '' : 's'}.`;
+      setStatusNote(`Loaded camera path with ${path.keyframes.length} keyframe${path.keyframes.length === 1 ? '' : 's'}.`);
     } catch (error) {
-      statusNote.textContent = error instanceof Error ? error.message : 'Invalid camera path file.';
+      setStatusNote(error instanceof Error ? error.message : 'Invalid camera path file.');
     } finally {
       pathFileInput.value = '';
     }
@@ -402,7 +407,7 @@ async function main(): Promise<void> {
 
   events.on('scene:error', ({ message }) => {
     statScene.textContent = 'error';
-    statusNote.textContent = `Scene load failed: ${message}`;
+    setStatusNote(`Scene load failed: ${message}`);
     updatePathControlsState();
   });
 
@@ -445,6 +450,9 @@ async function main(): Promise<void> {
   });
 
   renderKeyframeList();
+  if (viewer.isCompatibilityMode()) {
+    setStatusNote('Ready to load a scene.');
+  }
   updatePathControlsState();
   updateTimelineUI(0, 0);
 
