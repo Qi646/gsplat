@@ -18,6 +18,6 @@ export function parseAppRuntimeQuery(search: string): AppRuntimeQuery {
     autoSceneUrl: rawScene && rawScene.trim() ? rawScene.trim() : null,
     e2eEnabled: params.get('e2e') === '1',
     renderer: rawRenderer === 'spark' ? 'spark' : 'mkkellogg',
-    viewerMode: rawViewerMode === 'default' ? 'default' : 'compat',
+    viewerMode: rawViewerMode === 'compat' ? 'compat' : 'default',
   };
 }

@@ -63,9 +63,9 @@ export interface ViewerDebugSnapshot {
     viewerOptions: {
       gpuAcceleratedSort: boolean;
       sharedMemoryForWorkers: boolean;
-      enableSIMDInSort: boolean;
-      integerBasedSort: boolean;
-      splatSortDistanceMapPrecision: number;
+      enableSIMDInSort?: boolean;
+      integerBasedSort?: boolean;
+      splatSortDistanceMapPrecision?: number;
     } | null;
   };
   sceneCount: number;

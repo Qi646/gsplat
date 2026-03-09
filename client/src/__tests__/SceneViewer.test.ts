@@ -192,9 +192,9 @@ describe('SceneViewer', () => {
 
     expect(mockModule.__mockState.viewerOptions?.['rootElement']).toBe(hostElement);
     expect(mockModule.__mockState.viewerOptions?.['canvas']).toBeUndefined();
-    expect(mockModule.__mockState.viewerOptions?.['integerBasedSort']).toBe(false);
-    expect(mockModule.__mockState.viewerOptions?.['enableSIMDInSort']).toBe(true);
-    expect(mockModule.__mockState.viewerOptions?.['splatSortDistanceMapPrecision']).toBe(20);
+    expect(mockModule.__mockState.viewerOptions?.['gpuAcceleratedSort']).toBe(true);
+    expect(mockModule.__mockState.viewerOptions?.['sharedMemoryForWorkers']).toBe(true);
+    expect(mockModule.__mockState.viewerOptions).not.toHaveProperty('integerBasedSort');
     expect(viewer.getRendererId()).toBe('mkkellogg');
     expect(viewer.getInteractionSurface()).toEqual(
       (viewer as unknown as { renderer: { domElement: unknown } }).renderer.domElement,
@@ -218,15 +218,12 @@ describe('SceneViewer', () => {
         viewerOptions: {
           gpuAcceleratedSort: true,
           sharedMemoryForWorkers: true,
-          enableSIMDInSort: true,
-          integerBasedSort: false,
-          splatSortDistanceMapPrecision: 20,
         },
       },
     });
   });
 
-  it('forces Firefox onto the safer runtime and ignores fast-path overrides', async () => {
+  it('keeps Firefox on the fast runtime when isolation is available', async () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     Object.defineProperty(globalThis, 'navigator', {
       value: {
@@ -246,27 +243,21 @@ describe('SceneViewer', () => {
 
     await viewer.init();
 
-    expect(warnSpy).toHaveBeenCalledWith(
-      'The fast shared-memory viewer path was requested in Firefox, but Firefox now forces a safer compatibility runtime to avoid preset rendering corruption.',
-    );
+    expect(warnSpy).not.toHaveBeenCalled();
     expect(mockModule.__mockState.viewerOptions).toMatchObject({
-      gpuAcceleratedSort: false,
-      sharedMemoryForWorkers: false,
-      enableSIMDInSort: false,
-      integerBasedSort: false,
-      splatSortDistanceMapPrecision: 24,
+      gpuAcceleratedSort: true,
+      sharedMemoryForWorkers: true,
     });
     expect(viewer.getDebugSnapshot().rendererId).toBe('mkkellogg');
     expect(viewer.getDebugSnapshot().runtime).toMatchObject({
-      compatibilityMode: true,
-      compatibilityStatusMessage:
-        'Firefox is using a safer compatibility runtime to avoid preset rendering corruption; the fast-path request was ignored.',
+      compatibilityMode: false,
+      compatibilityStatusMessage: null,
     });
 
     warnSpy.mockRestore();
   });
 
-  it('loads a scene, disables the package loading UI, and emits scene:loaded when bounds are valid', async () => {
+  it('loads a scene with the default rotation, disables the package loading UI, and emits scene:loaded when bounds are valid', async () => {
     const events = new AppEvents();
     const hostElement = {} as HTMLDivElement;
     const viewer = new SceneViewer({ hostElement, events });
@@ -278,6 +269,7 @@ describe('SceneViewer', () => {
 
     expect(mockModule.__mockState.addSceneCalls).toHaveLength(1);
     expect(mockModule.__mockState.addSceneCalls[0]?.options['showLoadingUI']).toBe(false);
+    expect(mockModule.__mockState.addSceneCalls[0]?.options['rotation']).toEqual([1, 0, 0, 0]);
     expect(viewer.isSceneLoaded()).toBe(true);
     expect(onLoaded).toHaveBeenCalledWith({ splatCount: 1024 });
 

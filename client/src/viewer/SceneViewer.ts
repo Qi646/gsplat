@@ -1,12 +1,13 @@
 import * as GaussianSplats3D from '@mkkellogg/gaussian-splats-3d';
 import * as THREE from 'three';
-import { detectBrowserFamily } from '../lib/browserInfo';
 import { formatLoadProgress } from '../lib/loadProgress';
 import { computeRobustSceneBounds } from '../lib/robustSceneBounds';
 import type { AppEvents, InterpolatedPose, ViewerDebugSnapshot } from '../types';
 import { detectSceneFormat } from '../lib/sceneFormat';
 import { resolveViewerRuntimeConfig, type ViewerRuntimeOverrides, type ViewerRuntimeOptions } from './viewerRuntime';
 import type { ViewerAdapter, ViewerAdapterOptions } from './ViewerAdapter';
+
+const DEFAULT_SCENE_ROTATION: [number, number, number, number] = [1, 0, 0, 0];
 
 export class SceneViewer implements ViewerAdapter {
   private hostElement: HTMLElement;
@@ -30,9 +31,6 @@ export class SceneViewer implements ViewerAdapter {
   private runtimeViewerOptions: ViewerRuntimeOptions = {
     gpuAcceleratedSort: false,
     sharedMemoryForWorkers: false,
-    enableSIMDInSort: true,
-    integerBasedSort: false,
-    splatSortDistanceMapPrecision: 20,
   };
 
   constructor(options: ViewerAdapterOptions) {
@@ -42,11 +40,7 @@ export class SceneViewer implements ViewerAdapter {
   }
 
   async init(): Promise<void> {
-    const runtimeConfig = resolveViewerRuntimeConfig(
-      window.crossOriginIsolated,
-      detectBrowserFamily(globalThis.navigator?.userAgent),
-      this.runtimeOverrides,
-    );
+    const runtimeConfig = resolveViewerRuntimeConfig(window.crossOriginIsolated, this.runtimeOverrides);
     this.compatibilityMode = runtimeConfig.compatibilityMode;
     this.compatibilityStatusMessage = runtimeConfig.statusMessage;
     this.runtimeViewerOptions = runtimeConfig.viewerOptions;
@@ -89,6 +83,7 @@ export class SceneViewer implements ViewerAdapter {
 
       await this.viewer.addSplatScene(url, {
         format: this.toSceneFormat(detectSceneFormat(url)),
+        rotation: DEFAULT_SCENE_ROTATION,
         showLoadingUI: false,
         onProgress: (percent: number, progressLabel: string, stage: number) => {
           this.events.emit('scene:progress', formatLoadProgress(percent, progressLabel, stage));

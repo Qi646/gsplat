@@ -15,6 +15,9 @@ declare module '@mkkellogg/gaussian-splats-3d' {
 
   export interface AddSplatSceneOptions {
     format: SceneFormat;
+    position?: [number, number, number];
+    rotation?: [number, number, number, number];
+    scale?: [number, number, number];
     showLoadingUI?: boolean;
     onProgress?: (percent: number, progressLabel: string, stage: number) => void;
   }
