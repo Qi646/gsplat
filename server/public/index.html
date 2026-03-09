@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Gaussian Splat Viewer</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500&family=Syne:wght@400;600;800&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #080a0e;
+      --surface: #0e1117;
+      --surface2: #151a22;
+      --border: rgba(255,255,255,0.07);
+      --accent: #00e5ff;
+      --accent2: #ff6b35;
+      --text: #e8edf5;
+      --muted: #5a6478;
+      --danger: #ff4455;
+      --success: #00ff88;
+      --mono: 'JetBrains Mono', monospace;
+      --sans: 'Syne', sans-serif;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--mono);
+      overflow: hidden;
+      height: 100vh;
+      width: 100vw;
+    }
+
+    #app {
+      display: grid;
+      grid-template-columns: 1fr 320px;
+      grid-template-rows: 48px 1fr;
+      height: 100vh;
+      width: 100vw;
+    }
+
+    #topbar {
+      grid-column: 1 / -1;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 0 16px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      z-index: 10;
+    }
+
+    .logo {
+      font-family: var(--sans);
+      font-weight: 800;
+      font-size: 15px;
+      letter-spacing: -0.02em;
+      color: var(--accent);
+      margin-right: 8px;
+    }
+
+    .logo span { color: var(--muted); }
+    .topbar-sep { width: 1px; height: 20px; background: var(--border); margin: 0 4px; }
+
+    .stats-pill {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      padding: 4px 12px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      font-size: 11px;
+      color: var(--muted);
+    }
+
+    .stats-pill .val { color: var(--accent); font-weight: 500; }
+    .stats-pill .fps-val { color: var(--success); }
+    .stats-pill .fps-val.warn { color: var(--accent2); }
+    .stats-pill .fps-val.bad { color: var(--danger); }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      padding: 5px 12px;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      background: var(--surface2);
+      color: var(--text);
+      font-family: var(--mono);
+      font-size: 11px;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: all 0.15s;
+      user-select: none;
+    }
+
+    .btn:hover { border-color: var(--accent); color: var(--accent); }
+    .btn:active { transform: scale(0.97); }
+    .btn.active { border-color: var(--accent); background: rgba(0,229,255,0.08); color: var(--accent); }
+    .btn:disabled { opacity: 0.35; cursor: not-allowed; pointer-events: none; }
+
+    .spacer { flex: 1; }
+
+    #canvas-container {
+      position: relative;
+      overflow: hidden;
+      background: radial-gradient(circle at top, rgba(0,229,255,0.05), transparent 35%), var(--bg);
+    }
+
+    #splat-canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+
+    #loading-overlay {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 20px;
+      background: rgba(8,10,14,0.95);
+      z-index: 20;
+      transition: opacity 0.4s;
+    }
+
+    #loading-overlay.hidden { opacity: 0; pointer-events: none; }
+
+    .loading-title {
+      font-family: var(--sans);
+      font-size: 22px;
+      font-weight: 600;
+      color: var(--accent);
+      letter-spacing: -0.02em;
+    }
+
+    .progress-track {
+      width: 320px;
+      height: 2px;
+      background: var(--surface2);
+      border-radius: 1px;
+      overflow: hidden;
+    }
+
+    .progress-fill {
+      height: 100%;
+      width: 0%;
+      background: var(--accent);
+      border-radius: 1px;
+      transition: width 0.2s;
+      box-shadow: 0 0 8px var(--accent);
+    }
+
+    .progress-label {
+      font-size: 11px;
+      color: var(--muted);
+      text-align: center;
+      max-width: 320px;
+      line-height: 1.6;
+    }
+
+    #walkmode-hud {
+      position: absolute;
+      top: 12px;
+      left: 50%;
+      transform: translateX(-50%);
+      padding: 6px 14px;
+      background: rgba(0,229,255,0.12);
+      border: 1px solid var(--accent);
+      border-radius: 4px;
+      font-size: 11px;
+      color: var(--accent);
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.2s;
+    }
+
+    #walkmode-hud.visible { opacity: 1; }
+
+    #panel {
+      display: flex;
+      flex-direction: column;
+      background: var(--surface);
+      border-left: 1px solid var(--border);
+      overflow-y: auto;
+    }
+
+    .panel-section {
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .section-label {
+      font-size: 9px;
+      font-weight: 500;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 10px;
+    }
+
+    .source-toggle {
+      display: flex;
+      gap: 4px;
+      margin-bottom: 10px;
+    }
+
+    .source-tab {
+      flex: 1;
+      padding: 5px;
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      background: transparent;
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: 10px;
+      cursor: pointer;
+      text-align: center;
+      transition: all 0.15s;
+    }
+
+    .source-tab.active {
+      border-color: var(--accent);
+      color: var(--accent);
+      background: rgba(0,229,255,0.06);
+    }
+
+    .url-input {
+      width: 100%;
+      padding: 7px 10px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      color: var(--text);
+      font-family: var(--mono);
+      font-size: 11px;
+      margin-bottom: 8px;
+      outline: none;
+    }
+
+    .url-input:focus { border-color: var(--accent); }
+    .url-input::placeholder { color: var(--muted); }
+
+    .preset-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 4px;
+    }
+
+    .preset-btn {
+      padding: 8px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: 10px;
+      cursor: pointer;
+      text-align: left;
+      line-height: 1.5;
+      transition: all 0.15s;
+    }
+
+    .preset-btn:hover { border-color: var(--accent); color: var(--text); }
+    .preset-name { display: block; color: var(--text); }
+    .preset-meta { display: block; color: var(--muted); font-size: 9px; }
+
+    .controls-list {
+      display: grid;
+      gap: 8px;
+      font-size: 10px;
+      line-height: 1.7;
+      color: var(--muted);
+    }
+
+    .controls-list strong { color: var(--text); font-weight: 500; }
+
+    .note {
+      font-size: 10px;
+      line-height: 1.7;
+      color: var(--muted);
+    }
+
+    @media (max-width: 900px) {
+      body { overflow: auto; }
+
+      #app {
+        grid-template-columns: 1fr;
+        grid-template-rows: auto minmax(50vh, 65vh) auto;
+        min-height: 100vh;
+      }
+
+      #topbar {
+        flex-wrap: wrap;
+        padding: 12px 16px;
+      }
+
+      #panel {
+        border-left: none;
+        border-top: 1px solid var(--border);
+        max-height: none;
+      }
+
+      .progress-track,
+      .progress-label {
+        width: min(320px, calc(100vw - 48px));
+      }
+    }
+  </style>
+  <script type="module" crossorigin src="/assets/index-6UxghVqD.js"></script>
+</head>
+<body>
+  <div id="app">
+    <header id="topbar">
+      <div class="logo">GSPLAT<span>.viewer</span></div>
+      <div class="topbar-sep"></div>
+      <div class="stats-pill">
+        <span>FPS <span class="val fps-val" id="stat-fps">--</span></span>
+        <span>·</span>
+        <span>Gaussians <span class="val" id="stat-count">--</span></span>
+        <span>·</span>
+        <span id="stat-scene">no scene</span>
+      </div>
+      <div class="spacer"></div>
+      <button class="btn" id="btn-frame-scene" disabled>⊡ Frame Scene</button>
+      <button class="btn" id="btn-reset-view" disabled>↺ Reset View</button>
+      <div class="topbar-sep"></div>
+      <button class="btn" id="btn-walk-mode" disabled>⬡ Walk Mode</button>
+    </header>
+
+    <div id="canvas-container">
+      <canvas id="splat-canvas"></canvas>
+
+      <div id="loading-overlay">
+        <div class="loading-title">Gaussian Splat Viewer</div>
+        <div class="progress-track">
+          <div class="progress-fill" id="progress-fill"></div>
+        </div>
+        <div class="progress-label" id="progress-label">Load a public scene to begin.</div>
+      </div>
+
+      <div id="walkmode-hud">WALK MODE · WASD move · Mouse look · Q/E vertical · ESC exit</div>
+    </div>
+
+    <aside id="panel">
+      <div class="panel-section">
+        <div class="section-label">Scene Source</div>
+        <div class="source-toggle">
+          <button class="source-tab active" data-tab="url">URL / Path</button>
+          <button class="source-tab" data-tab="presets">Presets</button>
+        </div>
+
+        <div id="tab-url">
+          <input class="url-input" id="scene-url-input" type="text" placeholder="https://… or /path/to/scene.ply" />
+          <button class="btn" id="btn-load-scene" style="width: 100%">▶ Load Scene</button>
+        </div>
+
+        <div id="tab-presets" style="display: none">
+          <div class="preset-grid" id="preset-grid"></div>
+        </div>
+      </div>
+
+      <div class="panel-section">
+        <div class="section-label">Navigation</div>
+        <div class="controls-list">
+          <div><strong>Orbit:</strong> left drag orbit, right drag pan, scroll zoom</div>
+          <div><strong>Walk:</strong> click Walk Mode, then WASD + mouse look</div>
+          <div><strong>Scene:</strong> Frame Scene fits bounds, Reset View returns to the default framing</div>
+        </div>
+      </div>
+
+      <div class="panel-section" style="border-bottom: none">
+        <div class="section-label">Status</div>
+        <div class="note" id="status-note">
+          Ready to load one of the preset scenes or any public `.ply`, `.splat`, or `.ksplat` URL.
+        </div>
+      </div>
+    </aside>
+  </div>
+
+</body>
+</html>
