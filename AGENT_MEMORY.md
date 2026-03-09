@@ -19,6 +19,8 @@
 - The installed `@mkkellogg/gaussian-splats-3d` package does not honor the locally stubbed `workerConfig.crossOriginIsolated` option; real worker behavior must be controlled through supported viewer options such as `sharedMemoryForWorkers` and `gpuAcceleratedSort`.
 - The root app now serves `Cross-Origin-Opener-Policy: same-origin` and `Cross-Origin-Embedder-Policy: require-corp` in both Vite dev and the Express production server so the viewer can use shared-memory workers when available.
 - The root viewer now automatically falls back to `sharedMemoryForWorkers: false` and `gpuAcceleratedSort: false` when `window.crossOriginIsolated` is unavailable, and surfaces that compatibility mode in the UI status note instead of hanging in processing.
+- The root viewer wrapper now aligns with the installed `@mkkellogg/gaussian-splats-3d` package API: it mounts via `rootElement`, uses the package-managed renderer canvas for interaction, computes framing bounds from `getSplatMesh().computeBoundingBox(true)`, and disables the package's built-in loading UI in favor of the app overlay.
+- The root viewer now rejects scene loads that resolve with zero splats or invalid bounds instead of emitting a false `scene:loaded` state that can leave the viewer black.
 - Camera paths at the root use JSON keyframes `{ id, time, position, quaternion, fov }`, Catmull-Rom position interpolation, shortest-arc quaternion slerp, smoothstep timing, and FOV lerp.
 - Successful scene reloads now clear the current camera path so saved keyframes remain scene-specific.
 - A root `README.md` now documents the active root workspace, current implemented slice, validated commands, and the fact that `gsplat-viewer/` is reference-only.
@@ -27,6 +29,7 @@
 - The root server now has its own `vitest` + `supertest` harness to verify headers and `/api/health`, and the root `npm test` command runs both client and server test suites.
 - There is a stray import artifact directory `gsplat-viewer/{client` that appears accidental.
 - A 2026-03-09 smoke check showed existing local listeners can occupy ports `3001` and `5173`; Vite auto-shifts to the next port, but the Express dev server still fails fast on `3001` with `EADDRINUSE`.
+- After the viewer-wrapper alignment fix on 2026-03-09, `npm test` and `npm run build` both passed again at the repo root.
 
 ## Decisions
 - Use a root `.gitignore` for repo-wide transient files and the root archive before the initial commit.
@@ -35,6 +38,7 @@
 - Recommended implementation order is now: 1) root viewer baseline, 2) camera path recording and playback, 3) MP4 export pipeline, 4) polish/docs cleanup.
 - Prefer referencing live, lighter-weight `.splat` sample assets for presets instead of deep `point_cloud/iteration_*/*.ply` links, since upstream dataset layouts can drift and those links are more brittle.
 - When adapting `@mkkellogg/gaussian-splats-3d`, rely on local constants for loader-status codes instead of assuming the package exports its internal `LoaderStatus` symbol.
+- When adapting `@mkkellogg/gaussian-splats-3d`, verify the installed package runtime API against its actual docs/runtime surface instead of trusting local declaration shims; the current package uses `rootElement` and `getSplatMesh()` rather than `canvas` and `scene`.
 - Keep the root camera-path UI lightweight: explicit move-up/move-down reordering, no drag-and-drop timeline editor yet.
 - Disable path import until a scene is loaded, and clear the current path on successful scene changes.
 - Always document current expected behaviour in repo-facing docs when behavior changes or when user-visible limitations/quirks are clarified.
@@ -50,3 +54,4 @@
 - 2026-03-09: Fixed the root load-progress UI to use the library's real stage codes and raw fractional download progress, with unit coverage for progress formatting.
 - 2026-03-09: Completed the root camera-path milestone with keyframe capture, reorder/delete, smooth preview playback, scrubbing, and path JSON save/load.
 - 2026-03-09: Fixed the scene-load stall by adding COOP/COEP headers in dev/prod, switching the viewer to supported worker options, and adding a compatibility fallback plus server header tests.
+- 2026-03-09: Fixed the false `loaded` + black viewer state by aligning the root wrapper with the installed package API, switching framing to splat-mesh bounds, and adding SceneViewer unit coverage for the success/error paths.

@@ -74,7 +74,7 @@ curl -I http://localhost:3001/
 
 ## Implementation Notes
 
-- `client/src/viewer/SceneViewer.ts` wraps `@mkkellogg/gaussian-splats-3d` and owns scene loading, render loop, framing, resizing, and FPS tracking.
+- `client/src/viewer/SceneViewer.ts` wraps `@mkkellogg/gaussian-splats-3d` through the package's `rootElement` + `getSplatMesh()` API surface and owns scene loading, render loop, framing, resizing, and FPS tracking.
 - `client/src/viewer/viewerRuntime.ts` selects the viewer's shared-memory worker path when cross-origin isolation is available and falls back to a slower compatibility path otherwise.
 - `client/src/controls/WalkControls.ts` adds pointer-lock WASD navigation on top of the viewer camera.
 - `client/src/lib/sceneFormat.ts` and `client/src/lib/scenePresets.ts` isolate URL format detection and preset scene configuration.
@@ -86,6 +86,7 @@ curl -I http://localhost:3001/
 - Scene loads are single-scene. Loading a preset or URL replaces the previously loaded scene.
 - Scene loading is currently non-progressive. The scene is not visible until processing completes.
 - The progress bar reflects download progress first, then resets to `0%` when the loader switches into processing. The UI does not yet expose granular processing sub-steps.
+- Once the UI reaches `loaded`, the viewer is expected to have framed a visible scene. Loads that resolve with zero splats or invalid bounds now fail into the error state instead of reporting a false `loaded` status.
 - The app serves cross-origin isolation headers in both the Vite dev server and the Express production server so the viewer can use the faster shared-memory worker path.
 - If cross-origin isolation is unavailable in a runtime, the viewer automatically falls back to a slower compatibility worker path and surfaces that state in the status note instead of hanging in processing.
 - Successful scene changes clear the current camera path so keyframes remain scene-specific.

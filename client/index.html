@@ -113,7 +113,12 @@
       background: radial-gradient(circle at top, rgba(0,229,255,0.05), transparent 35%), var(--bg);
     }
 
-    #splat-canvas {
+    #viewer-host {
+      position: absolute;
+      inset: 0;
+    }
+
+    #viewer-host canvas {
       display: block;
       width: 100%;
       height: 100%;
@@ -454,7 +459,7 @@
     </header>
 
     <div id="canvas-container">
-      <canvas id="splat-canvas"></canvas>
+      <div id="viewer-host"></div>
 
       <div id="loading-overlay">
         <div class="loading-title">Gaussian Splat Viewer</div>

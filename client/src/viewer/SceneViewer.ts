@@ -6,16 +6,15 @@ import { detectSceneFormat } from '../lib/sceneFormat';
 import { resolveViewerRuntimeConfig } from './viewerRuntime';
 
 export interface ViewerOptions {
-  canvas: HTMLCanvasElement;
+  hostElement: HTMLElement;
   events: AppEvents;
 }
 
 export class SceneViewer {
-  private canvas: HTMLCanvasElement;
+  private hostElement: HTMLElement;
   private events: AppEvents;
   private viewer: GaussianSplats3D.Viewer | null = null;
   private renderer: THREE.WebGLRenderer | null = null;
-  private scene: THREE.Scene | null = null;
   private camera: THREE.PerspectiveCamera | null = null;
   private sceneBounds = new THREE.Box3();
   private sceneLoaded = false;
@@ -31,7 +30,7 @@ export class SceneViewer {
   private compatibilityStatusMessage: string | null = null;
 
   constructor(options: ViewerOptions) {
-    this.canvas = options.canvas;
+    this.hostElement = options.hostElement;
     this.events = options.events;
   }
 
@@ -45,7 +44,7 @@ export class SceneViewer {
     }
 
     this.viewer = new GaussianSplats3D.Viewer({
-      canvas: this.canvas,
+      rootElement: this.hostElement,
       initialCameraPosition: [0, 0, 3],
       initialCameraLookAt: [0, 0, 0],
       selfDrivenMode: false,
@@ -55,8 +54,11 @@ export class SceneViewer {
     await this.viewer.init();
 
     this.renderer = this.viewer.renderer as THREE.WebGLRenderer;
-    this.scene = this.viewer.scene as THREE.Scene;
     this.camera = this.viewer.camera as THREE.PerspectiveCamera;
+
+    if (!this.renderer || !this.camera) {
+      throw new Error('Viewer initialization did not expose a renderer and camera.');
+    }
 
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     this.startRenderLoop();
@@ -75,27 +77,39 @@ export class SceneViewer {
 
       await this.viewer.addSplatScene(url, {
         format: this.toSceneFormat(detectSceneFormat(url)),
+        showLoadingUI: false,
         onProgress: (percent: number, progressLabel: string, stage: number) => {
           this.events.emit('scene:progress', formatLoadProgress(percent, progressLabel, stage));
         },
+      });
+
+      await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+
+      this.splatCount = this.readSplatCount();
+      if (this.splatCount <= 0) {
+        throw new Error('Loaded scene contains no splats.');
+      }
+
+      this.computeSceneBounds();
+      if (!this.hasUsableSceneBounds()) {
+        throw new Error('Loaded scene bounds are invalid.');
+      }
+
+      if (!this.frameScene()) {
+        throw new Error('Loaded scene could not be framed.');
+      }
+
+      this.saveInitialCamera();
+      this.sceneLoaded = true;
+
+      this.events.emit('scene:loaded', {
+        splatCount: this.splatCount,
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown load error';
       this.events.emit('scene:error', { message });
       throw error;
     }
-
-    await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
-
-    this.splatCount = this.readSplatCount();
-    this.computeSceneBounds();
-    this.frameScene();
-    this.saveInitialCamera();
-    this.sceneLoaded = true;
-
-    this.events.emit('scene:loaded', {
-      splatCount: this.splatCount,
-    });
   }
 
   resize(width: number, height: number): void {
@@ -112,9 +126,9 @@ export class SceneViewer {
     this.frameHook = frameHook;
   }
 
-  frameScene(): void {
-    if (!this.camera || this.sceneBounds.isEmpty()) {
-      return;
+  frameScene(): boolean {
+    if (!this.camera || !this.hasUsableSceneBounds()) {
+      return false;
     }
 
     const center = new THREE.Vector3();
@@ -123,13 +137,15 @@ export class SceneViewer {
     this.sceneBounds.getCenter(center);
 
     const fovRadians = THREE.MathUtils.degToRad(this.camera.fov);
-    const distance = (sphere.radius / Math.tan(fovRadians / 2)) * 1.3;
-    const targetPosition = center.clone().add(new THREE.Vector3(0, sphere.radius * 0.3, distance));
+    const radius = Math.max(sphere.radius, 0.5);
+    const distance = (radius / Math.tan(fovRadians / 2)) * 1.3;
+    const targetPosition = center.clone().add(new THREE.Vector3(0, radius * 0.3, distance));
 
     this.camera.position.copy(targetPosition);
     this.camera.lookAt(center);
     this.viewer?.controls?.target?.copy(center);
     this.viewer?.controls?.update?.();
+    return true;
   }
 
   resetView(): void {
@@ -168,6 +184,10 @@ export class SceneViewer {
 
   getCamera(): THREE.PerspectiveCamera | null {
     return this.camera;
+  }
+
+  getInteractionSurface(): HTMLCanvasElement | null {
+    return (this.renderer?.domElement as HTMLCanvasElement | undefined) ?? null;
   }
 
   getFPS(): number {
@@ -236,20 +256,24 @@ export class SceneViewer {
 
   private readSplatCount(): number {
     try {
-      return this.viewer?.splatMesh?.getSplatCount?.() ?? 0;
+      return this.viewer?.getSplatMesh()?.getSplatCount() ?? 0;
     } catch {
       return 0;
     }
   }
 
   private computeSceneBounds(): void {
-    if (!this.scene) {
+    if (!this.viewer) {
       return;
     }
 
-    const box = new THREE.Box3().setFromObject(this.scene);
-    if (!box.isEmpty()) {
-      this.sceneBounds.copy(box);
+    try {
+      const box = this.viewer.getSplatMesh().computeBoundingBox(true);
+      if (this.isFiniteBox(box)) {
+        this.sceneBounds.copy(box);
+      }
+    } catch {
+      this.sceneBounds.makeEmpty();
     }
   }
 
@@ -284,5 +308,13 @@ export class SceneViewer {
     this.initialPosition.copy(this.camera.position);
     this.initialQuaternion.copy(this.camera.quaternion);
     this.initialFov = this.camera.fov;
+  }
+
+  private hasUsableSceneBounds(): boolean {
+    return !this.sceneBounds.isEmpty() && this.isFiniteBox(this.sceneBounds);
+  }
+
+  private isFiniteBox(box: THREE.Box3): boolean {
+    return [box.min.x, box.min.y, box.min.z, box.max.x, box.max.y, box.max.z].every(Number.isFinite);
   }
 }

@@ -29,7 +29,7 @@ function formatSeconds(seconds: number): string {
 }
 
 async function main(): Promise<void> {
-  const canvas = $('#splat-canvas') as HTMLCanvasElement;
+  const viewerHost = $('#viewer-host') as HTMLDivElement;
   const sceneUrlInput = $('#scene-url-input') as HTMLInputElement;
   const loadButton = $('#btn-load-scene') as HTMLButtonElement;
   const addKeyframeButton = $('#btn-add-kf') as HTMLButtonElement;
@@ -51,7 +51,7 @@ async function main(): Promise<void> {
   const statFps = $('#stat-fps');
 
   const events = new AppEvents();
-  const viewer = new SceneViewer({ canvas, events });
+  const viewer = new SceneViewer({ hostElement: viewerHost, events });
   await viewer.init();
   const compatibilityStatusMessage = viewer.getCompatibilityStatusMessage();
 
@@ -60,11 +60,12 @@ async function main(): Promise<void> {
   };
 
   const camera = viewer.getCamera();
-  if (!camera) {
-    throw new Error('Viewer camera is unavailable after initialization');
+  const interactionSurface = viewer.getInteractionSurface();
+  if (!camera || !interactionSurface) {
+    throw new Error('Viewer camera or interaction surface is unavailable after initialization');
   }
 
-  const walkControls = new WalkControls({ camera, canvas });
+  const walkControls = new WalkControls({ camera, canvas: interactionSurface });
   const keyframeManager = new KeyframeManager({ viewer, events });
   viewer.setFrameHook(() => {
     if (walkControls.isActive()) {
@@ -199,11 +200,7 @@ async function main(): Promise<void> {
   };
 
   const resizeViewer = () => {
-    const container = canvas.parentElement;
-    if (!container) {
-      return;
-    }
-    viewer.resize(container.clientWidth, container.clientHeight);
+    viewer.resize(viewerHost.clientWidth, viewerHost.clientHeight);
   };
 
   resizeViewer();
