@@ -403,6 +403,34 @@ describe('SparkSceneViewer', () => {
     expect(viewer.getCamera()?.far).toBeGreaterThan(10);
   });
 
+  it('returns a cloned scene bounds box only after a successful scene load', async () => {
+    const events = new AppEvents();
+    const hostElement = {
+      clientHeight: 600,
+      clientWidth: 800,
+      replaceChildren: vi.fn(),
+    } as unknown as HTMLDivElement;
+    const viewer = new SparkSceneViewer({ hostElement, events });
+
+    await viewer.init();
+    expect(viewer.getSceneBounds()).toBeNull();
+
+    await viewer.loadScene('/api/presets/truck.ksplat');
+
+    const bounds = viewer.getSceneBounds();
+    const internalBounds = (viewer as unknown as { sceneBounds: THREE.Box3 }).sceneBounds;
+    const originalMin = internalBounds.min.clone();
+    const originalMax = internalBounds.max.clone();
+    expect(bounds).not.toBeNull();
+    expect(bounds).not.toBe(internalBounds);
+    expect(bounds?.min.toArray()).toEqual(internalBounds.min.toArray());
+    expect(bounds?.max.toArray()).toEqual(internalBounds.max.toArray());
+
+    bounds?.expandByScalar(10);
+    expect(internalBounds.min.toArray()).toEqual(originalMin.toArray());
+    expect(internalBounds.max.toArray()).toEqual(originalMax.toArray());
+  });
+
   it('loads scenes without forcing a spark mesh rotation override', async () => {
     const events = new AppEvents();
     const hostElement = {

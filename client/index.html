@@ -118,6 +118,68 @@
       inset: 0;
     }
 
+    #camera-path-overlay {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      z-index: 5;
+      overflow: visible;
+    }
+
+    .camera-path-segment {
+      fill: none;
+      stroke: var(--accent);
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      stroke-width: 2;
+      opacity: 0.92;
+    }
+
+    .camera-frustum {
+      fill: none;
+      stroke: rgba(255, 107, 53, 0.62);
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      stroke-width: 1.35;
+    }
+
+    .camera-frustum.selected {
+      stroke: var(--accent2);
+      stroke-width: 2;
+      opacity: 1;
+    }
+
+    .camera-marker {
+      fill: rgba(255, 107, 53, 0.92);
+      stroke: rgba(8, 10, 14, 0.95);
+      stroke-width: 1.5;
+    }
+
+    .camera-marker.selected {
+      fill: var(--accent2);
+      stroke: var(--text);
+      stroke-width: 2;
+    }
+
+    .camera-label {
+      fill: rgba(255, 107, 53, 0.88);
+      font-family: var(--mono);
+      font-size: 10px;
+      font-weight: 500;
+      letter-spacing: 0.02em;
+      paint-order: stroke;
+      stroke: rgba(8, 10, 14, 0.9);
+      stroke-width: 2;
+      stroke-linejoin: round;
+    }
+
+    .camera-label.selected {
+      fill: var(--accent2);
+      stroke-width: 2.4;
+    }
+
     #viewer-host canvas {
       display: block;
       width: 100%;
@@ -334,6 +396,11 @@
       accent-color: var(--accent);
     }
 
+    .path-visuals-toggle {
+      margin-bottom: 12px;
+      width: 100%;
+    }
+
     .keyframe-list {
       display: grid;
       gap: 6px;
@@ -477,6 +544,7 @@
 
     <div id="canvas-container">
       <div id="viewer-host"></div>
+      <svg id="camera-path-overlay"></svg>
 
       <div id="loading-overlay">
         <div class="loading-title">Gaussian Splat Viewer</div>
@@ -538,6 +606,8 @@
           <input type="range" id="timeline-scrubber" min="0" max="1000" value="0" disabled />
           <span class="scrubber-time" id="scrubber-time-right">0.0s</span>
         </div>
+
+        <button class="btn path-visuals-toggle active" id="btn-toggle-path-visuals" disabled>Path Visuals</button>
 
         <div class="keyframe-list" id="keyframe-list">
           <div class="kf-empty">

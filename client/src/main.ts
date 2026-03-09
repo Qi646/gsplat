@@ -2,6 +2,7 @@ import { WalkControls, type WalkControlState } from './controls/WalkControls';
 import { DEFAULT_EXPORT_SETTINGS, ExportManager, type ExportProgress } from './export/ExportManager';
 import { parseAppRuntimeQuery } from './lib/runtimeQuery';
 import { SCENE_PRESETS } from './lib/scenePresets';
+import { CameraPathOverlay } from './path/CameraPathOverlay';
 import { KeyframeManager } from './path/KeyframeManager';
 import { AppEvents, type AppBootPhase, type Keyframe, type ViewerRendererId } from './types';
 import { createViewerAdapter } from './viewer/createViewerAdapter';
@@ -70,6 +71,11 @@ async function main(): Promise<void> {
   const exportNote = $('#export-note');
   const pathFileInput = $('#path-file-input') as HTMLInputElement;
   const timelineScrubber = $('#timeline-scrubber') as HTMLInputElement;
+  const pathVisualsButton = $('#btn-toggle-path-visuals') as HTMLButtonElement;
+  const pathOverlayElement = document.querySelector<SVGSVGElement>('#camera-path-overlay');
+  if (!pathOverlayElement) {
+    throw new Error('Missing element: #camera-path-overlay');
+  }
   const scrubberTimeLeft = $('#scrubber-time-left');
   const scrubberTimeRight = $('#scrubber-time-right');
   const keyframeList = $('#keyframe-list');
@@ -132,7 +138,52 @@ async function main(): Promise<void> {
 
   const keyframeManager = new KeyframeManager({ viewer, events });
   const exportManager = new ExportManager({ viewer });
+  const pathOverlay = new CameraPathOverlay(pathOverlayElement);
   let walkState: WalkControlState = 'inactive';
+  let pathVisualsEnabled = true;
+  let sceneLoadInProgress = false;
+  let selectedKeyframeId: string | null = null;
+  const defaultExportNote = `${DEFAULT_EXPORT_SETTINGS.width}x${DEFAULT_EXPORT_SETTINGS.height} · ${DEFAULT_EXPORT_SETTINGS.fps} FPS via FFmpeg`;
+
+  const getPathVisualsState = () => {
+    const keyframes = keyframeManager.getKeyframes();
+    const sceneLoaded = !sceneLoadInProgress && viewer.isSceneLoaded();
+    const exportActive = exportManager.isExporting();
+    const available = sceneLoaded && keyframes.length > 0;
+    const visible = available && pathVisualsEnabled && !exportActive;
+
+    return {
+      available,
+      exportActive,
+      keyframes,
+      sceneLoaded,
+      visible,
+    };
+  };
+
+  const updatePathVisualsButton = () => {
+    const { available, exportActive } = getPathVisualsState();
+    pathVisualsButton.disabled = !available || exportActive;
+    pathVisualsButton.classList.toggle('active', pathVisualsEnabled);
+    pathVisualsButton.setAttribute('aria-pressed', String(pathVisualsEnabled));
+  };
+
+  const syncPathVisualsState = () => {
+    const { keyframes, sceneLoaded, visible } = getPathVisualsState();
+    pathOverlay.setViewportSize(viewerHost.clientWidth, viewerHost.clientHeight);
+    pathOverlay.setKeyframes(keyframes);
+    pathOverlay.setSelectedKeyframeId(selectedKeyframeId);
+    pathOverlay.setSceneBounds(sceneLoaded ? viewer.getSceneBounds() : null);
+    pathOverlay.setEnabled(visible);
+    if (visible) {
+      pathOverlay.render(viewer.getCamera());
+    } else {
+      pathOverlay.clear();
+    }
+
+    updatePathVisualsButton();
+  };
+
   const walkControls = new WalkControls({
     camera,
     canvas: interactionSurface,
@@ -161,10 +212,9 @@ async function main(): Promise<void> {
     if (walkControls.isActive()) {
       walkControls.update();
     }
-  });
 
-  let selectedKeyframeId: string | null = null;
-  const defaultExportNote = `${DEFAULT_EXPORT_SETTINGS.width}x${DEFAULT_EXPORT_SETTINGS.height} · ${DEFAULT_EXPORT_SETTINGS.fps} FPS via FFmpeg`;
+    pathOverlay.render(viewer.getCamera());
+  });
 
   const updatePreviewButton = () => {
     previewButton.classList.toggle('active', keyframeManager.isPreviewActive());
@@ -210,7 +260,7 @@ async function main(): Promise<void> {
 
   const updatePathControlsState = () => {
     const keyframeCount = keyframeManager.getKeyframes().length;
-    const sceneLoaded = viewer.isSceneLoaded();
+    const sceneLoaded = !sceneLoadInProgress && viewer.isSceneLoaded();
     const previewActive = keyframeManager.isPreviewActive();
     const exportActive = exportManager.isExporting();
 
@@ -226,6 +276,7 @@ async function main(): Promise<void> {
     setExportInteractionLock(exportActive);
     updatePreviewButton();
     updateExportButton();
+    updatePathVisualsButton();
   };
 
   const stopWalkMode = () => {
@@ -333,42 +384,54 @@ async function main(): Promise<void> {
 
   const resizeViewer = () => {
     viewer.resize(viewerHost.clientWidth, viewerHost.clientHeight);
+    pathOverlay.setViewportSize(viewerHost.clientWidth, viewerHost.clientHeight);
+    pathOverlay.render(viewer.getCamera());
   };
 
   resizeViewer();
   window.addEventListener('resize', resizeViewer);
   window.addEventListener('beforeunload', () => {
     stopWalkMode();
+    pathOverlay.dispose();
     viewer.dispose();
   });
 
   const loadScene = async (url: string) => {
     stopWalkMode();
     keyframeManager.stopPreview();
+    sceneLoadInProgress = true;
     loadingOverlay.classList.remove('hidden');
     progressFill.style.width = '0%';
     progressLabel.textContent = 'Starting…';
     setStatusNote('Loading scene…');
     statScene.textContent = 'loading';
+    pathOverlay.setSceneBounds(null);
+    pathOverlay.clear();
     setSceneButtonsEnabled(false, false, walkState);
     addKeyframeButton.disabled = true;
     previewButton.disabled = true;
     loadPathButton.disabled = true;
     timelineScrubber.disabled = true;
+    updatePathControlsState();
+    syncPathVisualsState();
 
     try {
       await viewer.loadScene(url);
       keyframeManager.clear();
       selectedKeyframeId = null;
+      sceneLoadInProgress = false;
       renderKeyframeList();
       updatePathControlsState();
+      syncPathVisualsState();
       updateTimelineUI(0, 0);
       setStatusNote('Scene loaded. Capture keyframes, scrub the path, or preview a camera move.');
     } catch (error) {
+      sceneLoadInProgress = false;
       const message = error instanceof Error ? error.message : 'Unknown load error';
       progressLabel.textContent = `Error: ${message}`;
       setStatusNote('Scene load failed. Try another public URL or preset.');
       updatePathControlsState();
+      syncPathVisualsState();
     }
   };
 
@@ -422,6 +485,12 @@ async function main(): Promise<void> {
     viewer.resetView();
   });
 
+  pathVisualsButton.addEventListener('click', () => {
+    pathVisualsEnabled = !pathVisualsEnabled;
+    syncPathVisualsState();
+    setStatusNote(pathVisualsEnabled ? 'Camera path visuals shown.' : 'Camera path visuals hidden.');
+  });
+
   ($('#btn-walk-mode') as HTMLButtonElement).addEventListener('click', () => {
     if (walkState !== 'inactive') {
       stopWalkMode();
@@ -442,6 +511,7 @@ async function main(): Promise<void> {
     selectedKeyframeId = keyframe.id;
     renderKeyframeList();
     updatePathControlsState();
+    syncPathVisualsState();
     setStatusNote(`Captured keyframe ${keyframeManager.getKeyframes().length} at ${formatSeconds(keyframe.time)}.`);
   });
 
@@ -454,6 +524,7 @@ async function main(): Promise<void> {
     keyframeManager.clear();
     renderKeyframeList();
     updatePathControlsState();
+    syncPathVisualsState();
     setStatusNote('Camera path cleared.');
   });
 
@@ -470,6 +541,7 @@ async function main(): Promise<void> {
       selectedKeyframeId = null;
       renderKeyframeList();
       updatePathControlsState();
+      syncPathVisualsState();
       setStatusNote('Previewing camera path.');
     }
   });
@@ -497,6 +569,7 @@ async function main(): Promise<void> {
       selectedKeyframeId = path.keyframes[0]?.id ?? null;
       renderKeyframeList();
       updatePathControlsState();
+      syncPathVisualsState();
       setStatusNote(`Loaded camera path with ${path.keyframes.length} keyframe${path.keyframes.length === 1 ? '' : 's'}.`);
     } catch (error) {
       setStatusNote(error instanceof Error ? error.message : 'Invalid camera path file.');
@@ -510,6 +583,7 @@ async function main(): Promise<void> {
     keyframeManager.seekToTime(normalizedTime * keyframeManager.getTotalDuration());
     selectedKeyframeId = null;
     renderKeyframeList();
+    syncPathVisualsState();
   });
 
   exportButton.addEventListener('click', async () => {
@@ -524,6 +598,7 @@ async function main(): Promise<void> {
     });
 
     updatePathControlsState();
+    syncPathVisualsState();
 
     try {
       const result = await exportPromise;
@@ -535,6 +610,7 @@ async function main(): Promise<void> {
       setStatusNote(error instanceof Error ? error.message : 'MP4 export failed.');
     } finally {
       updatePathControlsState();
+      syncPathVisualsState();
     }
   });
 
@@ -548,18 +624,21 @@ async function main(): Promise<void> {
     statCount.textContent = splatCount.toLocaleString();
     statScene.textContent = 'loaded';
     updatePathControlsState();
+    syncPathVisualsState();
   });
 
   events.on('scene:error', ({ message }) => {
     statScene.textContent = 'error';
     setStatusNote(`Scene load failed: ${message}`);
     updatePathControlsState();
+    syncPathVisualsState();
   });
 
   events.on('keyframe:added', ({ keyframe }) => {
     selectedKeyframeId = keyframe.id;
     renderKeyframeList();
     updatePathControlsState();
+    syncPathVisualsState();
   });
 
   events.on('keyframe:deleted', ({ id }) => {
@@ -568,6 +647,7 @@ async function main(): Promise<void> {
     }
     renderKeyframeList();
     updatePathControlsState();
+    syncPathVisualsState();
   });
 
   events.on('keyframe:reordered', ({ keyframes }) => {
@@ -576,14 +656,17 @@ async function main(): Promise<void> {
     }
     renderKeyframeList();
     updatePathControlsState();
+    syncPathVisualsState();
   });
 
   events.on('path:preview:start', () => {
     updatePathControlsState();
+    syncPathVisualsState();
   });
 
   events.on('path:preview:stop', () => {
     updatePathControlsState();
+    syncPathVisualsState();
     const totalDuration = keyframeManager.getTotalDuration();
     if (totalDuration > 0 && Math.abs(keyframeManager.getCurrentTime() - totalDuration) < 0.001) {
       setStatusNote('Preview complete.');
@@ -592,6 +675,7 @@ async function main(): Promise<void> {
 
   events.on('path:seek', ({ time, duration }) => {
     updateTimelineUI(time, duration);
+    syncPathVisualsState();
   });
 
   renderKeyframeList();
@@ -599,6 +683,7 @@ async function main(): Promise<void> {
   setWalkModeUI(walkState);
   updateExportButton();
   updatePathControlsState();
+  syncPathVisualsState();
   updateTimelineUI(0, 0);
 
   if (runtimeQuery.autoSceneUrl) {

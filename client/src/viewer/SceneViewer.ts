@@ -238,6 +238,14 @@ export class SceneViewer implements ViewerAdapter {
     return this.camera;
   }
 
+  getSceneBounds(): THREE.Box3 | null {
+    if (!this.sceneLoaded || !this.hasUsableSceneBounds()) {
+      return null;
+    }
+
+    return this.sceneBounds.clone();
+  }
+
   getInteractionSurface(): HTMLCanvasElement | null {
     return (this.renderer?.domElement as HTMLCanvasElement | undefined) ?? null;
   }

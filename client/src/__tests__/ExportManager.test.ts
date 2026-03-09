@@ -40,6 +40,13 @@ class FakeViewer implements ViewerAdapter {
     return this.camera;
   }
 
+  getSceneBounds(): THREE.Box3 | null {
+    return new THREE.Box3(
+      new THREE.Vector3(-1, -1, -1),
+      new THREE.Vector3(1, 1, 1),
+    );
+  }
+
   getCompatibilityStatusMessage(): string | null {
     return null;
   }

@@ -407,6 +407,28 @@ describe('SceneViewer', () => {
     expect(sceneBounds.max.toArray()).toEqual([4, 5, 6]);
   });
 
+  it('returns a cloned scene bounds box only after a successful scene load', async () => {
+    const events = new AppEvents();
+    const hostElement = {} as HTMLDivElement;
+    const viewer = new SceneViewer({ hostElement, events });
+
+    await viewer.init();
+    expect(viewer.getSceneBounds()).toBeNull();
+
+    await viewer.loadScene('/api/presets/truck.ksplat');
+
+    const bounds = viewer.getSceneBounds();
+    const internalBounds = (viewer as unknown as { sceneBounds: THREE.Box3 }).sceneBounds;
+    expect(bounds).not.toBeNull();
+    expect(bounds).not.toBe(internalBounds);
+    expect(bounds?.min.toArray()).toEqual(internalBounds.min.toArray());
+    expect(bounds?.max.toArray()).toEqual(internalBounds.max.toArray());
+
+    bounds?.expandByScalar(10);
+    expect(internalBounds.min.toArray()).toEqual([-2, -1, -3]);
+    expect(internalBounds.max.toArray()).toEqual([4, 5, 6]);
+  });
+
   it('maps cached ply presets to the library ply scene format', async () => {
     const events = new AppEvents();
     const hostElement = {} as HTMLDivElement;

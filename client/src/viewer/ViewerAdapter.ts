@@ -21,6 +21,7 @@ export interface ViewerAdapter {
   resetView(): void;
   applyCameraPose(pose: InterpolatedPose): void;
   getCamera(): THREE.PerspectiveCamera | null;
+  getSceneBounds(): THREE.Box3 | null;
   getInteractionSurface(): HTMLCanvasElement | null;
   getFPS(): number;
   getSplatCount(): number;
