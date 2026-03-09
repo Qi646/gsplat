@@ -395,6 +395,20 @@ describe('SceneViewer', () => {
     expect(sceneBounds.max.toArray()).toEqual([4, 5, 6]);
   });
 
+  it('maps cached ply presets to the library ply scene format', async () => {
+    const events = new AppEvents();
+    const hostElement = {} as HTMLDivElement;
+    const viewer = new SceneViewer({ hostElement, events });
+
+    await viewer.init();
+    await viewer.loadScene('/api/presets/luigi.ply');
+
+    expect(mockModule.__mockState.addSceneCalls[0]?.url).toBe('/api/presets/luigi.ply');
+    expect(mockModule.__mockState.addSceneCalls[0]?.options['format']).toBe(
+      GaussianSplats3D.SceneFormat.Ply,
+    );
+  });
+
   it('tightens the camera near plane for close inspection poses', async () => {
     const events = new AppEvents();
     const hostElement = {} as HTMLDivElement;

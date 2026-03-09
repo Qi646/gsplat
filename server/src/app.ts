@@ -9,7 +9,7 @@ import {
   type ExportJobSettings,
   type ExportService,
 } from './exportService.js';
-import { PresetArchiveService } from './presetArchive.js';
+import { PresetArchiveService, formatPresetRequestId } from './presetArchive.js';
 
 export interface AppOptions {
   clientBuildDir: string;
@@ -21,8 +21,8 @@ export interface AppOptions {
 }
 
 export interface PresetService {
-  getPresetFilePath: (presetId: string) => Promise<string>;
-  hasPreset: (presetId: string) => boolean;
+  getPresetFilePath: (presetId: string, extension: string) => Promise<string>;
+  hasPreset: (presetId: string, extension: string) => boolean;
 }
 
 export const CROSS_ORIGIN_ISOLATION_HEADERS = {
@@ -56,24 +56,26 @@ export function createApp(options: Partial<AppOptions> = {}): express.Express {
     response.json({ ok: true });
   });
 
-  app.get('/api/presets/:presetId.ksplat', async (request, response) => {
+  app.get('/api/presets/:presetId.:extension', async (request, response) => {
     const presetId = request.params['presetId'] ?? '';
+    const extension = request.params['extension'] ?? '';
+    const presetRequestId = formatPresetRequestId(presetId, extension);
 
-    if (!presetService.hasPreset(presetId)) {
-      response.status(404).json({ error: `Unknown preset: ${presetId}` });
+    if (!presetService.hasPreset(presetId, extension)) {
+      response.status(404).json({ error: `Unknown preset: ${presetRequestId}` });
       return;
     }
 
     try {
-      const presetPath = await presetService.getPresetFilePath(presetId);
+      const presetPath = await presetService.getPresetFilePath(presetId, extension);
       const presetData = await readFile(presetPath);
       response
         .set('Cache-Control', 'public, max-age=3600')
         .type('application/octet-stream')
         .send(presetData);
     } catch (error) {
-      console.error(`Failed to serve preset "${presetId}"`, error);
-      response.status(502).json({ error: `Could not load preset: ${presetId}` });
+      console.error(`Failed to serve preset "${presetRequestId}"`, error);
+      response.status(502).json({ error: `Could not load preset: ${presetRequestId}` });
     }
   });
 

@@ -3,11 +3,25 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { inflateRawSync } from 'node:zlib';
 
-export interface PresetManifestEntry {
+export type PresetFileExtension = 'ksplat' | 'ply';
+
+interface BasePresetManifestEntry {
   id: string;
-  archivePath: string;
-  fileName: `${string}.ksplat`;
+  extension: PresetFileExtension;
+  fileName: `${string}.${PresetFileExtension}`;
 }
+
+export interface ArchivePresetManifestEntry extends BasePresetManifestEntry {
+  archivePath: string;
+  source: 'archive';
+}
+
+export interface DirectDownloadPresetManifestEntry extends BasePresetManifestEntry {
+  source: 'download';
+  sourceUrl: string;
+}
+
+export type PresetManifestEntry = ArchivePresetManifestEntry | DirectDownloadPresetManifestEntry;
 
 export interface ZipCentralDirectoryEntry {
   compressionMethod: number;
@@ -30,33 +44,73 @@ const LOCAL_FILE_HEADER_BYTES = 30;
 const LOCAL_FILE_HEADER_SIGNATURE = 0x04034b50;
 
 export const VERIFIED_PRESET_ARCHIVE_URL = 'https://projects.markkellogg.org/downloads/gaussian_splat_data.zip';
+export const LUIGI_PLY_URL =
+  'https://huggingface.co/datasets/dylanebert/3dgs/resolve/main/luigi/luigi.ply';
 
 export const VERIFIED_PRESET_MANIFEST = {
   garden: {
     archivePath: 'garden/garden.ksplat',
+    extension: 'ksplat',
     fileName: 'garden.ksplat',
     id: 'garden',
+    source: 'archive',
   },
   stump: {
     archivePath: 'stump/stump.ksplat',
+    extension: 'ksplat',
     fileName: 'stump.ksplat',
     id: 'stump',
+    source: 'archive',
   },
   truck: {
     archivePath: 'truck/truck.ksplat',
+    extension: 'ksplat',
     fileName: 'truck.ksplat',
     id: 'truck',
+    source: 'archive',
+  },
+  luigi: {
+    extension: 'ply',
+    fileName: 'luigi.ply',
+    id: 'luigi',
+    source: 'download',
+    sourceUrl: LUIGI_PLY_URL,
   },
 } as const satisfies Record<string, PresetManifestEntry>;
 
-export function getVerifiedPresetEntry(presetId: string): PresetManifestEntry | null {
-  return VERIFIED_PRESET_MANIFEST[presetId as keyof typeof VERIFIED_PRESET_MANIFEST] ?? null;
+export function isPresetFileExtension(extension: string): extension is PresetFileExtension {
+  return extension === 'ksplat' || extension === 'ply';
 }
 
-export function buildPresetCachePath(cacheDir: string, presetId: string): string {
-  const entry = getVerifiedPresetEntry(presetId);
+export function getVerifiedPresetEntry(
+  presetId: string,
+  extension?: string
+): PresetManifestEntry | null {
+  const entry = VERIFIED_PRESET_MANIFEST[presetId as keyof typeof VERIFIED_PRESET_MANIFEST] ?? null;
+
   if (!entry) {
-    throw new Error(`Unknown preset: ${presetId}`);
+    return null;
+  }
+
+  if (extension === undefined) {
+    return entry;
+  }
+
+  if (!isPresetFileExtension(extension) || entry.extension !== extension) {
+    return null;
+  }
+
+  return entry;
+}
+
+export function formatPresetRequestId(presetId: string, extension?: string): string {
+  return extension ? `${presetId}.${extension}` : presetId;
+}
+
+export function buildPresetCachePath(cacheDir: string, presetId: string, extension?: string): string {
+  const entry = getVerifiedPresetEntry(presetId, extension);
+  if (!entry) {
+    throw new Error(`Unknown preset: ${formatPresetRequestId(presetId, extension)}`);
   }
 
   return path.join(cacheDir, entry.fileName);
@@ -168,31 +222,31 @@ export class PresetArchiveService {
     this.fetchImpl = options.fetchImpl ?? fetch;
   }
 
-  hasPreset(presetId: string): boolean {
-    return getVerifiedPresetEntry(presetId) !== null;
+  hasPreset(presetId: string, extension: string): boolean {
+    return getVerifiedPresetEntry(presetId, extension) !== null;
   }
 
-  async getPresetFilePath(presetId: string): Promise<string> {
-    const manifestEntry = getVerifiedPresetEntry(presetId);
+  async getPresetFilePath(presetId: string, extension: string): Promise<string> {
+    const manifestEntry = getVerifiedPresetEntry(presetId, extension);
     if (!manifestEntry) {
-      throw new Error(`Unknown preset: ${presetId}`);
+      throw new Error(`Unknown preset: ${formatPresetRequestId(presetId, extension)}`);
     }
 
-    const cachePath = buildPresetCachePath(this.cacheDir, presetId);
+    const cachePath = buildPresetCachePath(this.cacheDir, presetId, extension);
     if (existsSync(cachePath)) {
       return cachePath;
     }
 
-    const pendingWrite = this.pendingCacheWrites.get(presetId);
+    const pendingWrite = this.pendingCacheWrites.get(manifestEntry.fileName);
     if (pendingWrite) {
       return pendingWrite;
     }
 
     const cacheWritePromise = this.populatePresetCache(manifestEntry, cachePath).finally(() => {
-      this.pendingCacheWrites.delete(presetId);
+      this.pendingCacheWrites.delete(manifestEntry.fileName);
     });
 
-    this.pendingCacheWrites.set(presetId, cacheWritePromise);
+    this.pendingCacheWrites.set(manifestEntry.fileName, cacheWritePromise);
     return cacheWritePromise;
   }
 
@@ -203,6 +257,12 @@ export class PresetArchiveService {
     await mkdir(this.cacheDir, { recursive: true });
 
     if (existsSync(cachePath)) {
+      return cachePath;
+    }
+
+    if (manifestEntry.source === 'download') {
+      const presetData = await this.downloadPresetFile(manifestEntry.sourceUrl);
+      await writeFile(cachePath, presetData);
       return cachePath;
     }
 
@@ -262,6 +322,15 @@ export class PresetArchiveService {
     const dataEnd = dataStart + entry.compressedSize - 1;
 
     return this.fetchRange(dataStart, dataEnd);
+  }
+
+  private async downloadPresetFile(sourceUrl: string): Promise<Buffer> {
+    const response = await this.fetchImpl(sourceUrl);
+    if (!response.ok) {
+      throw new Error(`Preset download request failed with status ${response.status}.`);
+    }
+
+    return Buffer.from(await response.arrayBuffer());
   }
 
   private async fetchRange(start: number, end: number): Promise<Buffer> {

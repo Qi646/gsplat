@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { deflateRawSync } from 'node:zlib';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  LUIGI_PLY_URL,
   PresetArchiveService,
   buildPresetCachePath,
   inflateZipEntry,
@@ -61,7 +62,7 @@ describe('presetArchive', () => {
       fetchImpl,
     });
 
-    const cachePath = await service.getPresetFilePath('truck');
+    const cachePath = await service.getPresetFilePath('truck', 'ksplat');
     const fileData = await readFile(cachePath);
 
     expect(fileData).toEqual(Buffer.from('truck-verified-data'));
@@ -70,7 +71,7 @@ describe('presetArchive', () => {
 
   it('uses an existing cached preset file without touching the network', async () => {
     tempDir = await mkdtemp(path.join(tmpdir(), 'gsplat-preset-'));
-    const cachePath = buildPresetCachePath(tempDir, 'garden');
+    const cachePath = buildPresetCachePath(tempDir, 'garden', 'ksplat');
     const fetchImpl = vi.fn<typeof fetch>();
     const service = new PresetArchiveService({
       archiveUrl: 'https://example.com/archive.zip',
@@ -80,8 +81,31 @@ describe('presetArchive', () => {
 
     await writeFile(cachePath, Buffer.from('cached-garden'));
 
-    await expect(service.getPresetFilePath('garden')).resolves.toBe(cachePath);
+    await expect(service.getPresetFilePath('garden', 'ksplat')).resolves.toBe(cachePath);
     expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('downloads and caches a direct-download ply preset', async () => {
+    tempDir = await mkdtemp(path.join(tmpdir(), 'gsplat-preset-'));
+    const fetchImpl = vi.fn<typeof fetch>(async input => {
+      if (String(input) !== LUIGI_PLY_URL) {
+        throw new Error(`Unexpected URL: ${String(input)}`);
+      }
+
+      return new Response(Buffer.from('luigi-ply-data'), { status: 200 });
+    });
+    const service = new PresetArchiveService({
+      archiveUrl: 'https://example.com/archive.zip',
+      cacheDir: tempDir,
+      fetchImpl,
+    });
+
+    const cachePath = await service.getPresetFilePath('luigi', 'ply');
+    const fileData = await readFile(cachePath);
+
+    expect(cachePath).toBe(path.join(tempDir, 'luigi.ply'));
+    expect(fileData).toEqual(Buffer.from('luigi-ply-data'));
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
   it('fails when the archive entry for a preset is missing', async () => {
@@ -98,7 +122,7 @@ describe('presetArchive', () => {
       fetchImpl: createArchiveFetchMock(archive),
     });
 
-    await expect(service.getPresetFilePath('garden')).rejects.toThrow(
+    await expect(service.getPresetFilePath('garden', 'ksplat')).rejects.toThrow(
       'Archive entry not found: garden/garden.ksplat'
     );
   });

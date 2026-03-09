@@ -81,7 +81,7 @@ describe('createApp', () => {
     const app = createTestApp({
       presetService: createPresetService({
         getPresetFilePath: vi.fn(async () => presetPath),
-        hasPreset: vi.fn(presetId => presetId === 'garden'),
+        hasPreset: vi.fn((presetId, extension) => presetId === 'garden' && extension === 'ksplat'),
       }),
     });
 
@@ -97,13 +97,50 @@ describe('createApp', () => {
     );
   });
 
+  it('serves a cached ply preset route with cross-origin isolation headers', async () => {
+    tempDir = await mkdtemp(path.join(tmpdir(), 'gsplat-app-'));
+    const presetPath = path.join(tempDir, 'luigi.ply');
+    await writeFile(presetPath, Buffer.from('luigi-preset'));
+
+    const app = createTestApp({
+      presetService: createPresetService({
+        getPresetFilePath: vi.fn(async () => presetPath),
+        hasPreset: vi.fn((presetId, extension) => presetId === 'luigi' && extension === 'ply'),
+      }),
+    });
+
+    const response = await request(app).get('/api/presets/luigi.ply');
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual(Buffer.from('luigi-preset'));
+    expect(response.headers['cross-origin-embedder-policy']).toBe(
+      CROSS_ORIGIN_ISOLATION_HEADERS['Cross-Origin-Embedder-Policy']
+    );
+    expect(response.headers['cross-origin-opener-policy']).toBe(
+      CROSS_ORIGIN_ISOLATION_HEADERS['Cross-Origin-Opener-Policy']
+    );
+  });
+
   it('returns 404 for unknown presets', async () => {
     const app = createTestApp();
 
     const response = await request(app).get('/api/presets/unknown.ksplat');
 
     expect(response.status).toBe(404);
-    expect(response.body).toEqual({ error: 'Unknown preset: unknown' });
+    expect(response.body).toEqual({ error: 'Unknown preset: unknown.ksplat' });
+  });
+
+  it('returns 404 for known preset ids requested with the wrong extension', async () => {
+    const app = createTestApp({
+      presetService: createPresetService({
+        hasPreset: vi.fn((presetId, extension) => presetId === 'truck' && extension === 'ksplat'),
+      }),
+    });
+
+    const response = await request(app).get('/api/presets/truck.ply');
+
+    expect(response.status).toBe(404);
+    expect(response.body).toEqual({ error: 'Unknown preset: truck.ply' });
   });
 
   it('returns 502 when preset extraction fails', async () => {
@@ -114,14 +151,14 @@ describe('createApp', () => {
         getPresetFilePath: vi.fn(async () => {
           throw new Error('boom');
         }),
-        hasPreset: vi.fn(() => true),
+        hasPreset: vi.fn((presetId, extension) => presetId === 'garden' && extension === 'ksplat'),
       }),
     });
 
     const response = await request(app).get('/api/presets/garden.ksplat');
 
     expect(response.status).toBe(502);
-    expect(response.body).toEqual({ error: 'Could not load preset: garden' });
+    expect(response.body).toEqual({ error: 'Could not load preset: garden.ksplat' });
   });
 
   it('creates an export job from JSON settings', async () => {

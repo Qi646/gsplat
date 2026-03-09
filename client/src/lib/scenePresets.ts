@@ -2,6 +2,12 @@ import type { ScenePreset } from '../types';
 
 export const SCENE_PRESETS: ScenePreset[] = [
   {
+    name: 'Luigi',
+    url: '/api/presets/luigi.ply',
+    sizeMB: 1,
+    description: 'Lightweight `.ply` object preset cached through the app for fast smoke checks.',
+  },
+  {
     name: 'Garden',
     url: '/api/presets/garden.ksplat',
     sizeMB: 70,

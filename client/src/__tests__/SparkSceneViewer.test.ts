@@ -386,6 +386,22 @@ describe('SparkSceneViewer', () => {
     expect(viewer.getCamera()?.far).toBeGreaterThan(10);
   });
 
+  it('maps cached ply presets to the Spark ply file type', async () => {
+    const events = new AppEvents();
+    const hostElement = {
+      clientHeight: 600,
+      clientWidth: 800,
+      replaceChildren: vi.fn(),
+    } as unknown as HTMLDivElement;
+    const viewer = new SparkSceneViewer({ hostElement, events });
+
+    await viewer.init();
+    await viewer.loadScene('/api/presets/luigi.ply');
+
+    expect(mockModule.__mockState.loadCalls).toEqual(['/api/presets/luigi.ply']);
+    expect(mockModule.__mockState.fileType).toBe('ply');
+  });
+
   it('tightens the Spark camera near plane for close inspection poses', async () => {
     const events = new AppEvents();
     const hostElement = {

@@ -22,12 +22,14 @@ describe('SCENE_PRESETS', () => {
     }
   });
 
-  it('uses the verified same-origin ksplat preset routes', () => {
-    expect(SCENE_PRESETS.map(preset => preset.name)).toEqual(['Garden', 'Stump', 'Truck']);
+  it('uses the verified same-origin preset routes for cached ply and ksplat assets', () => {
+    expect(SCENE_PRESETS.map(preset => preset.name)).toEqual(['Luigi', 'Garden', 'Stump', 'Truck']);
     expect(SCENE_PRESETS.map(preset => preset.url)).toEqual([
+      '/api/presets/luigi.ply',
       '/api/presets/garden.ksplat',
       '/api/presets/stump.ksplat',
       '/api/presets/truck.ksplat',
     ]);
+    expect(detectSceneFormat(SCENE_PRESETS[0]!.url)).toBe('ply');
   });
 });
