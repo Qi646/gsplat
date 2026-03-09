@@ -37,6 +37,9 @@ declare module '@mkkellogg/gaussian-splats-3d' {
     };
     init(): Promise<void>;
     addSplatScene(url: string, options: AddSplatSceneOptions): Promise<void>;
+    getSceneCount(): number;
+    removeSplatScene(index: number, showLoadingUI?: boolean): Promise<void>;
+    removeSplatScenes(indexes: number[], showLoadingUI?: boolean): Promise<void>;
     update(): void;
     render(): void;
     dispose?(): void;

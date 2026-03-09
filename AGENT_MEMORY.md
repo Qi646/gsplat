@@ -11,6 +11,8 @@
 - The root app currently implements the first vertical slice only: scene loading, progress, FPS/splat stats, frame scene, reset view, walk mode, preset scene loading, a health route, and production static serving.
 - The root client ports/adapts the viewer baseline from the reference app but intentionally excludes camera-path editing and MP4 export for now.
 - Root validation is working: `npm test`, `npm run build`, `npm run dev`, `curl http://localhost:3001/api/health`, and `curl -I http://localhost:5173/` all passed on 2026-03-09.
+- The root preset catalog drifted from upstream source layouts; on 2026-03-09 it was repaired to working `.splat` assets for `Truck`, `Garden`, `Room`, and `Train`.
+- `client/src/viewer/SceneViewer.ts` now replaces any existing splat scene before loading a new preset or URL so the root app behaves as a single-scene viewer.
 - A root `README.md` now documents the active root workspace, current implemented slice, validated commands, and the fact that `gsplat-viewer/` is reference-only.
 - `npm install` hit an `EACCES` cache issue under `/home/qi/.npm`; using `npm install --cache /tmp/npm-cache-gsplat-1` worked around it cleanly.
 - A local declaration file was added for `@mkkellogg/gaussian-splats-3d` because the installed package lacks TypeScript declarations.
@@ -21,6 +23,7 @@
 - For large or multi-feature tasks, prefer incremental code changes and incremental commits rather than one large end-of-task commit.
 - Build the real app at the repo root and treat `gsplat-viewer/` as read-only reference material.
 - Recommended implementation order is now: 1) root viewer baseline, 2) camera path recording and playback, 3) MP4 export pipeline, 4) polish/docs cleanup.
+- Prefer referencing live, lighter-weight `.splat` sample assets for presets instead of deep `point_cloud/iteration_*/*.ply` links, since upstream dataset layouts can drift and those links are more brittle.
 
 ## Active Plan
 - Next milestone should add camera-path recording at the repo root: add keyframes, preview playback, simple list management, and save/load of the path JSON.
@@ -29,3 +32,4 @@
 ## Archived Plans
 - 2026-03-08: Created the initial import commit with `AGENTS.md`, `AGENT_MEMORY.md`, the root `.gitignore`, and the `gsplat-viewer/` source tree.
 - 2026-03-09: Completed the root viewer bootstrap milestone with a new workspace-based root app and validation pass.
+- 2026-03-09: Repaired the root preset scene catalog, added preset catalog tests, and changed scene loads to replace the active scene instead of accumulating multiple scenes.

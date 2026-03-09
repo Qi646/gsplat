@@ -56,10 +56,12 @@ export class SceneViewer {
       throw new Error('Viewer not initialized');
     }
 
-    this.sceneLoaded = false;
+    this.resetSceneState();
     this.events.emit('scene:progress', { percent: 0, message: 'Starting download…' });
 
     try {
+      await this.removeExistingScenes();
+
       await this.viewer.addSplatScene(url, {
         format: this.toSceneFormat(detectSceneFormat(url)),
         onProgress: (percent: number, _message: string, stage: unknown) => {
@@ -222,6 +224,29 @@ export class SceneViewer {
     if (!box.isEmpty()) {
       this.sceneBounds.copy(box);
     }
+  }
+
+  private resetSceneState(): void {
+    this.sceneLoaded = false;
+    this.splatCount = 0;
+    this.sceneBounds.makeEmpty();
+    this.initialPosition.set(0, 0, 0);
+    this.initialQuaternion.identity();
+    this.initialFov = 60;
+  }
+
+  private async removeExistingScenes(): Promise<void> {
+    if (!this.viewer) {
+      return;
+    }
+
+    const sceneCount = this.viewer.getSceneCount();
+    if (sceneCount === 0) {
+      return;
+    }
+
+    const sceneIndexes = Array.from({ length: sceneCount }, (_, index) => index);
+    await this.viewer.removeSplatScenes(sceneIndexes, false);
   }
 
   private saveInitialCamera(): void {
