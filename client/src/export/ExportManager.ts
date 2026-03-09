@@ -59,7 +59,7 @@ export class ExportManager {
 
   constructor(options: ExportManagerOptions) {
     this.viewer = options.viewer;
-    this.fetchImpl = options.fetchImpl ?? fetch;
+    this.fetchImpl = resolveFetchImpl(options.fetchImpl);
   }
 
   isExporting(): boolean {
@@ -253,6 +253,16 @@ export class ExportManager {
       // Best-effort cleanup only.
     }
   }
+}
+
+function resolveFetchImpl(fetchImpl?: typeof fetch): typeof fetch {
+  const resolvedFetch = fetchImpl ?? globalThis.fetch;
+
+  if (resolvedFetch === globalThis.fetch) {
+    return globalThis.fetch.bind(globalThis);
+  }
+
+  return resolvedFetch;
 }
 
 export function buildExportFrameTimes(durationSeconds: number, fps: number): number[] {

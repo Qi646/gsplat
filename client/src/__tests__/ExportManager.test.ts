@@ -154,6 +154,58 @@ describe('buildExportFrameTimes', () => {
 });
 
 describe('ExportManager', () => {
+  it('binds global fetch to the global receiver for ambient and explicitly injected browser fetch usage', async () => {
+    const originalFetch = globalThis.fetch;
+    const viewer = new FakeViewer();
+
+    try {
+      const globalFetch = vi.fn(function (this: typeof globalThis, input: RequestInfo | URL) {
+        expect(this).toBe(globalThis);
+
+        const url = String(input);
+        if (url === '/api/export/jobs') {
+          return Promise.resolve(
+            new Response(JSON.stringify({ jobId: 'job-bound' }), {
+              headers: { 'Content-Type': 'application/json' },
+              status: 200,
+            }),
+          );
+        }
+
+        if (url === '/api/export/jobs/job-bound/frame') {
+          return Promise.resolve(new Response(null, { status: 204 }));
+        }
+
+        if (url === '/api/export/jobs/job-bound/finalize') {
+          return Promise.resolve(
+            new Response(new Blob(['mp4-bytes'], { type: 'video/mp4' }), {
+              headers: { 'Content-Type': 'video/mp4' },
+              status: 200,
+            }),
+          );
+        }
+
+        throw new Error(`Unexpected fetch call: ${url}`);
+      }) as typeof fetch;
+
+      globalThis.fetch = globalFetch;
+
+      const managers = [new ExportManager({ viewer }), new ExportManager({ fetchImpl: globalThis.fetch, viewer })];
+
+      for (const manager of managers) {
+        const result = await manager.exportPath(createKeyframes(), {
+          settings: { fps: 1, height: 720, width: 1280 },
+        });
+
+        await expect(result.blob.text()).resolves.toBe('mp4-bytes');
+      }
+
+      expect(globalFetch).toHaveBeenCalledTimes(10);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it('renders, uploads, finalizes, and restores the prior camera pose and size', async () => {
     const viewer = new FakeViewer();
     const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
