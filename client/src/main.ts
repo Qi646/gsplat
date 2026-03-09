@@ -1,4 +1,5 @@
 import { WalkControls } from './controls/WalkControls';
+import { parseAppRuntimeQuery } from './lib/runtimeQuery';
 import { SCENE_PRESETS } from './lib/scenePresets';
 import { KeyframeManager } from './path/KeyframeManager';
 import { AppEvents, type Keyframe } from './types';
@@ -29,6 +30,7 @@ function formatSeconds(seconds: number): string {
 }
 
 async function main(): Promise<void> {
+  const runtimeQuery = parseAppRuntimeQuery(window.location.search);
   const viewerHost = $('#viewer-host') as HTMLDivElement;
   const sceneUrlInput = $('#scene-url-input') as HTMLInputElement;
   const loadButton = $('#btn-load-scene') as HTMLButtonElement;
@@ -51,8 +53,21 @@ async function main(): Promise<void> {
   const statFps = $('#stat-fps');
 
   const events = new AppEvents();
-  const viewer = new SceneViewer({ hostElement: viewerHost, events });
+  const viewer = new SceneViewer({
+    hostElement: viewerHost,
+    events,
+    runtimeOverrides: {
+      viewerMode: runtimeQuery.viewerMode,
+    },
+  });
   await viewer.init();
+
+  if (runtimeQuery.e2eEnabled) {
+    window.__GSPLAT_DEBUG__ = {
+      snapshot: () => viewer.getDebugSnapshot(),
+    };
+  }
+
   const compatibilityStatusMessage = viewer.getCompatibilityStatusMessage();
 
   const setStatusNote = (message: string): void => {
@@ -452,6 +467,11 @@ async function main(): Promise<void> {
   }
   updatePathControlsState();
   updateTimelineUI(0, 0);
+
+  if (runtimeQuery.autoSceneUrl) {
+    sceneUrlInput.value = runtimeQuery.autoSceneUrl;
+    void loadScene(runtimeQuery.autoSceneUrl);
+  }
 
   window.setInterval(() => {
     const fps = viewer.getFPS();

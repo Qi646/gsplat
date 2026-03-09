@@ -41,6 +41,34 @@ export interface InterpolatedPose {
   fov: number;
 }
 
+export interface ViewerDebugSnapshot {
+  canvasSize: {
+    width: number;
+    height: number;
+    clientWidth: number;
+    clientHeight: number;
+  };
+  rendererInfo: {
+    renderer: string | null;
+    shadingLanguageVersion: string | null;
+    vendor: string | null;
+    version: string | null;
+  };
+  runtime: {
+    compatibilityMode: boolean;
+    compatibilityStatusMessage: string | null;
+    viewerOptions: {
+      gpuAcceleratedSort: boolean;
+      sharedMemoryForWorkers: boolean;
+    };
+  };
+  sceneCount: number;
+  sceneLoaded: boolean;
+  splatCount: number;
+  splatRenderCount: number;
+  lastSortTime: number | null;
+}
+
 export type AppEventMap = {
   'scene:loaded': { splatCount: number };
   'scene:progress': { percent: number; message: string };
@@ -65,5 +93,13 @@ export class AppEvents extends EventTarget {
     const listener = (event: Event) => handler((event as CustomEvent).detail);
     this.addEventListener(type, listener);
     return () => this.removeEventListener(type, listener);
+  }
+}
+
+declare global {
+  interface Window {
+    __GSPLAT_DEBUG__?: {
+      snapshot: () => ViewerDebugSnapshot;
+    };
   }
 }

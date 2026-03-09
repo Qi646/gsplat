@@ -1,18 +1,20 @@
 import * as GaussianSplats3D from '@mkkellogg/gaussian-splats-3d';
 import * as THREE from 'three';
 import { formatLoadProgress } from '../lib/loadProgress';
-import type { AppEvents, InterpolatedPose } from '../types';
+import type { AppEvents, InterpolatedPose, ViewerDebugSnapshot } from '../types';
 import { detectSceneFormat } from '../lib/sceneFormat';
-import { resolveViewerRuntimeConfig } from './viewerRuntime';
+import { resolveViewerRuntimeConfig, type ViewerRuntimeOverrides, type ViewerRuntimeOptions } from './viewerRuntime';
 
 export interface ViewerOptions {
   hostElement: HTMLElement;
   events: AppEvents;
+  runtimeOverrides?: ViewerRuntimeOverrides;
 }
 
 export class SceneViewer {
   private hostElement: HTMLElement;
   private events: AppEvents;
+  private runtimeOverrides: ViewerRuntimeOverrides;
   private viewer: GaussianSplats3D.Viewer | null = null;
   private renderer: THREE.WebGLRenderer | null = null;
   private camera: THREE.PerspectiveCamera | null = null;
@@ -28,16 +30,22 @@ export class SceneViewer {
   private frameHook: (() => void) | null = null;
   private compatibilityMode = false;
   private compatibilityStatusMessage: string | null = null;
+  private runtimeViewerOptions: ViewerRuntimeOptions = {
+    gpuAcceleratedSort: false,
+    sharedMemoryForWorkers: false,
+  };
 
   constructor(options: ViewerOptions) {
     this.hostElement = options.hostElement;
     this.events = options.events;
+    this.runtimeOverrides = options.runtimeOverrides ?? {};
   }
 
   async init(): Promise<void> {
-    const runtimeConfig = resolveViewerRuntimeConfig(window.crossOriginIsolated);
+    const runtimeConfig = resolveViewerRuntimeConfig(window.crossOriginIsolated, this.runtimeOverrides);
     this.compatibilityMode = runtimeConfig.compatibilityMode;
     this.compatibilityStatusMessage = runtimeConfig.statusMessage;
+    this.runtimeViewerOptions = runtimeConfig.viewerOptions;
 
     if (runtimeConfig.warningMessage) {
       console.warn(runtimeConfig.warningMessage);
@@ -213,6 +221,39 @@ export class SceneViewer {
 
   getCompatibilityStatusMessage(): string | null {
     return this.compatibilityStatusMessage;
+  }
+
+  getDebugSnapshot(): ViewerDebugSnapshot {
+    const internalViewer = this.viewer as (GaussianSplats3D.Viewer & {
+      lastSortTime?: number;
+      splatRenderCount?: number;
+    }) | null;
+    const gl = this.renderer?.getContext?.();
+
+    return {
+      canvasSize: {
+        width: this.renderer?.domElement.width ?? 0,
+        height: this.renderer?.domElement.height ?? 0,
+        clientWidth: this.renderer?.domElement.clientWidth ?? 0,
+        clientHeight: this.renderer?.domElement.clientHeight ?? 0,
+      },
+      rendererInfo: {
+        renderer: gl ? String(gl.getParameter(gl.RENDERER)) : null,
+        shadingLanguageVersion: gl ? String(gl.getParameter(gl.SHADING_LANGUAGE_VERSION)) : null,
+        vendor: gl ? String(gl.getParameter(gl.VENDOR)) : null,
+        version: gl ? String(gl.getParameter(gl.VERSION)) : null,
+      },
+      runtime: {
+        compatibilityMode: this.compatibilityMode,
+        compatibilityStatusMessage: this.compatibilityStatusMessage,
+        viewerOptions: { ...this.runtimeViewerOptions },
+      },
+      sceneCount: this.viewer?.getSceneCount?.() ?? 0,
+      sceneLoaded: this.sceneLoaded,
+      splatCount: Math.max(this.splatCount, this.readSplatCount()),
+      splatRenderCount: internalViewer?.splatRenderCount ?? 0,
+      lastSortTime: typeof internalViewer?.lastSortTime === 'number' ? internalViewer.lastSortTime : null,
+    };
   }
 
   dispose(): void {
