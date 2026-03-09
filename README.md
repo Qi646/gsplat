@@ -9,7 +9,7 @@ The active product code lives at the repo root in `client/` and `server/`. The i
 The root app currently implements the first vertical slice:
 
 - Load public `.ply`, `.splat`, and `.ksplat` scene URLs
-- Load verified sample presets through same-origin `.ksplat` routes
+- Load verified sample presets through same-origin cached `.ply` and `.ksplat` routes
 - Compare the default `mkkellogg` renderer against an opt-in SparkJS renderer via query params
 - Show loading progress, FPS, and splat count
 - Provide Frame Scene, Reset View, and Walk Mode navigation
@@ -82,6 +82,7 @@ Renderer comparison checks:
 http://localhost:5173/?renderer=mkkellogg&viewerMode=default&scene=/test-assets/smoke-grid.ply
 http://localhost:5173/?renderer=mkkellogg&viewerMode=compat&scene=/test-assets/smoke-grid.ply
 http://localhost:5173/?renderer=spark&scene=/test-assets/smoke-grid.ply
+http://localhost:5173/?renderer=mkkellogg&scene=/api/presets/luigi.ply
 http://localhost:5173/?renderer=spark&scene=/api/presets/truck.ksplat
 ```
 
@@ -120,7 +121,7 @@ Notes:
 - `renderer=spark` switches the viewer adapter to SparkJS for renderer A/B comparisons. `viewerMode` only affects the default `mkkellogg` path.
 - `client/src/path/PathInterpolator.ts` and `client/src/path/KeyframeManager.ts` own keyframe capture, interpolation, preview playback, and path JSON serialization.
 - `client/src/export/ExportManager.ts` renders the active camera path into PNG frames at fixed `1280x720 @ 30 FPS`, uploads them to the backend export job, and restores the live viewer state after success or failure.
-- `server/src/presetArchive.ts` downloads verified `.ksplat` entries from the upstream demo archive, caches them under `/tmp/gsplat-presets`, and backs the preset routes exposed by `server/src/app.ts`.
+- `server/src/presetArchive.ts` caches preset assets under `/tmp/gsplat-presets`, mixing archive-backed verified `.ksplat` entries with direct-download `.ply` presets behind the same preset routes exposed by `server/src/app.ts`.
 - `server/src/exportService.ts` owns FFmpeg export jobs and powers `/api/export/jobs`, `/api/export/jobs/:jobId/frame`, `/api/export/jobs/:jobId/finalize`, and `/api/export/jobs/:jobId`.
 
 ## Current Expected Behaviour
@@ -129,7 +130,7 @@ Notes:
 - Scene loading is currently non-progressive. The scene is not visible until processing completes.
 - The progress bar reflects download progress first, then resets to `0%` when the loader switches into processing. The UI does not yet expose granular processing sub-steps.
 - Once the UI reaches `loaded`, the viewer is expected to have framed a visible scene. Loads that resolve with zero splats or invalid bounds now fail into the error state instead of reporting a false `loaded` status.
-- The preset tab now serves verified `Garden`, `Stump`, and `Truck` scenes from same-origin `/api/presets/*.ksplat` routes backed by the server cache under `/tmp/gsplat-presets`.
+- The preset tab now serves cached same-origin `Luigi` (`.ply`), `Garden` (`.ksplat`), `Stump` (`.ksplat`), and `Truck` (`.ksplat`) scenes from `/api/presets/:presetId.:extension` routes backed by the server cache under `/tmp/gsplat-presets`.
 - Initial framing and `Frame Scene` now use robust sampled bounds that ignore low-alpha outliers before falling back to the raw mesh bounding box.
 - Camera near/far planes now adapt from the current robust scene bounds and camera distance in both renderer adapters, so close inspection is no longer limited by the previous fixed `0.1 / 1000` frustum.
 - The app serves cross-origin isolation headers in both the Vite dev server and the Express production server so the faster shared-memory worker path remains available for explicit diagnostics.
