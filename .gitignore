@@ -3,6 +3,8 @@ dist/
 server/public/
 exports/
 coverage/
+playwright-report/
+test-results/
 *.tsbuildinfo
 
 .env

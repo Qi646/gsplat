@@ -61,6 +61,8 @@ npm install --cache /tmp/npm-cache-gsplat-1
 npm run dev      # client + server in watch mode
 npm test         # client + server unit tests
 npm run build    # production client and server builds
+npm run playwright:install:firefox  # install the local Playwright Firefox binary
+npm run test:e2e:firefox            # Firefox browser regression test against the built app
 npm start        # serve the production build from server/dist
 ```
 
@@ -78,6 +80,7 @@ curl -I http://localhost:3001/
 - `client/src/viewer/viewerRuntime.ts` selects the viewer's shared-memory worker path when cross-origin isolation is available and falls back to a slower compatibility path otherwise.
 - `client/src/controls/WalkControls.ts` adds pointer-lock WASD navigation on top of the viewer camera.
 - `client/src/lib/sceneFormat.ts` and `client/src/lib/scenePresets.ts` isolate URL format detection and preset scene configuration.
+- `client/src/lib/runtimeQuery.ts` and the `window.__GSPLAT_DEBUG__` hook expose test-only startup overrides and viewer diagnostics for browser regression coverage.
 - `client/src/path/PathInterpolator.ts` and `client/src/path/KeyframeManager.ts` own keyframe capture, interpolation, preview playback, and path JSON serialization.
 - `server/src/app.ts` owns the Express app, including COOP/COEP headers for the production server and `/api/health`.
 
@@ -91,6 +94,8 @@ curl -I http://localhost:3001/
 - If cross-origin isolation is unavailable in a runtime, the viewer automatically falls back to a slower compatibility worker path and surfaces that state in the status note instead of hanging in processing.
 - Successful scene changes clear the current camera path so keyframes remain scene-specific.
 - Path import and path editing controls remain disabled until a scene has loaded successfully.
+- The committed browser smoke fixture lives at `client/public/test-assets/smoke-grid.ply` and is used by the Firefox Playwright regression test.
+- The Firefox browser regression test currently reproduces a viewer startup failure in this environment before any scene load begins: both default and forced compatibility modes fail with `Init error: Error creating WebGL context.`
 
 ## Development Guidance
 

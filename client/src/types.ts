@@ -69,6 +69,15 @@ export interface ViewerDebugSnapshot {
   lastSortTime: number | null;
 }
 
+export type AppBootPhase = 'booting' | 'viewer:initializing' | 'viewer:ready' | 'viewer:init-error';
+
+export interface AppDebugSnapshot {
+  bootPhase: AppBootPhase;
+  initErrorMessage: string | null;
+  statusNote: string | null;
+  viewer: ViewerDebugSnapshot | null;
+}
+
 export type AppEventMap = {
   'scene:loaded': { splatCount: number };
   'scene:progress': { percent: number; message: string };
@@ -99,7 +108,7 @@ export class AppEvents extends EventTarget {
 declare global {
   interface Window {
     __GSPLAT_DEBUG__?: {
-      snapshot: () => ViewerDebugSnapshot;
+      snapshot: () => AppDebugSnapshot;
     };
   }
 }

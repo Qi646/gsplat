@@ -2,7 +2,7 @@ import { WalkControls } from './controls/WalkControls';
 import { parseAppRuntimeQuery } from './lib/runtimeQuery';
 import { SCENE_PRESETS } from './lib/scenePresets';
 import { KeyframeManager } from './path/KeyframeManager';
-import { AppEvents, type Keyframe } from './types';
+import { AppEvents, type AppBootPhase, type Keyframe } from './types';
 import { SceneViewer } from './viewer/SceneViewer';
 
 function $(selector: string): HTMLElement {
@@ -31,6 +31,10 @@ function formatSeconds(seconds: number): string {
 
 async function main(): Promise<void> {
   const runtimeQuery = parseAppRuntimeQuery(window.location.search);
+  let viewer: SceneViewer | null = null;
+  let bootPhase: AppBootPhase = 'booting';
+  let initErrorMessage: string | null = null;
+  let currentStatusNote: string | null = null;
   const viewerHost = $('#viewer-host') as HTMLDivElement;
   const sceneUrlInput = $('#scene-url-input') as HTMLInputElement;
   const loadButton = $('#btn-load-scene') as HTMLButtonElement;
@@ -53,25 +57,42 @@ async function main(): Promise<void> {
   const statFps = $('#stat-fps');
 
   const events = new AppEvents();
-  const viewer = new SceneViewer({
+  const getDebugSnapshot = () => ({
+    bootPhase,
+    initErrorMessage,
+    statusNote: currentStatusNote,
+    viewer: viewer?.getDebugSnapshot() ?? null,
+  });
+
+  if (runtimeQuery.e2eEnabled) {
+    window.__GSPLAT_DEBUG__ = {
+      snapshot: getDebugSnapshot,
+    };
+  }
+
+  viewer = new SceneViewer({
     hostElement: viewerHost,
     events,
     runtimeOverrides: {
       viewerMode: runtimeQuery.viewerMode,
     },
   });
-  await viewer.init();
+  bootPhase = 'viewer:initializing';
 
-  if (runtimeQuery.e2eEnabled) {
-    window.__GSPLAT_DEBUG__ = {
-      snapshot: () => viewer.getDebugSnapshot(),
-    };
+  try {
+    await viewer.init();
+    bootPhase = 'viewer:ready';
+  } catch (error) {
+    bootPhase = 'viewer:init-error';
+    initErrorMessage = error instanceof Error ? error.message : 'Unknown initialization error';
+    throw error;
   }
 
   const compatibilityStatusMessage = viewer.getCompatibilityStatusMessage();
 
   const setStatusNote = (message: string): void => {
-    statusNote.textContent = compatibilityStatusMessage ? `${message} ${compatibilityStatusMessage}` : message;
+    currentStatusNote = compatibilityStatusMessage ? `${message} ${compatibilityStatusMessage}` : message;
+    statusNote.textContent = currentStatusNote;
   };
 
   const camera = viewer.getCamera();

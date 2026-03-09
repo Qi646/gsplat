@@ -27,6 +27,15 @@ declare module '@mkkellogg/gaussian-splats-3d' {
     computeBoundingBox(applySceneTransforms?: boolean, sceneIndex?: number): THREE.Box3;
   }
 
+  export interface ParsedSplatArray {
+    splatCount: number;
+    splats: number[][];
+  }
+
+  export class PlyParser {
+    static parseToUncompressedSplatArray(buffer: ArrayBuffer): ParsedSplatArray;
+  }
+
   export class Viewer {
     constructor(options: ViewerOptions);
     renderer: THREE.WebGLRenderer;
