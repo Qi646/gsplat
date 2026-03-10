@@ -168,15 +168,18 @@ export class KeyframeManager {
     this.applyTime(timeSeconds);
   }
 
-  startPreview(): boolean {
-    if (this.previewActive || this.keyframes.length < 2 || this.getTotalDuration() <= 0) {
+  startPreview(startTimeSeconds = 0): boolean {
+    const totalDuration = this.getTotalDuration();
+    if (this.previewActive || this.keyframes.length < 2 || totalDuration <= 0) {
       return false;
     }
 
+    const normalizedStartTime = Number.isFinite(startTimeSeconds) ? startTimeSeconds : 0;
+    const clampedStartTime = THREE.MathUtils.clamp(normalizedStartTime, 0, totalDuration);
     this.previewActive = true;
-    this.previewStartedAt = performance.now();
+    this.previewStartedAt = performance.now() - clampedStartTime * 1000;
     this.events.emit('path:preview:start', undefined);
-    this.applyTime(0);
+    this.applyTime(clampedStartTime);
     this.previewAnimationFrameId = requestAnimationFrame(this.tickPreview);
     return true;
   }

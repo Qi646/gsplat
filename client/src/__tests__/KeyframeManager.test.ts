@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AppEvents, type InterpolatedPose, type Keyframe } from '../types';
 import { KeyframeManager, type CameraPathViewer } from '../path/KeyframeManager';
 
@@ -37,6 +37,11 @@ function setCameraPose(
 }
 
 describe('KeyframeManager', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
   it('captures the current camera pose with default spacing', () => {
     const viewer = new FakeViewer();
     const manager = new KeyframeManager({ viewer, events: new AppEvents() });
@@ -152,6 +157,52 @@ describe('KeyframeManager', () => {
 
     expect(restoredPath.version).toBe(1);
     expect(manager.getKeyframes()).toEqual(restoredPath.keyframes);
+  });
+
+  it('starts preview from a requested time offset', () => {
+    const viewer = new FakeViewer();
+    const manager = new KeyframeManager({ viewer, events: new AppEvents() });
+
+    setCameraPose(viewer.camera, new THREE.Vector3(0, 0, 0));
+    manager.addKeyframe();
+    setCameraPose(viewer.camera, new THREE.Vector3(1, 0, 0));
+    manager.addKeyframe();
+    setCameraPose(viewer.camera, new THREE.Vector3(2, 0, 0));
+    manager.addKeyframe();
+
+    let now = 1_000;
+    let nextAnimationFrameId = 0;
+    const animationFrameCallbacks = new Map<number, FrameRequestCallback>();
+
+    vi.spyOn(performance, 'now').mockImplementation(() => now);
+    vi.stubGlobal('requestAnimationFrame', ((callback: FrameRequestCallback): number => {
+      const id = ++nextAnimationFrameId;
+      animationFrameCallbacks.set(id, callback);
+      return id;
+    }) as typeof requestAnimationFrame);
+    vi.stubGlobal('cancelAnimationFrame', ((id: number): void => {
+      animationFrameCallbacks.delete(id);
+    }) as typeof cancelAnimationFrame);
+
+    expect(manager.startPreview(3)).toBe(true);
+    expect(manager.getCurrentTime()).toBe(3);
+    expect(viewer.camera.position.x).toBeCloseTo(1);
+    expect(manager.isPreviewActive()).toBe(true);
+
+    const firstAnimationFrameCallback = animationFrameCallbacks.values().next().value as
+      | FrameRequestCallback
+      | undefined;
+    expect(firstAnimationFrameCallback).toBeTypeOf('function');
+
+    now = 2_500;
+    firstAnimationFrameCallback?.(now);
+
+    expect(manager.getCurrentTime()).toBeCloseTo(4.5);
+    expect(viewer.camera.position.x).toBeCloseTo(1.5);
+    expect(manager.isPreviewActive()).toBe(true);
+
+    manager.stopPreview();
+    expect(manager.isPreviewActive()).toBe(false);
   });
 
   it('rejects invalid imported JSON', () => {

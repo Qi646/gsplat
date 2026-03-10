@@ -1,6 +1,7 @@
 # AGENT_MEMORY
 
 ## Current Context
+- 2026-03-10: Camera-path preview now starts from the currently selected keyframe when the user clicks a keyframe in the list before pressing `Preview`; the shared preview manager accepts a non-zero start time, the behavior is documented in README/progress notes, and it was revalidated with passing root `npm test` / `npm run build`.
 - 2026-03-10: Repo licensing is now explicitly GNU GPL v3 only via the root `LICENSE` file, matching `license: GPL-3.0-only` metadata in the root/client/server `package.json` files and a README license note.
 - 2026-03-10: Navigation mode now uses explicit top-bar buttons for inspection and fly-through (`Inspect [1]` and `Fly [2]`) with no separate mode indicator pill. The active state is represented by button highlight, and shortcut `1`/`2`/click behavior maps directly to those states. Internal control identifiers still use `walk`, and the user-facing rename revalidated with passing root `npm test` / `npm run build`.
 - The root app now supports agentic camera-path insertion: the Camera Path panel captures the current view plus four scout views, sends them to a server-side vision planner, triangulates a subject anchor locally, and appends deterministic orbit keyframes back into the normal keyframe path flow.

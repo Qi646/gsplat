@@ -1067,12 +1067,22 @@ async function main(): Promise<void> {
 
     stopWalkMode({ silent: true });
 
-    if (keyframeManager.startPreview()) {
+    const keyframes = keyframeManager.getKeyframes();
+    const selectedPreviewIndex = selectedKeyframeId
+      ? keyframes.findIndex(keyframe => keyframe.id === selectedKeyframeId)
+      : -1;
+    const previewStartTime = selectedPreviewIndex >= 0 ? keyframes[selectedPreviewIndex]!.time : 0;
+
+    if (keyframeManager.startPreview(previewStartTime)) {
       selectedKeyframeId = null;
       renderKeyframeList();
       updatePathControlsState();
       syncPathVisualsState();
-      setStatusNote('Previewing camera path.');
+      setStatusNote(
+        selectedPreviewIndex >= 0
+          ? `Previewing camera path from keyframe ${selectedPreviewIndex + 1}.`
+          : 'Previewing camera path.',
+      );
     }
   });
 
