@@ -81,6 +81,12 @@ interface OrbitFrame {
   radius: number;
 }
 
+interface ScoutPoseSpec {
+  angleRadians: number;
+  heightOffsetScale: number;
+  radiusScale: number;
+}
+
 interface RayObservation {
   confidence: number;
   direction: THREE.Vector3;
@@ -118,6 +124,12 @@ const DEFAULT_LOOK_UP = new THREE.Vector3(0, 1, 0);
 const MAX_CAPTURE_LONG_SIDE = 640;
 const MIN_VECTOR_LENGTH_SQUARED = 1e-8;
 const TOTAL_CAPTURE_COUNT = 5;
+const SCOUT_POSE_SPECS: ScoutPoseSpec[] = [
+  { angleRadians: THREE.MathUtils.degToRad(-18), heightOffsetScale: 0, radiusScale: 0.96 },
+  { angleRadians: THREE.MathUtils.degToRad(18), heightOffsetScale: 0, radiusScale: 1.04 },
+  { angleRadians: THREE.MathUtils.degToRad(-34), heightOffsetScale: 0.12, radiusScale: 1.02 },
+  { angleRadians: THREE.MathUtils.degToRad(34), heightOffsetScale: -0.1, radiusScale: 1.08 },
+];
 
 export class AgenticPathGenerationError extends Error {
   constructor(message: string) {
@@ -325,7 +337,7 @@ export class AgenticPathGenerator {
       captureIndex,
       message: isCurrentCapture
         ? 'Capturing the current view (1/5). Viewer controls are temporarily locked.'
-        : `Capturing scout view ${captureIndex - 1}/4 (${captureIndex}/${TOTAL_CAPTURE_COUNT}). Viewer controls are temporarily locked.`,
+        : `Capturing nearby scout view ${captureIndex - 1}/4 (${captureIndex}/${TOTAL_CAPTURE_COUNT}). Viewer controls are temporarily locked.`,
       stage: isCurrentCapture ? 'capturing-current' : 'capturing-scout',
       totalCaptures: TOTAL_CAPTURE_COUNT,
     });
@@ -345,14 +357,27 @@ export function buildScoutCameraPoses(
   const sceneDiagonal = Math.max(sceneSize.length(), 1);
   const framedView = computeFramedSceneView(bounds, camera);
   const orbitFrame = deriveOrbitFrame(center, camera.position, camera.quaternion);
-  const framedDistance = framedView ? framedView.position.distanceTo(center) : sceneDiagonal;
-  const currentDistance = camera.position.distanceTo(center);
-  const desiredDistance = Math.max(framedDistance, currentDistance, sceneDiagonal * 0.75, 1);
-  const radiusFromDistance = Math.sqrt(Math.max(desiredDistance * desiredDistance - orbitFrame.height * orbitFrame.height, 0));
-  const radius = Math.max(radiusFromDistance, orbitFrame.radius, sceneDiagonal * 0.35, 1);
+  const framedDistance = framedView ? framedView.position.distanceTo(center) : camera.position.distanceTo(center);
+  const framedRadius = Math.sqrt(Math.max(framedDistance * framedDistance - orbitFrame.height * orbitFrame.height, 0));
+  const currentRadius = Math.max(orbitFrame.radius, 1);
+  const minRadius = Math.max(Math.min(currentRadius * 0.9, sceneDiagonal * 0.16), 0.75);
+  const maxRadius = Math.max(
+    currentRadius * 1.12,
+    Math.min(framedRadius, currentRadius + sceneDiagonal * 0.18),
+    minRadius + 0.25,
+  );
+  const sceneHeight = Math.max(computeBoundsExtentAlongAxis(bounds, orbitFrame.axis), sceneDiagonal * 0.25, 1);
+  const maxHeightOffset = Math.max(sceneHeight * 0.3, sceneDiagonal * 0.12, 0.5);
+  const scoutHeightStep = Math.min(sceneHeight * 0.12, maxHeightOffset * 0.45);
 
-  return [0, Math.PI / 2, Math.PI, (3 * Math.PI) / 2].map(angle => {
-    const position = createOrbitPosition(center, orbitFrame, radius, orbitFrame.height, angle);
+  return SCOUT_POSE_SPECS.map(spec => {
+    const radius = THREE.MathUtils.clamp(currentRadius * spec.radiusScale, minRadius, maxRadius);
+    const height = THREE.MathUtils.clamp(
+      orbitFrame.height + scoutHeightStep * spec.heightOffsetScale,
+      -maxHeightOffset,
+      maxHeightOffset,
+    );
+    const position = createOrbitPosition(center, orbitFrame, radius, height, spec.angleRadians);
 
     return {
       fov: camera.fov,

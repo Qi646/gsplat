@@ -20,6 +20,10 @@ import { detectSceneFormat } from './lib/sceneFormat';
 import { resolveSceneLoadSource, type SceneLoadInput, type SceneLoadSource } from './lib/sceneSource';
 import { SCENE_PRESETS } from './lib/scenePresets';
 import { AgenticPathGenerator, type AgenticPathProgress } from './path/agenticPath';
+import {
+  buildAgenticPathFailureFeedback,
+  type AgenticPathFailureFeedback,
+} from './path/agenticPathFeedback';
 import { CameraPathOverlay } from './path/CameraPathOverlay';
 import { KeyframeManager } from './path/KeyframeManager';
 import {
@@ -131,6 +135,10 @@ async function main(): Promise<void> {
   const exportFpsInput = $('#export-fps-input') as HTMLInputElement;
   const exportFileBaseInput = $('#export-file-base-input') as HTMLInputElement;
   const agenticPathNote = $('#agentic-path-note');
+  const agenticPathFeedback = $('#agentic-path-feedback');
+  const agenticPathFeedbackTitle = $('#agentic-path-feedback-title');
+  const agenticPathFeedbackMessage = $('#agentic-path-feedback-message');
+  const agenticPathFeedbackDetail = $('#agentic-path-feedback-detail');
   const agenticPathBlocker = $('#agentic-path-blocker');
   const cancelGeneratePathBlockerButton = $('#btn-cancel-generate-path-blocker') as HTMLButtonElement;
   const agenticPathBlockerMessage = $('#agentic-path-blocker-message');
@@ -230,6 +238,7 @@ async function main(): Promise<void> {
   let exportPlanSettings: ExportPlanSettings = { ...DEFAULT_EXPORT_PLAN_SETTINGS };
   let currentExportProgress: ExportProgress | null = null;
   let agenticPathProgress: AgenticPathProgress | null = null;
+  let agenticPathFailure: AgenticPathFailureFeedback | null = null;
   let agenticPathStatus: AgenticPathStatus = {
     available: false,
     model: null,
@@ -481,13 +490,13 @@ async function main(): Promise<void> {
 
     if (!isSceneLoaded()) {
       agenticPathNote.textContent =
-        'Load a scene to enable prompt-driven orbit generation. It uses the current view plus four scout captures.';
+        'Load a scene to enable prompt-driven orbit generation. It uses the current view plus four nearby scout captures.';
       return;
     }
 
     const modelLabel = agenticPathStatus.model ? ` Using ${agenticPathStatus.model}.` : '';
     agenticPathNote.textContent =
-      `Prompt a cinematic orbit and append generated keyframes based on the current view plus four scout captures.${modelLabel}`;
+      `Prompt a cinematic orbit and append generated keyframes based on the current view plus four nearby scout captures.${modelLabel}`;
   };
 
   const updateAgenticPathBlocker = () => {
@@ -497,6 +506,24 @@ async function main(): Promise<void> {
     agenticPathBlockerMessage.textContent = generationActive
       ? agenticPathProgress?.message ?? 'Generating a camera path. Viewer controls are temporarily locked.'
       : '';
+  };
+
+  const updateAgenticPathFeedback = () => {
+    const visible = !agenticPathGenerator.isGenerating() && agenticPathFailure !== null;
+    agenticPathFeedback.hidden = !visible;
+    agenticPathFeedback.classList.toggle('visible', visible);
+    agenticPathFeedback.setAttribute('aria-hidden', String(!visible));
+
+    if (!visible || !agenticPathFailure) {
+      agenticPathFeedbackTitle.textContent = '';
+      agenticPathFeedbackMessage.textContent = '';
+      agenticPathFeedbackDetail.textContent = '';
+      return;
+    }
+
+    agenticPathFeedbackTitle.textContent = agenticPathFailure.title;
+    agenticPathFeedbackMessage.textContent = agenticPathFailure.message;
+    agenticPathFeedbackDetail.textContent = agenticPathFailure.detail;
   };
 
   const updateTimelineUI = (timeSeconds: number, durationSeconds: number) => {
@@ -574,6 +601,7 @@ async function main(): Promise<void> {
     updatePathVisualsButton();
     updateAgenticPathNote();
     updateAgenticPathBlocker();
+    updateAgenticPathFeedback();
   };
 
   const loadAgenticPathStatus = async () => {
@@ -723,6 +751,7 @@ async function main(): Promise<void> {
     keyframeManager.stopPreview();
     adaptiveRenderBudgetController.resetScene();
     viewer.setRenderBudget(null);
+    agenticPathFailure = null;
     sceneLoadInProgress = true;
     loadingOverlay.classList.remove('hidden');
     progressFill.style.width = '0%';
@@ -889,12 +918,14 @@ async function main(): Promise<void> {
   });
 
   pathPromptInput.addEventListener('input', () => {
+    agenticPathFailure = null;
     updatePathControlsState();
   });
 
   agenticPromptButtons.forEach(button => {
     button.addEventListener('click', () => {
       pathPromptInput.value = button.dataset['agenticPrompt'] ?? '';
+      agenticPathFailure = null;
       pathPromptInput.focus();
       updatePathControlsState();
     });
@@ -981,6 +1012,7 @@ async function main(): Promise<void> {
 
     stopWalkMode({ silent: true });
     keyframeManager.stopPreview();
+    agenticPathFailure = null;
     updatePathControlsState();
     syncPathVisualsState();
 
@@ -990,6 +1022,7 @@ async function main(): Promise<void> {
         prompt,
       });
       agenticPathProgress = null;
+      agenticPathFailure = null;
       const appendedKeyframes = keyframeManager.appendKeyframes(generatedKeyframes);
       selectedKeyframeId = appendedKeyframes[0]?.id ?? selectedKeyframeId;
       renderKeyframeList();
@@ -1000,7 +1033,8 @@ async function main(): Promise<void> {
       );
     } catch (error) {
       agenticPathProgress = null;
-      setStatusNote(error instanceof Error ? error.message : 'Could not generate an agentic camera path.');
+      agenticPathFailure = buildAgenticPathFailureFeedback(error);
+      setStatusNote(agenticPathFailure.message);
     } finally {
       updatePathControlsState();
       syncPathVisualsState();

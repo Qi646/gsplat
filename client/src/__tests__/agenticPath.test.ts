@@ -198,6 +198,24 @@ describe('buildScoutCameraPoses', () => {
     expect(poses[0]?.position.distanceTo(bounds.getCenter(new THREE.Vector3()))).toBeGreaterThan(2);
   });
 
+  it('keeps scout captures close to the live camera pose', () => {
+    const bounds = new THREE.Box3(
+      new THREE.Vector3(-4, -4, -6),
+      new THREE.Vector3(4, 4, 6),
+    );
+    const center = bounds.getCenter(new THREE.Vector3());
+    const camera = createCamera(new THREE.Vector3(5, 0, 3), center);
+    const currentDistance = camera.position.distanceTo(center);
+
+    const poses = buildScoutCameraPoses(bounds, camera);
+
+    expect(poses).toHaveLength(4);
+    poses.forEach(pose => {
+      expect(pose.position.distanceTo(camera.position)).toBeLessThan(currentDistance * 0.8);
+      expect(pose.position.distanceTo(center)).toBeLessThan(currentDistance * 1.2);
+    });
+  });
+
   it('preserves the live camera orbit axis for non-Y-up views', () => {
     const bounds = new THREE.Box3(
       new THREE.Vector3(-4, -4, -6),

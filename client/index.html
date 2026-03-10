@@ -240,6 +240,42 @@
       min-width: 108px;
     }
 
+    .agentic-path-feedback {
+      display: none;
+      gap: 6px;
+      margin-bottom: 10px;
+      padding: 12px 14px;
+      border-radius: 14px;
+      border: 1px solid rgba(255, 122, 89, 0.34);
+      background:
+        linear-gradient(180deg, rgba(83, 24, 17, 0.92), rgba(28, 12, 10, 0.96));
+      box-shadow: 0 12px 28px rgba(0, 0, 0, 0.24);
+    }
+
+    .agentic-path-feedback.visible {
+      display: grid;
+    }
+
+    .agentic-path-feedback-title {
+      font-family: var(--sans);
+      font-size: 13px;
+      font-weight: 700;
+      color: #ffd0c4;
+      letter-spacing: -0.02em;
+    }
+
+    .agentic-path-feedback-message {
+      font-size: 12px;
+      line-height: 1.45;
+      color: #fff2ed;
+    }
+
+    .agentic-path-feedback-detail {
+      font-size: 11px;
+      line-height: 1.45;
+      color: rgba(255, 229, 222, 0.82);
+    }
+
     #loading-overlay {
       position: absolute;
       inset: 0;
@@ -780,7 +816,12 @@
       <div class="panel-section">
         <div class="section-label">Camera Path</div>
         <div class="note" id="agentic-path-note" style="margin-bottom: 10px">
-          Load a scene to enable prompt-driven orbit generation. It uses the current view plus four scout captures.
+          Load a scene to enable prompt-driven orbit generation. It uses the current view plus four nearby scout captures.
+        </div>
+        <div class="agentic-path-feedback" id="agentic-path-feedback" aria-live="polite" hidden>
+          <div class="agentic-path-feedback-title" id="agentic-path-feedback-title"></div>
+          <div class="agentic-path-feedback-message" id="agentic-path-feedback-message"></div>
+          <div class="agentic-path-feedback-detail" id="agentic-path-feedback-detail"></div>
         </div>
         <textarea
           id="path-prompt-input"
