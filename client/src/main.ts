@@ -490,13 +490,13 @@ async function main(): Promise<void> {
 
     if (!isSceneLoaded()) {
       agenticPathNote.textContent =
-        'Load a scene to enable prompt-driven orbit generation. It uses the current view plus four nearby scout captures.';
+        'Load a scene to enable prompt-driven orbit generation. It uses the current view plus four nearby multi-axis scout captures.';
       return;
     }
 
     const modelLabel = agenticPathStatus.model ? ` Using ${agenticPathStatus.model}.` : '';
     agenticPathNote.textContent =
-      `Prompt a cinematic orbit and append generated keyframes based on the current view plus four nearby scout captures.${modelLabel}`;
+      `Prompt a cinematic orbit and append generated keyframes based on the current view plus four nearby multi-axis scout captures.${modelLabel}`;
   };
 
   const updateAgenticPathBlocker = () => {

@@ -82,9 +82,8 @@ interface OrbitFrame {
 }
 
 interface ScoutPoseSpec {
-  angleRadians: number;
-  heightOffsetScale: number;
-  radiusScale: number;
+  pitchRadians: number;
+  yawRadians: number;
 }
 
 interface RayObservation {
@@ -125,10 +124,10 @@ const MAX_CAPTURE_LONG_SIDE = 640;
 const MIN_VECTOR_LENGTH_SQUARED = 1e-8;
 const TOTAL_CAPTURE_COUNT = 5;
 const SCOUT_POSE_SPECS: ScoutPoseSpec[] = [
-  { angleRadians: THREE.MathUtils.degToRad(-18), heightOffsetScale: 0, radiusScale: 0.96 },
-  { angleRadians: THREE.MathUtils.degToRad(18), heightOffsetScale: 0, radiusScale: 1.04 },
-  { angleRadians: THREE.MathUtils.degToRad(-34), heightOffsetScale: 0.12, radiusScale: 1.02 },
-  { angleRadians: THREE.MathUtils.degToRad(34), heightOffsetScale: -0.1, radiusScale: 1.08 },
+  { pitchRadians: THREE.MathUtils.degToRad(6), yawRadians: THREE.MathUtils.degToRad(-10) },
+  { pitchRadians: THREE.MathUtils.degToRad(6), yawRadians: THREE.MathUtils.degToRad(10) },
+  { pitchRadians: THREE.MathUtils.degToRad(-6), yawRadians: THREE.MathUtils.degToRad(-10) },
+  { pitchRadians: THREE.MathUtils.degToRad(-6), yawRadians: THREE.MathUtils.degToRad(10) },
 ];
 
 export class AgenticPathGenerationError extends Error {
@@ -356,33 +355,27 @@ export function buildScoutCameraPoses(
   const sceneSize = bounds.getSize(new THREE.Vector3());
   const sceneDiagonal = Math.max(sceneSize.length(), 1);
   const framedView = computeFramedSceneView(bounds, camera);
-  const orbitFrame = deriveOrbitFrame(center, camera.position, camera.quaternion);
   const framedDistance = framedView ? framedView.position.distanceTo(center) : camera.position.distanceTo(center);
-  const framedRadius = Math.sqrt(Math.max(framedDistance * framedDistance - orbitFrame.height * orbitFrame.height, 0));
-  const currentRadius = Math.max(orbitFrame.radius, 1);
-  const minRadius = Math.max(Math.min(currentRadius * 0.9, sceneDiagonal * 0.16), 0.75);
+  const currentDistance = Math.max(camera.position.distanceTo(center), 1);
+  const minRadius = Math.max(Math.min(currentDistance * 0.92, sceneDiagonal * 0.16), 0.75);
   const maxRadius = Math.max(
-    currentRadius * 1.12,
-    Math.min(framedRadius, currentRadius + sceneDiagonal * 0.18),
+    currentDistance * 1.08,
+    Math.min(framedDistance, currentDistance + sceneDiagonal * 0.14),
     minRadius + 0.25,
   );
-  const sceneHeight = Math.max(computeBoundsExtentAlongAxis(bounds, orbitFrame.axis), sceneDiagonal * 0.25, 1);
-  const maxHeightOffset = Math.max(sceneHeight * 0.3, sceneDiagonal * 0.12, 0.5);
-  const scoutHeightStep = Math.min(sceneHeight * 0.12, maxHeightOffset * 0.45);
+  const radius = THREE.MathUtils.clamp(currentDistance, minRadius, maxRadius);
+  const baseOffset = resolveScoutBaseOffset(center, camera.position, camera.quaternion, radius);
+  const baseUp = getUpVector(camera.quaternion);
+  const baseRight = getRightVector(camera.quaternion);
 
   return SCOUT_POSE_SPECS.map(spec => {
-    const radius = THREE.MathUtils.clamp(currentRadius * spec.radiusScale, minRadius, maxRadius);
-    const height = THREE.MathUtils.clamp(
-      orbitFrame.height + scoutHeightStep * spec.heightOffsetScale,
-      -maxHeightOffset,
-      maxHeightOffset,
-    );
-    const position = createOrbitPosition(center, orbitFrame, radius, height, spec.angleRadians);
+    const rotatedScout = rotateScoutOffset(baseOffset, baseUp, baseRight, spec);
+    const position = center.clone().add(rotatedScout.offset);
 
     return {
       fov: camera.fov,
       position,
-      quaternion: buildLookQuaternion(position, center, orbitFrame.axis),
+      quaternion: buildLookQuaternion(position, center, rotatedScout.up),
     };
   });
 }
@@ -574,8 +567,49 @@ function getForwardVector(quaternion: THREE.Quaternion): THREE.Vector3 {
   return new THREE.Vector3(0, 0, -1).applyQuaternion(quaternion).normalize();
 }
 
+function getRightVector(quaternion: THREE.Quaternion): THREE.Vector3 {
+  return new THREE.Vector3(1, 0, 0).applyQuaternion(quaternion).normalize();
+}
+
 function getUpVector(quaternion: THREE.Quaternion): THREE.Vector3 {
   return DEFAULT_LOOK_UP.clone().applyQuaternion(quaternion).normalize();
+}
+
+function resolveScoutBaseOffset(
+  center: THREE.Vector3,
+  position: THREE.Vector3,
+  quaternion: THREE.Quaternion,
+  radius: number,
+): THREE.Vector3 {
+  const baseOffset = position.clone().sub(center);
+  if (baseOffset.lengthSq() > MIN_VECTOR_LENGTH_SQUARED) {
+    return baseOffset.setLength(radius);
+  }
+
+  const forwardOffset = getForwardVector(quaternion).multiplyScalar(-radius);
+  if (forwardOffset.lengthSq() > MIN_VECTOR_LENGTH_SQUARED) {
+    return forwardOffset;
+  }
+
+  return new THREE.Vector3(0, 0, radius);
+}
+
+function rotateScoutOffset(
+  baseOffset: THREE.Vector3,
+  baseUp: THREE.Vector3,
+  baseRight: THREE.Vector3,
+  spec: ScoutPoseSpec,
+): { offset: THREE.Vector3; up: THREE.Vector3 } {
+  const yawRotation = new THREE.Quaternion().setFromAxisAngle(baseUp, spec.yawRadians);
+  const yawedOffset = baseOffset.clone().applyQuaternion(yawRotation);
+  const yawedRight = baseRight.clone().applyQuaternion(yawRotation).normalize();
+  const yawedUp = baseUp.clone().applyQuaternion(yawRotation).normalize();
+  const pitchRotation = new THREE.Quaternion().setFromAxisAngle(yawedRight, spec.pitchRadians);
+
+  return {
+    offset: yawedOffset.applyQuaternion(pitchRotation),
+    up: yawedUp.applyQuaternion(pitchRotation).normalize(),
+  };
 }
 
 function deriveOrbitFrame(

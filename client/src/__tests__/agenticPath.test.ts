@@ -225,15 +225,18 @@ describe('buildScoutCameraPoses', () => {
     const sceneUp = new THREE.Vector3(0, 0, 1);
     const camera = createCamera(new THREE.Vector3(6, 0, 3), center, 16 / 9, sceneUp);
     const baseCameraUp = new THREE.Vector3(0, 1, 0).applyQuaternion(camera.quaternion).normalize();
-    const baseHeight = camera.position.clone().sub(center).dot(baseCameraUp);
+    const baseCameraRight = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion).normalize();
 
     const poses = buildScoutCameraPoses(bounds, camera);
-    const firstPose = poses[0]!;
-    const firstOffset = firstPose.position.clone().sub(center);
-    const firstUp = new THREE.Vector3(0, 1, 0).applyQuaternion(firstPose.quaternion).normalize();
+    const heights = poses.map(pose => pose.position.clone().sub(center).dot(baseCameraUp));
+    const laterals = poses.map(pose => pose.position.clone().sub(center).dot(baseCameraRight));
 
-    expect(firstOffset.dot(baseCameraUp)).toBeCloseTo(baseHeight, 5);
-    expect(firstUp.dot(baseCameraUp)).toBeGreaterThan(0.999);
+    expect(Math.max(...heights) - Math.min(...heights)).toBeGreaterThan(0.8);
+    expect(Math.max(...laterals) - Math.min(...laterals)).toBeGreaterThan(1.2);
+    poses.forEach(pose => {
+      const poseUp = new THREE.Vector3(0, 1, 0).applyQuaternion(pose.quaternion).normalize();
+      expect(poseUp.dot(baseCameraUp)).toBeGreaterThan(0.99);
+    });
   });
 });
 
