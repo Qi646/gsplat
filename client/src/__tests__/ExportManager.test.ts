@@ -1,6 +1,10 @@
 import * as THREE from 'three';
 import { describe, expect, it, vi } from 'vitest';
-import { ExportManager, buildExportFrameTimes } from '../export/ExportManager';
+import {
+  ExportCancelledError,
+  ExportManager,
+  buildExportFrameTimes,
+} from '../export/ExportManager';
 import type { SceneLoadInput } from '../lib/sceneSource';
 import type { Keyframe, ViewerDebugSnapshot } from '../types';
 import type { ViewerAdapter } from '../viewer/ViewerAdapter';
@@ -284,6 +288,64 @@ describe('ExportManager', () => {
     expect(manager.isExporting()).toBe(false);
   });
 
+  it('exports multiple MP4 targets sequentially with aggregate progress', async () => {
+    const viewer = new FakeViewer();
+    const fetchImpl = vi.fn<typeof fetch>(async (input) => {
+      const url = String(input);
+
+      if (url === '/api/export/jobs') {
+        const nextJobId = fetchImpl.mock.calls.filter(([calledUrl]) => String(calledUrl) === '/api/export/jobs').length;
+        return new Response(JSON.stringify({ jobId: `job-${nextJobId}` }), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        });
+      }
+
+      if (url === '/api/export/jobs/job-1/frame' || url === '/api/export/jobs/job-2/frame') {
+        return new Response(null, { status: 204 });
+      }
+
+      if (url === '/api/export/jobs/job-1/finalize') {
+        return new Response(new Blob(['mp4-720p'], { type: 'video/mp4' }), {
+          headers: { 'Content-Type': 'video/mp4' },
+          status: 200,
+        });
+      }
+
+      if (url === '/api/export/jobs/job-2/finalize') {
+        return new Response(new Blob(['mp4-1080p'], { type: 'video/mp4' }), {
+          headers: { 'Content-Type': 'video/mp4' },
+          status: 200,
+        });
+      }
+
+      throw new Error(`Unexpected fetch call: ${url}`);
+    });
+    const manager = new ExportManager({ fetchImpl, viewer });
+    const progressMessages: string[] = [];
+
+    const result = await manager.exportBatch(createKeyframes(), {
+      onProgress: progress => progressMessages.push(progress.message),
+      settingsList: [
+        { fileName: 'output-720p.mp4', fps: 1, height: 720, width: 1280 },
+        { fileName: 'output-1080p.mp4', fps: 1, height: 1080, width: 1920 },
+      ],
+    });
+
+    expect(result.totalJobs).toBe(2);
+    expect(result.results).toHaveLength(2);
+    await expect(result.results[0]?.blob.text()).resolves.toBe('mp4-720p');
+    await expect(result.results[1]?.blob.text()).resolves.toBe('mp4-1080p');
+    expect(progressMessages).toContain('[1/2] output-720p.mp4 · Encoding MP4 with FFmpeg…');
+    expect(progressMessages.at(-1)).toBe('[2/2] output-1080p.mp4 · output-1080p.mp4 is ready.');
+    expect(viewer.resizeCalls).toEqual([
+      { height: 720, width: 1280 },
+      { height: 1080, width: 1920 },
+      { height: 360, width: 640 },
+    ]);
+    expect(manager.isExporting()).toBe(false);
+  });
+
   it('cancels the server job and restores local state when frame upload fails', async () => {
     const viewer = new FakeViewer();
     viewer.setRenderBudget(55);
@@ -328,6 +390,58 @@ describe('ExportManager', () => {
     expect(viewer.getRenderBudget()).toBe(55);
     expect(viewer.camera.position.toArray()).toEqual([5, 6, 7]);
     expect(manager.isExporting()).toBe(false);
+  });
+
+  it('aborts the active upload and cancels the export job when the user cancels', async () => {
+    const viewer = new FakeViewer();
+    let resolveFrameUploadStarted: (() => void) | null = null;
+    const frameUploadStarted = new Promise<void>(resolve => {
+      resolveFrameUploadStarted = resolve;
+    });
+    const fetchImpl = vi.fn<typeof fetch>((input, init) => {
+      const url = String(input);
+
+      if (url === '/api/export/jobs') {
+        return Promise.resolve(
+          new Response(JSON.stringify({ jobId: 'job-cancel' }), {
+            headers: { 'Content-Type': 'application/json' },
+            status: 200,
+          }),
+        );
+      }
+
+      if (url === '/api/export/jobs/job-cancel/frame') {
+        resolveFrameUploadStarted?.();
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => {
+            reject(new DOMException('The operation was aborted.', 'AbortError'));
+          });
+        });
+      }
+
+      if (url === '/api/export/jobs/job-cancel') {
+        return Promise.resolve(new Response(null, { status: 204 }));
+      }
+
+      throw new Error(`Unexpected fetch call: ${url}`);
+    });
+    const manager = new ExportManager({ fetchImpl, viewer });
+
+    const exportPromise = manager.exportPath(createKeyframes(), {
+      settings: { fps: 1, height: 720, width: 1280 },
+    });
+
+    await frameUploadStarted;
+    expect(manager.isExporting()).toBe(true);
+    expect(manager.isCancelling()).toBe(false);
+
+    manager.cancelExport();
+    expect(manager.isCancelling()).toBe(true);
+
+    await expect(exportPromise).rejects.toBeInstanceOf(ExportCancelledError);
+    expect(fetchImpl).toHaveBeenCalledWith('/api/export/jobs/job-cancel', { method: 'DELETE' });
+    expect(manager.isExporting()).toBe(false);
+    expect(manager.isCancelling()).toBe(false);
   });
 
   it('rejects export requests until a scene is loaded and a path exists', async () => {
