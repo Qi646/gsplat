@@ -5,6 +5,7 @@
 - 2026-03-10: The root app now supports iterative agentic camera-path insertion: the Camera Path panel captures the live current view, sends it to the server-side vision planner, fulfills planner-requested follow-up captures relative to existing views, triangulates a subject anchor locally, and appends deterministic orbit keyframes back into the normal keyframe path flow.
 - 2026-03-10: Agentic orbit generation now derives planner-requested follow-up captures and generated orbit keyframes from the live camera's current up/roll basis instead of assuming world Y-up, which preserves the initial framing on rotated scenes like `Truck` and avoids upside-down output.
 - 2026-03-10: Agentic generation failures now surface as a dedicated inline Camera Path error card with retry guidance instead of only the footer status text.
+- 2026-03-10: OpenAI-compatible path-planner requests now send `max_completion_tokens` by default and retry once with `max_tokens` when an endpoint rejects the newer token-budget field, which avoids model-specific 400 errors on the planner route.
 - The app now explicitly supports running without `OPENAI_API_KEY`: the server exposes `/api/path/status`, the client disables prompt-driven controls when the planner is unavailable, and the rest of the viewer/path/export workflow remains usable.
 - Repo root `/home/qi/proj/gsplat_1` now has an initial import commit for the `gsplat-viewer` project.
 - The imported project lives under `gsplat-viewer/`.

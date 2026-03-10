@@ -137,11 +137,13 @@ interface ModelPathPlan {
   warning?: string;
 }
 
+type TokenBudgetParameter = 'max_completion_tokens' | 'max_tokens';
 type UnknownRecord = Record<string, unknown>;
 
 const DEFAULT_OPENAI_BASE_URL = 'https://api.openai.com/v1';
 const DEFAULT_OPENAI_MODEL = 'gpt-4.1-mini';
 const MAX_CAPTURE_REQUESTS_PER_STEP = 3;
+const PLANNER_COMPLETION_TOKEN_LIMIT = 700;
 
 export class PathGenerationError extends Error {
   readonly statusCode: number;
@@ -192,43 +194,10 @@ export class OpenAIVisionPathPlanner implements PathGenerationPlanner {
       throw new PathGenerationError(503, status.reason ?? 'Agentic path generation is not configured.');
     }
     const apiKey = this.apiKey ?? process.env['OPENAI_API_KEY'];
-
-    const response = await this.fetchImpl(
-      `${(this.baseUrl ?? process.env['OPENAI_BASE_URL'] ?? DEFAULT_OPENAI_BASE_URL).replace(/\/$/, '')}/chat/completions`,
-      {
-        body: JSON.stringify({
-          max_tokens: 700,
-          messages: [
-            {
-              content: buildSystemPrompt(),
-              role: 'system',
-            },
-            {
-              content: buildUserContent(parsedRequest),
-              role: 'user',
-            },
-          ],
-          model: this.model ?? process.env['OPENAI_MODEL'] ?? DEFAULT_OPENAI_MODEL,
-          response_format: { type: 'json_object' },
-          temperature: 0.2,
-        }),
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          'Content-Type': 'application/json',
-        },
-        method: 'POST',
-      },
-    );
-
-    if (!response.ok) {
-      const failureText = await response.text();
-      throw new PathGenerationError(
-        502,
-        `Vision planning request failed (${response.status}): ${failureText.slice(0, 200)}`.trim(),
-      );
+    if (!apiKey) {
+      throw new PathGenerationError(503, 'Agentic path generation is not configured.');
     }
-
-    const payload = await response.json() as ChatCompletionResponse;
+    const payload = await this.requestChatCompletion(parsedRequest, apiKey);
     const completionText = extractCompletionText(payload);
     const parsedPlan = parseModelPathPlan(JSON.parse(stripJsonFences(completionText)) as unknown);
 
@@ -270,6 +239,54 @@ export class OpenAIVisionPathPlanner implements PathGenerationPlanner {
       subjectLocalizations: parsedPlan.subjectLocalizations,
       warning: parsedPlan.warning,
     };
+  }
+
+  private async requestChatCompletion(
+    request: PathGenerationRequest,
+    apiKey: string,
+  ): Promise<ChatCompletionResponse> {
+    const model = this.model ?? process.env['OPENAI_MODEL'] ?? DEFAULT_OPENAI_MODEL;
+    const primaryParameter: TokenBudgetParameter = 'max_completion_tokens';
+    const primaryResponse = await this.fetchChatCompletion(
+      buildChatCompletionRequestBody(request, model, primaryParameter),
+      apiKey,
+    );
+    if (primaryResponse.ok) {
+      return await primaryResponse.json() as ChatCompletionResponse;
+    }
+
+    const primaryFailureText = await primaryResponse.text();
+    const fallbackParameter = resolveTokenBudgetFallback(primaryResponse.status, primaryFailureText, primaryParameter);
+    if (!fallbackParameter) {
+      throw buildPlanningRequestFailure(primaryResponse.status, primaryFailureText);
+    }
+
+    const fallbackResponse = await this.fetchChatCompletion(
+      buildChatCompletionRequestBody(request, model, fallbackParameter),
+      apiKey,
+    );
+    if (!fallbackResponse.ok) {
+      throw buildPlanningRequestFailure(fallbackResponse.status, await fallbackResponse.text());
+    }
+
+    return await fallbackResponse.json() as ChatCompletionResponse;
+  }
+
+  private async fetchChatCompletion(
+    body: UnknownRecord,
+    apiKey: string,
+  ): Promise<Response> {
+    return await this.fetchImpl(
+      `${(this.baseUrl ?? process.env['OPENAI_BASE_URL'] ?? DEFAULT_OPENAI_BASE_URL).replace(/\/$/, '')}/chat/completions`,
+      {
+        body: JSON.stringify(body),
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        method: 'POST',
+      },
+    );
   }
 }
 
@@ -352,6 +369,29 @@ function buildSystemPrompt(): string {
     'If the prompt requests a non-orbit motion, set unsupportedReason and leave shotSpec null.',
     'Do not invent captures that are not present in the input.',
   ].join(' ');
+}
+
+function buildChatCompletionRequestBody(
+  request: PathGenerationRequest,
+  model: string,
+  tokenBudgetParameter: TokenBudgetParameter,
+): UnknownRecord {
+  return {
+    [tokenBudgetParameter]: PLANNER_COMPLETION_TOKEN_LIMIT,
+    messages: [
+      {
+        content: buildSystemPrompt(),
+        role: 'system',
+      },
+      {
+        content: buildUserContent(request),
+        role: 'user',
+      },
+    ],
+    model,
+    response_format: { type: 'json_object' },
+    temperature: 0.2,
+  };
 }
 
 function buildUserContent(request: PathGenerationRequest): Array<Record<string, unknown>> {
@@ -705,6 +745,34 @@ function stripJsonFences(value: string): string {
     .replace(/^```\s*/i, '')
     .replace(/\s*```$/i, '')
     .trim();
+}
+
+function buildPlanningRequestFailure(statusCode: number, failureText: string): PathGenerationError {
+  return new PathGenerationError(
+    502,
+    `Vision planning request failed (${statusCode}): ${failureText.slice(0, 200)}`.trim(),
+  );
+}
+
+function resolveTokenBudgetFallback(
+  statusCode: number,
+  failureText: string,
+  attemptedParameter: TokenBudgetParameter,
+): TokenBudgetParameter | null {
+  if (statusCode !== 400 || !/unsupported parameter/i.test(failureText)) {
+    return null;
+  }
+
+  const suggestedParameter = failureText.match(/use ['"]?(max_completion_tokens|max_tokens)['"]? instead/i)?.[1];
+  if (suggestedParameter === 'max_completion_tokens' || suggestedParameter === 'max_tokens') {
+    return suggestedParameter;
+  }
+
+  if (new RegExp(`['"]?${attemptedParameter}['"]?`, 'i').test(failureText)) {
+    return attemptedParameter === 'max_completion_tokens' ? 'max_tokens' : 'max_completion_tokens';
+  }
+
+  return null;
 }
 
 function validateCaptureRequests(

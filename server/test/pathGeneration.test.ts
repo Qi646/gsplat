@@ -1,9 +1,43 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   OpenAIVisionPathPlanner,
   parseModelPathPlan,
   parsePathGenerationRequest,
 } from '../src/pathGeneration.js';
+
+function createPathGenerationRequest() {
+  return {
+    captures: [
+      {
+        camera: {
+          aspect: 16 / 9,
+          fov: 60,
+          position: { x: 4, y: 1, z: 0 },
+          quaternion: { x: 0, y: 0, z: 0, w: 1 },
+        },
+        height: 360,
+        id: 'capture-current',
+        imageDataUrl: 'data:image/jpeg;base64,AA==',
+        role: 'current',
+        width: 640,
+      },
+    ],
+    currentCamera: {
+      aspect: 16 / 9,
+      fov: 60,
+      position: { x: 4, y: 1, z: 0 },
+      quaternion: { x: 0, y: 0, z: 0, w: 1 },
+    },
+    pathTail: null,
+    plannerHistory: [],
+    prompt: 'Orbit the truck and keep the camera on it.',
+    remainingStepBudget: 2,
+    sceneBounds: {
+      max: { x: 2, y: 2, z: 2 },
+      min: { x: -2, y: -2, z: -2 },
+    },
+  };
+}
 
 describe('pathGeneration request parsing', () => {
   it('accepts valid multi-capture generation requests', () => {
@@ -152,5 +186,67 @@ describe('OpenAIVisionPathPlanner status', () => {
         process.env['OPENAI_API_KEY'] = originalApiKey;
       }
     }
+  });
+});
+
+describe('OpenAIVisionPathPlanner request compatibility', () => {
+  it('uses max_completion_tokens by default and falls back to max_tokens when required', async () => {
+    const requestBodies: Array<Record<string, unknown>> = [];
+    const fetchImpl = vi.fn(async (_input: unknown, init?: RequestInit) => {
+      requestBodies.push(JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>);
+      if (requestBodies.length === 1) {
+        return new Response(JSON.stringify({
+          error: {
+            message: "Unsupported parameter: 'max_completion_tokens' is not supported with this model. Use 'max_tokens' instead.",
+            param: 'max_completion_tokens',
+            type: 'invalid_request_error',
+          },
+        }), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 400,
+        });
+      }
+
+      return new Response(JSON.stringify({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                message: 'Need one more nearby view.',
+                requestedCaptures: [
+                  {
+                    captureId: 'capture-follow-up-1',
+                    lateralOffsetScale: 0.1,
+                    reason: 'Shift right for parallax.',
+                    referenceCaptureId: 'capture-current',
+                  },
+                ],
+                status: 'needs-captures',
+              }),
+            },
+          },
+        ],
+      }), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 200,
+      });
+    }) as unknown as typeof fetch;
+    const planner = new OpenAIVisionPathPlanner({
+      apiKey: 'test-key',
+      fetchImpl,
+      model: 'gpt-4.1-mini',
+    });
+
+    const response = await planner.generatePathPlan(createPathGenerationRequest());
+
+    expect(response).toMatchObject({
+      message: 'Need one more nearby view.',
+      status: 'needs-captures',
+    });
+    expect(requestBodies).toHaveLength(2);
+    expect(requestBodies[0]?.['max_completion_tokens']).toBe(700);
+    expect(requestBodies[0]?.['max_tokens']).toBeUndefined();
+    expect(requestBodies[1]?.['max_tokens']).toBe(700);
+    expect(requestBodies[1]?.['max_completion_tokens']).toBeUndefined();
   });
 });
