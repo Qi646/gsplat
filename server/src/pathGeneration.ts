@@ -250,6 +250,18 @@ export class OpenAIVisionPathPlanner implements PathGenerationPlanner {
     }
 
     if (parsedPlan.subjectLocalizations.length < 2) {
+      // Safety net: if the budget allows, request lateral captures rather than failing.
+      if (parsedRequest.remainingStepBudget > 1 && parsedRequest.captures.length < 2) {
+        const refId = parsedRequest.captures[0].captureId;
+        return {
+          message: 'Only one view was analysed; requesting lateral captures for triangulation.',
+          requestedCaptures: [
+            { captureId: 'capture-follow-up-1', referenceCaptureId: refId, reason: 'lateral parallax', lateralOffsetScale: 0.4 },
+            { captureId: 'capture-follow-up-2', referenceCaptureId: refId, reason: 'opposite lateral parallax', lateralOffsetScale: -0.4 },
+          ],
+          status: 'needs-captures',
+        };
+      }
       throw new PathGenerationError(
         400,
         'The planner could not localize the requested subject in enough captured views.',
@@ -381,9 +393,10 @@ function buildSystemPrompt(): string {
     'orientationMode must be "look-forward" when the user says the camera should face forward or along the path.',
     'Set fullOrbit to true only when the user explicitly requests a full circle, all the way around, or 360.',
     'direction may be omitted when the user does not specify clockwise or counterclockwise.',
-    'verticalBias may be omitted unless the user clearly asks for a high or low angle.',
+    'verticalBias must be exactly "low", "mid", or "high" when included; omit it unless the user clearly asks for a specific vertical angle.',
     'subjectLocalizations should contain one entry per image where the requested subject is visible, with captureId, pixelX, pixelY, confidence.',
     'Use status "needs-captures" when the subject is occluded, ambiguous, not visible in enough views, or lacks enough parallax for reliable triangulation.',
+    'You must never return status "complete" when fewer than 2 captures are provided or when fewer than 2 of them show the subject. If you have only one capture, always return "needs-captures" and request 1–2 additional lateral views.',
     `requestedCaptures may contain at most ${MAX_CAPTURE_REQUESTS_PER_STEP} entries.`,
     'Each requested capture must include captureId, referenceCaptureId, and reason.',
     'referenceCaptureId must refer to an existing capture from the input.',
@@ -816,11 +829,16 @@ function parseVector3(value: unknown, context: string): PathGenerationVector3 {
 }
 
 function parseVerticalBias(value: unknown, context: string): AgenticVerticalBias {
-  if (value !== 'low' && value !== 'mid' && value !== 'high') {
-    throw new PathGenerationError(502, `${context} must be "low", "mid", or "high".`);
+  if (value === 'low' || value === 'mid' || value === 'high') return value;
+  // Coerce common model synonyms rather than hard-failing
+  if (typeof value === 'string') {
+    const v = value.toLowerCase();
+    if (v === 'medium' || v === 'center' || v === 'middle' || v === 'normal' || v === 'neutral') return 'mid';
+    if (v === 'top' || v === 'upper' || v === 'elevated' || v === 'above') return 'high';
+    if (v === 'bottom' || v === 'lower' || v === 'ground' || v === 'below') return 'low';
   }
-
-  return value;
+  // Unknown value: default to mid (neutral) instead of hard-failing
+  return 'mid';
 }
 
 function readBoolean(record: UnknownRecord, key: string, context: string): boolean {
