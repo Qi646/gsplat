@@ -71,6 +71,10 @@ curl -I http://localhost:5173/
 curl -I http://localhost:3001/
 ```
 
+## License
+
+This repository is licensed under the GNU General Public License v3.0 only. See [LICENSE](./LICENSE).
+
 Renderer comparison checks:
 
 ```bash

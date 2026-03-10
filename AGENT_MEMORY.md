@@ -1,6 +1,7 @@
 # AGENT_MEMORY
 
 ## Current Context
+- 2026-03-10: Repo licensing is now explicitly GNU GPL v3 only via the root `LICENSE` file, matching `license: GPL-3.0-only` metadata in the root/client/server `package.json` files and a README license note.
 - 2026-03-10: Navigation mode now uses explicit top-bar buttons for inspection and walk (`Inspect [1]` and `Walk [2]`) with no separate mode indicator pill. The active state is represented by button highlight, and shortcut `1`/`2`/click behavior maps directly to those states.
 - The root app now supports agentic camera-path insertion: the Camera Path panel captures the current view plus four scout views, sends them to a server-side vision planner, triangulates a subject anchor locally, and appends deterministic orbit keyframes back into the normal keyframe path flow.
 - 2026-03-10: Agentic scout capture generation now uses a small deterministic four-pose spherical pattern around the scene-bounds center by applying paired yaw/pitch offsets around the live camera's current up/right basis; the scout phase is no longer a single-axis orbit ring before triangulation, and the change was revalidated with passing root `npm test` / `npm run build`.
