@@ -3,6 +3,7 @@ import type { WalkControlState } from './WalkControls';
 export type NavigationShortcutAction =
   | 'enter-walk'
   | 'exit-walk'
+  | 'add-keyframe'
   | 'roll-left'
   | 'roll-right';
 
@@ -76,6 +77,14 @@ export function resolveNavigationShortcutAction(
     }
 
     return event.code === 'KeyZ' ? 'roll-left' : 'roll-right';
+  }
+
+  if (event.code === 'KeyK') {
+    if (!context.sceneLoaded || context.interactionLocked || context.walkState === 'armed') {
+      return null;
+    }
+
+    return 'add-keyframe';
   }
 
   if (event.code !== 'Digit2' && event.code !== 'Numpad2') {

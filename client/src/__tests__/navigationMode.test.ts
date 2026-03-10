@@ -122,6 +122,21 @@ describe('resolveNavigationShortcutAction', () => {
     ).toBe('roll-right');
   });
 
+  it('maps K to add keyframe when scene interaction is available', () => {
+    expect(
+      resolveNavigationShortcutAction(
+        {
+          code: 'KeyK',
+        },
+        {
+          interactionLocked: false,
+          sceneLoaded: true,
+          walkState: 'inactive',
+        },
+      ),
+    ).toBe('add-keyframe');
+  });
+
   it('blocks Z/C roll shortcuts while the scene is unavailable, interaction is locked, or walk mode is arming', () => {
     expect(
       resolveNavigationShortcutAction(
@@ -151,6 +166,45 @@ describe('resolveNavigationShortcutAction', () => {
       resolveNavigationShortcutAction(
         {
           code: 'KeyC',
+        },
+        {
+          interactionLocked: false,
+          sceneLoaded: true,
+          walkState: 'armed',
+        },
+      ),
+    ).toBeNull();
+  });
+
+  it('blocks K while unavailable, locked, or while walk mode is arming', () => {
+    expect(
+      resolveNavigationShortcutAction(
+        {
+          code: 'KeyK',
+        },
+        {
+          interactionLocked: false,
+          sceneLoaded: false,
+          walkState: 'inactive',
+        },
+      ),
+    ).toBeNull();
+    expect(
+      resolveNavigationShortcutAction(
+        {
+          code: 'KeyK',
+        },
+        {
+          interactionLocked: true,
+          sceneLoaded: true,
+          walkState: 'inactive',
+        },
+      ),
+    ).toBeNull();
+    expect(
+      resolveNavigationShortcutAction(
+        {
+          code: 'KeyK',
         },
         {
           interactionLocked: false,

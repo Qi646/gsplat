@@ -242,6 +242,21 @@ async function main(): Promise<void> {
     return true;
   };
 
+  const addAndRenderKeyframe = (): boolean => {
+    const keyframe = keyframeManager.addKeyframe();
+    if (!keyframe) {
+      return false;
+    }
+
+    selectedKeyframeId = keyframe.id;
+    renderKeyframeList();
+    updatePathControlsState();
+    syncPathVisualsState();
+    setStatusNote(`Captured keyframe ${keyframeManager.getKeyframes().length} at ${formatSeconds(keyframe.time)}.`);
+
+    return true;
+  };
+
   const walkControls = new WalkControls({
     camera,
     canvas: interactionSurface,
@@ -509,7 +524,7 @@ async function main(): Promise<void> {
       updatePathControlsState();
       syncPathVisualsState();
       updateTimelineUI(0, 0);
-      setStatusNote('Scene loaded. Use Z/C to roll the camera, capture keyframes, scrub the path, or preview a camera move.');
+      setStatusNote('Scene loaded. Use Z/C to roll the camera, press K to capture keyframes, scrub the path, or preview a camera move.');
     } catch (error) {
       sceneLoadInProgress = false;
       const message = error instanceof Error ? error.message : 'Unknown load error';
@@ -588,6 +603,13 @@ async function main(): Promise<void> {
       walkState,
     });
 
+    if (action === 'add-keyframe') {
+      if (addAndRenderKeyframe()) {
+        event.preventDefault();
+      }
+      return;
+    }
+
     if (action === 'enter-walk') {
       if (enterWalkMode()) {
         event.preventDefault();
@@ -638,16 +660,7 @@ async function main(): Promise<void> {
   });
 
   addKeyframeButton.addEventListener('click', () => {
-    const keyframe = keyframeManager.addKeyframe();
-    if (!keyframe) {
-      return;
-    }
-
-    selectedKeyframeId = keyframe.id;
-    renderKeyframeList();
-    updatePathControlsState();
-    syncPathVisualsState();
-    setStatusNote(`Captured keyframe ${keyframeManager.getKeyframes().length} at ${formatSeconds(keyframe.time)}.`);
+    addAndRenderKeyframe();
   });
 
   clearKeyframesButton.addEventListener('click', () => {

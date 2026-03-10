@@ -12,6 +12,7 @@
 - The root client ports/adapts the viewer baseline from the reference app and now includes a lightweight root-only path system plus a fixed-default export manager; advanced timeline editing and configurable export settings are still not implemented at the repo root.
 - Root validation is working: `npm test`, `npm run build`, `npm run dev`, `curl http://localhost:3001/api/health`, and `curl -I http://localhost:5173/` all passed on 2026-03-09.
 - The root preset catalog now uses same-origin cached preset routes across mixed file types; the current preset set is `Luigi` (`.ply`), `Garden` (`.ksplat`), `Stump` (`.ksplat`), and `Truck` (`.ksplat`).
+- The app now supports a keyboard shortcut for keyframe capture: pressing `K` triggers the same keyframe capture path as the **+ Add Keyframe** button, with the action currently wired through `resolveNavigationShortcutAction` and guarded by scene/interaction state.
 - `client/src/viewer/SceneViewer.ts` now replaces any existing splat scene before loading a new preset or URL so the root app behaves as a single-scene viewer.
 - The upstream loader reports download progress as numeric stages `0/1/2` for download/processing/done; it does not export that enum at runtime.
 - The root client now formats scene-load progress from the raw loader label instead of rounding to whole percentages, so sub-1% download progress is visible and no longer appears stuck at `0%`.
