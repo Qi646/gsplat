@@ -137,6 +137,21 @@ describe('resolveNavigationShortcutAction', () => {
     ).toBe('add-keyframe');
   });
 
+  it('maps K to add keyframe while walk mode is active', () => {
+    expect(
+      resolveNavigationShortcutAction(
+        {
+          code: 'KeyK',
+        },
+        {
+          interactionLocked: false,
+          sceneLoaded: true,
+          walkState: 'active',
+        },
+      ),
+    ).toBe('add-keyframe');
+  });
+
   it('blocks Z/C roll shortcuts while the scene is unavailable, interaction is locked, or walk mode is arming', () => {
     expect(
       resolveNavigationShortcutAction(
