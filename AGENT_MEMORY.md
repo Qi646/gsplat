@@ -3,6 +3,7 @@
 ## Current Context
 - 2026-03-10: Navigation mode now uses explicit top-bar buttons for inspection and walk (`Inspect [1]` and `Walk [2]`) with no separate mode indicator pill. The active state is represented by button highlight, and shortcut `1`/`2`/click behavior maps directly to those states.
 - The root app now supports agentic camera-path insertion: the Camera Path panel captures the current view plus four scout views, sends them to a server-side vision planner, triangulates a subject anchor locally, and appends deterministic orbit keyframes back into the normal keyframe path flow.
+- 2026-03-10: Agentic orbit generation now derives scout-camera placement and generated orbit keyframes from the live camera's current up/roll basis instead of assuming world Y-up, which preserves the initial framing on rotated scenes like `Truck` and avoids upside-down output.
 - The app now explicitly supports running without `OPENAI_API_KEY`: the server exposes `/api/path/status`, the client disables prompt-driven controls when the planner is unavailable, and the rest of the viewer/path/export workflow remains usable.
 - Repo root `/home/qi/proj/gsplat_1` now has an initial import commit for the `gsplat-viewer` project.
 - The imported project lives under `gsplat-viewer/`.
@@ -156,3 +157,4 @@
 - 2026-03-10: Added prompt-driven agentic orbit generation with current-plus-scout image capture, a server-side OpenAI-compatible vision planner route, client-side subject triangulation + deterministic keyframe insertion, matching client/server unit coverage, and repo-facing docs/progress updates.
 - 2026-03-10: Tightened agentic path generation UX so the flow now reports staged capture/planning progress, shows a visible viewer blocker while scout captures are driving the camera, restores controls on a hard client timeout, and uses a dedicated full-width Generate Path button that fits its label.
 - 2026-03-10: Agentic path generation now also exposes a user-facing Cancel action in the blocking overlay; cancellation aborts the in-flight generation lifecycle, restores the live camera pose, and is covered by client unit tests plus root validation.
+- 2026-03-10: Fixed agentic orbit generation for arbitrarily oriented scenes by deriving scout poses and orbit keyframes from the live camera basis instead of world-Y assumptions, added non-Y-up regression coverage, updated repo-facing docs/progress, and revalidated with passing root `npm test` / `npm run build`.

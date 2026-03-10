@@ -15,9 +15,11 @@ function createCamera(
   position: THREE.Vector3,
   target: THREE.Vector3,
   aspect = 16 / 9,
+  up = new THREE.Vector3(0, 1, 0),
 ): THREE.PerspectiveCamera {
   const camera = new THREE.PerspectiveCamera(60, aspect, 0.1, 1000);
   camera.position.copy(position);
+  camera.up.copy(up).normalize();
   camera.lookAt(target);
   camera.updateProjectionMatrix();
   camera.updateMatrixWorld(true);
@@ -195,6 +197,26 @@ describe('buildScoutCameraPoses', () => {
     expect(poses).toHaveLength(4);
     expect(poses[0]?.position.distanceTo(bounds.getCenter(new THREE.Vector3()))).toBeGreaterThan(2);
   });
+
+  it('preserves the live camera orbit axis for non-Y-up views', () => {
+    const bounds = new THREE.Box3(
+      new THREE.Vector3(-4, -4, -6),
+      new THREE.Vector3(4, 4, 6),
+    );
+    const center = bounds.getCenter(new THREE.Vector3());
+    const sceneUp = new THREE.Vector3(0, 0, 1);
+    const camera = createCamera(new THREE.Vector3(6, 0, 3), center, 16 / 9, sceneUp);
+    const baseCameraUp = new THREE.Vector3(0, 1, 0).applyQuaternion(camera.quaternion).normalize();
+    const baseHeight = camera.position.clone().sub(center).dot(baseCameraUp);
+
+    const poses = buildScoutCameraPoses(bounds, camera);
+    const firstPose = poses[0]!;
+    const firstOffset = firstPose.position.clone().sub(center);
+    const firstUp = new THREE.Vector3(0, 1, 0).applyQuaternion(firstPose.quaternion).normalize();
+
+    expect(firstOffset.dot(baseCameraUp)).toBeCloseTo(baseHeight, 5);
+    expect(firstUp.dot(baseCameraUp)).toBeGreaterThan(0.999);
+  });
 });
 
 describe('buildOrbitKeyframes', () => {
@@ -264,6 +286,54 @@ describe('buildOrbitKeyframes', () => {
     const forward = getForwardVector(keyframes[0]!.quaternion).setY(0).normalize();
 
     expect(forward.dot(tangent)).toBeGreaterThan(0.98);
+  });
+
+  it('starts the orbit from the live pose for non-Y-up scenes', () => {
+    const anchor = new THREE.Vector3(0, 0, 0);
+    const bounds = new THREE.Box3(
+      new THREE.Vector3(-4, -4, -6),
+      new THREE.Vector3(4, 4, 6),
+    );
+    const sceneUp = new THREE.Vector3(0, 0, 1);
+    const baseCamera = createCamera(new THREE.Vector3(5, 0, 3), anchor, 16 / 9, sceneUp);
+    const baseCameraUp = new THREE.Vector3(0, 1, 0).applyQuaternion(baseCamera.quaternion).normalize();
+
+    const keyframes = buildOrbitKeyframes({
+      anchor,
+      basePose: {
+        fov: baseCamera.fov,
+        position: baseCamera.position.clone(),
+        quaternion: baseCamera.quaternion.clone(),
+      },
+      bounds,
+      shotSpec: createShotSpec(),
+      startTime: 0,
+    });
+
+    const firstPosition = new THREE.Vector3(
+      keyframes[0]!.position.x,
+      keyframes[0]!.position.y,
+      keyframes[0]!.position.z,
+    );
+    const firstUp = getForwardVector({
+      w: keyframes[0]!.quaternion.w,
+      x: keyframes[0]!.quaternion.x,
+      y: keyframes[0]!.quaternion.y,
+      z: keyframes[0]!.quaternion.z,
+    });
+    const upVector = new THREE.Vector3(0, 1, 0).applyQuaternion(
+      new THREE.Quaternion(
+        keyframes[0]!.quaternion.x,
+        keyframes[0]!.quaternion.y,
+        keyframes[0]!.quaternion.z,
+        keyframes[0]!.quaternion.w,
+      ),
+    ).normalize();
+    const toAnchor = anchor.clone().sub(firstPosition).normalize();
+
+    expect(firstPosition.distanceTo(baseCamera.position)).toBeLessThan(1e-5);
+    expect(firstUp.dot(toAnchor)).toBeGreaterThan(0.999);
+    expect(upVector.dot(baseCameraUp)).toBeGreaterThan(0.999);
   });
 });
 

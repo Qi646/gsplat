@@ -74,6 +74,13 @@ interface BuildOrbitKeyframesOptions {
   startTime: number;
 }
 
+interface OrbitFrame {
+  axis: THREE.Vector3;
+  height: number;
+  radialDirection: THREE.Vector3;
+  radius: number;
+}
+
 interface RayObservation {
   confidence: number;
   direction: THREE.Vector3;
@@ -107,7 +114,9 @@ const DEFAULT_ORBIT_SWEEP_DEGREES = 300;
 const DEFAULT_PARTIAL_ORBIT_KEYFRAME_COUNT = 8;
 const DEFAULT_FULL_ORBIT_KEYFRAME_COUNT = 9;
 const DEFAULT_GENERATION_TIMEOUT_MS = 45_000;
+const DEFAULT_LOOK_UP = new THREE.Vector3(0, 1, 0);
 const MAX_CAPTURE_LONG_SIDE = 640;
+const MIN_VECTOR_LENGTH_SQUARED = 1e-8;
 const TOTAL_CAPTURE_COUNT = 5;
 
 export class AgenticPathGenerationError extends Error {
@@ -335,27 +344,20 @@ export function buildScoutCameraPoses(
   const sceneSize = bounds.getSize(new THREE.Vector3());
   const sceneDiagonal = Math.max(sceneSize.length(), 1);
   const framedView = computeFramedSceneView(bounds, camera);
+  const orbitFrame = deriveOrbitFrame(center, camera.position, camera.quaternion);
   const framedDistance = framedView ? framedView.position.distanceTo(center) : sceneDiagonal;
   const currentDistance = camera.position.distanceTo(center);
-  const radius = Math.max(framedDistance, currentDistance, sceneDiagonal * 0.75, 1);
-  const maxHeightOffset = Math.max(sceneSize.y, sceneDiagonal * 0.35, 0.75);
-  const preservedHeight = THREE.MathUtils.clamp(
-    camera.position.y - center.y,
-    -maxHeightOffset,
-    maxHeightOffset,
-  );
+  const desiredDistance = Math.max(framedDistance, currentDistance, sceneDiagonal * 0.75, 1);
+  const radiusFromDistance = Math.sqrt(Math.max(desiredDistance * desiredDistance - orbitFrame.height * orbitFrame.height, 0));
+  const radius = Math.max(radiusFromDistance, orbitFrame.radius, sceneDiagonal * 0.35, 1);
 
   return [0, Math.PI / 2, Math.PI, (3 * Math.PI) / 2].map(angle => {
-    const position = new THREE.Vector3(
-      center.x + Math.cos(angle) * radius,
-      center.y + preservedHeight,
-      center.z + Math.sin(angle) * radius,
-    );
+    const position = createOrbitPosition(center, orbitFrame, radius, orbitFrame.height, angle);
 
     return {
       fov: camera.fov,
       position,
-      quaternion: buildLookQuaternion(position, center),
+      quaternion: buildLookQuaternion(position, center, orbitFrame.axis),
     };
   });
 }
@@ -403,15 +405,13 @@ export function buildOrbitKeyframes(options: BuildOrbitKeyframesOptions): Keyfra
   const { anchor, basePose, bounds, shotSpec, startTime } = options;
   const sceneSize = bounds.getSize(new THREE.Vector3());
   const sceneDiagonal = Math.max(sceneSize.length(), 1);
-  const relativeOffset = new THREE.Vector3().copy(basePose.position).sub(anchor);
-  const startAngle = Math.atan2(relativeOffset.z, relativeOffset.x);
-  const unclampedRadius = Math.hypot(relativeOffset.x, relativeOffset.z);
+  const orbitFrame = deriveOrbitFrame(anchor, basePose.position, basePose.quaternion);
+  const unclampedRadius = orbitFrame.radius;
   const minRadius = Math.max(sceneDiagonal * 0.2, 0.75);
   const maxRadius = Math.max(sceneDiagonal * 1.5, minRadius + 0.5);
   const radius = THREE.MathUtils.clamp(unclampedRadius || sceneDiagonal * 0.5, minRadius, maxRadius);
-  const sceneHeight = Math.max(sceneSize.y, sceneDiagonal * 0.25, 1);
-  const preservedHeight = basePose.position.y - anchor.y;
-  const heightOffset = resolveHeightOffset(shotSpec.verticalBias, preservedHeight, sceneHeight);
+  const sceneHeight = Math.max(computeBoundsExtentAlongAxis(bounds, orbitFrame.axis), sceneDiagonal * 0.25, 1);
+  const heightOffset = resolveHeightOffset(shotSpec.verticalBias, orbitFrame.height, sceneHeight);
   const durationSeconds = THREE.MathUtils.clamp(
     shotSpec.durationSeconds ?? DEFAULT_ORBIT_DURATION_SECONDS,
     2,
@@ -421,34 +421,31 @@ export function buildOrbitKeyframes(options: BuildOrbitKeyframesOptions): Keyfra
     shotSpec.fullOrbit ? 360 : DEFAULT_ORBIT_SWEEP_DEGREES,
   );
   const keyframeCount = shotSpec.fullOrbit ? DEFAULT_FULL_ORBIT_KEYFRAME_COUNT : DEFAULT_PARTIAL_ORBIT_KEYFRAME_COUNT;
-  const direction = resolveOrbitDirection(shotSpec, basePose, startAngle);
+  const direction = resolveOrbitDirection(shotSpec, basePose, orbitFrame);
   const directionSign = direction === 'counterclockwise' ? 1 : -1;
 
   return Array.from({ length: keyframeCount }, (_, index) => {
     const ratio = index / (keyframeCount - 1);
-    const angle = startAngle + directionSign * sweepRadians * ratio;
-    const position = new THREE.Vector3(
-      anchor.x + Math.cos(angle) * radius,
-      anchor.y + heightOffset,
-      anchor.z + Math.sin(angle) * radius,
-    );
-    const tangent = new THREE.Vector3(
-      -Math.sin(angle) * directionSign,
-      0,
-      Math.cos(angle) * directionSign,
-    ).normalize();
-    const nextRatio = Math.min(1, (index + 1) / (keyframeCount - 1));
-    const nextAngle = startAngle + directionSign * sweepRadians * nextRatio;
+    const angle = directionSign * sweepRadians * ratio;
+    const position = createOrbitPosition(anchor, orbitFrame, radius, heightOffset, angle);
+    const nextRatio = index === keyframeCount - 1 ? ratio : (index + 1) / (keyframeCount - 1);
+    const nextAngle = directionSign * sweepRadians * nextRatio;
     const lookTarget = index === keyframeCount - 1
-      ? position.clone().add(tangent)
-      : new THREE.Vector3(
-          anchor.x + Math.cos(nextAngle) * radius,
-          anchor.y + heightOffset,
-          anchor.z + Math.sin(nextAngle) * radius,
-        );
+      ? position.clone().add(
+          position.clone().sub(
+            createOrbitPosition(
+              anchor,
+              orbitFrame,
+              radius,
+              heightOffset,
+              directionSign * sweepRadians * Math.max(0, (index - 1) / (keyframeCount - 1)),
+            ),
+          ),
+        )
+      : createOrbitPosition(anchor, orbitFrame, radius, heightOffset, nextAngle);
     const quaternion = shotSpec.orientationMode === 'look-forward'
-      ? buildLookQuaternion(position, lookTarget)
-      : buildLookQuaternion(position, anchor);
+      ? buildLookQuaternion(position, lookTarget, orbitFrame.axis)
+      : buildLookQuaternion(position, anchor, orbitFrame.axis);
 
     return {
       fov: basePose.fov,
@@ -488,8 +485,25 @@ function buildRayObservation(
   };
 }
 
-function buildLookQuaternion(position: THREE.Vector3, target: THREE.Vector3): THREE.Quaternion {
-  const matrix = new THREE.Matrix4().lookAt(position, target, new THREE.Vector3(0, 1, 0));
+function buildLookQuaternion(
+  position: THREE.Vector3,
+  target: THREE.Vector3,
+  preferredUp = DEFAULT_LOOK_UP,
+): THREE.Quaternion {
+  const forward = target.clone().sub(position);
+  if (forward.lengthSq() <= MIN_VECTOR_LENGTH_SQUARED) {
+    return new THREE.Quaternion();
+  }
+
+  forward.normalize();
+  const up = projectOntoPlane(preferredUp, forward);
+  if (up.lengthSq() <= MIN_VECTOR_LENGTH_SQUARED) {
+    up.copy(getArbitraryPerpendicular(forward));
+  } else {
+    up.normalize();
+  }
+
+  const matrix = new THREE.Matrix4().lookAt(position, target, up);
   return new THREE.Quaternion().setFromRotationMatrix(matrix);
 }
 
@@ -533,6 +547,74 @@ function distancePointToRay(
 
 function getForwardVector(quaternion: THREE.Quaternion): THREE.Vector3 {
   return new THREE.Vector3(0, 0, -1).applyQuaternion(quaternion).normalize();
+}
+
+function getUpVector(quaternion: THREE.Quaternion): THREE.Vector3 {
+  return DEFAULT_LOOK_UP.clone().applyQuaternion(quaternion).normalize();
+}
+
+function deriveOrbitFrame(
+  center: THREE.Vector3,
+  position: THREE.Vector3,
+  quaternion: THREE.Quaternion,
+): OrbitFrame {
+  const relativeOffset = position.clone().sub(center);
+  const axis = getUpVector(quaternion);
+  if (axis.lengthSq() <= MIN_VECTOR_LENGTH_SQUARED) {
+    axis.copy(DEFAULT_LOOK_UP);
+  } else {
+    axis.normalize();
+  }
+
+  let radialOffset = projectOntoPlane(relativeOffset, axis);
+  if (radialOffset.lengthSq() <= MIN_VECTOR_LENGTH_SQUARED) {
+    radialOffset = projectOntoPlane(
+      getForwardVector(quaternion).multiplyScalar(-Math.max(relativeOffset.length(), 1)),
+      axis,
+    );
+  }
+  if (radialOffset.lengthSq() <= MIN_VECTOR_LENGTH_SQUARED) {
+    radialOffset = getArbitraryPerpendicular(axis).multiplyScalar(Math.max(relativeOffset.length(), 1));
+  }
+
+  return {
+    axis,
+    height: relativeOffset.dot(axis),
+    radialDirection: radialOffset.clone().normalize(),
+    radius: radialOffset.length(),
+  };
+}
+
+function createOrbitPosition(
+  center: THREE.Vector3,
+  orbitFrame: OrbitFrame,
+  radius: number,
+  height: number,
+  angle: number,
+): THREE.Vector3 {
+  const radialOffset = orbitFrame.radialDirection.clone().multiplyScalar(radius).applyAxisAngle(orbitFrame.axis, angle);
+  return center.clone().add(radialOffset).addScaledVector(orbitFrame.axis, height);
+}
+
+function computeBoundsExtentAlongAxis(bounds: THREE.Box3, axis: THREE.Vector3): number {
+  const halfSize = bounds.getSize(new THREE.Vector3()).multiplyScalar(0.5);
+  return 2 * (
+    Math.abs(axis.x) * halfSize.x
+    + Math.abs(axis.y) * halfSize.y
+    + Math.abs(axis.z) * halfSize.z
+  );
+}
+
+function getArbitraryPerpendicular(vector: THREE.Vector3): THREE.Vector3 {
+  const reference = Math.abs(vector.y) < 0.9
+    ? DEFAULT_LOOK_UP
+    : new THREE.Vector3(1, 0, 0);
+  const perpendicular = new THREE.Vector3().crossVectors(vector, reference);
+  if (perpendicular.lengthSq() <= MIN_VECTOR_LENGTH_SQUARED) {
+    perpendicular.crossVectors(vector, new THREE.Vector3(0, 0, 1));
+  }
+
+  return perpendicular.normalize();
 }
 
 function invert3x3(matrix: number[]): number[] | null {
@@ -802,7 +884,7 @@ function resolveHeightOffset(
 function resolveOrbitDirection(
   shotSpec: AgenticShotSpec,
   basePose: InterpolatedPose,
-  startAngle: number,
+  orbitFrame: OrbitFrame,
 ): AgenticOrbitDirection {
   if (shotSpec.direction) {
     return shotSpec.direction;
@@ -812,17 +894,25 @@ function resolveOrbitDirection(
     return 'clockwise';
   }
 
-  const forward = getForwardVector(basePose.quaternion);
-  const forwardXZ = new THREE.Vector3(forward.x, 0, forward.z).normalize();
-  if (forwardXZ.lengthSq() === 0) {
+  const forward = projectOntoPlane(getForwardVector(basePose.quaternion), orbitFrame.axis);
+  if (forward.lengthSq() <= MIN_VECTOR_LENGTH_SQUARED) {
     return 'clockwise';
   }
+  forward.normalize();
 
-  const clockwiseTangent = new THREE.Vector3(Math.sin(startAngle), 0, -Math.cos(startAngle)).normalize();
-  const counterclockwiseTangent = new THREE.Vector3(-Math.sin(startAngle), 0, Math.cos(startAngle)).normalize();
-  return counterclockwiseTangent.dot(forwardXZ) > clockwiseTangent.dot(forwardXZ)
+  const clockwiseTangent = orbitFrame.radialDirection.clone().applyAxisAngle(orbitFrame.axis, -0.05)
+    .sub(orbitFrame.radialDirection)
+    .normalize();
+  const counterclockwiseTangent = orbitFrame.radialDirection.clone().applyAxisAngle(orbitFrame.axis, 0.05)
+    .sub(orbitFrame.radialDirection)
+    .normalize();
+  return counterclockwiseTangent.dot(forward) > clockwiseTangent.dot(forward)
     ? 'counterclockwise'
     : 'clockwise';
+}
+
+function projectOntoPlane(vector: THREE.Vector3, normal: THREE.Vector3): THREE.Vector3 {
+  return vector.clone().sub(normal.clone().multiplyScalar(vector.dot(normal)));
 }
 
 function serializeBounds(bounds: THREE.Box3): SerializedBounds {
