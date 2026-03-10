@@ -1,7 +1,7 @@
 # AGENT_MEMORY
 
 ## Current Context
-- 2026-03-10: Navigation mode indicator labels now include key hints for both modes (`Inspect [1]` and `Walk [2]`), and the default mode pill now renders `Inspect [1]` in initial HTML so the UI no longer shows a missing Inspect shortcut hint.
+- 2026-03-10: Navigation mode now uses explicit top-bar buttons for inspection and walk (`Inspect [1]` and `Walk [2]`) with no separate mode indicator pill. The active state is represented by button highlight, and shortcut `1`/`2`/click behavior maps directly to those states.
 - The root app now supports agentic camera-path insertion: the Camera Path panel captures the current view plus four scout views, sends them to a server-side vision planner, triangulates a subject anchor locally, and appends deterministic orbit keyframes back into the normal keyframe path flow.
 - The app now explicitly supports running without `OPENAI_API_KEY`: the server exposes `/api/path/status`, the client disables prompt-driven controls when the planner is unavailable, and the rest of the viewer/path/export workflow remains usable.
 - Repo root `/home/qi/proj/gsplat_1` now has an initial import commit for the `gsplat-viewer` project.
@@ -108,6 +108,7 @@
 - When leaving active walk mode, align the camera target and derived up vector from the live camera pose before re-enabling the shared camera controls so the view does not drift or snap upright before keyframe capture.
 - Keep camera-path JSON output on schema version `1`; if older v2 files are imported, ignore deprecated `sceneRotation` instead of reviving scene-level rotation state.
 - Keep the root camera-path UI lightweight: explicit move-up/move-down reordering, no drag-and-drop timeline editor yet.
+- Prefer direct top-bar mode highlighting over a standalone mode indicator for navigation state; inspect mode is now represented by `Inspect [1]`, and walk mode by `Walk [2]`.
 - Prefer a shared projected SVG overlay for camera-path visuals so both renderer adapters show the same path/frustum guidance without depending on renderer-specific helper-scene ordering.
 - The root export UI now exposes three built-in deterministic profiles (`720p`, `1080p`, and `720p + 1080p Batch`), an integer FPS field, a file-base field, and a `Save Export Plan` action. The existing path-load control accepts both legacy path JSON and the newer export-plan JSON.
 - Keep adaptive FPS opt-in and live-only: use it to cap live rendered gaussians in both renderer adapters, but always suspend it and export full quality MP4 frames.

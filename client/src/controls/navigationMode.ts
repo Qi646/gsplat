@@ -10,8 +10,6 @@ export type NavigationShortcutAction =
 export interface NavigationModePresentation {
   engaged: boolean;
   hudMessage: string;
-  indicatorLabel: string;
-  indicatorState: 'inspect' | 'armed' | 'active';
 }
 
 export interface NavigationShortcutEventLike {
@@ -37,8 +35,6 @@ export function getNavigationModePresentation(
     return {
       engaged: true,
       hudMessage: 'WALK MODE · Capturing cursor...',
-      indicatorLabel: 'Walk [2] (locking)',
-      indicatorState: 'armed',
     };
   }
 
@@ -46,16 +42,12 @@ export function getNavigationModePresentation(
     return {
       engaged: true,
       hudMessage: 'WALK MODE · 1 Inspect · WASD fly · Mouse look · Q/E vertical · Z/C roll · Shift sprint · ESC exit',
-      indicatorLabel: 'Walk [2]',
-      indicatorState: 'active',
     };
   }
 
   return {
     engaged: false,
     hudMessage: '',
-    indicatorLabel: 'Inspect [1]',
-    indicatorState: 'inspect',
   };
 }
 

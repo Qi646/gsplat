@@ -5,22 +5,19 @@ import {
 } from '../controls/navigationMode';
 
 describe('getNavigationModePresentation', () => {
-  it('maps inspect, locking, and active walk states to user-facing labels', () => {
+  it('maps inspect and walk states to walk-mode HUD behavior', () => {
     expect(getNavigationModePresentation('inactive')).toMatchObject({
       engaged: false,
       hudMessage: '',
-      indicatorLabel: 'Inspect [1]',
-      indicatorState: 'inspect',
     });
     expect(getNavigationModePresentation('armed')).toMatchObject({
       engaged: true,
-      indicatorLabel: 'Walk [2] (locking)',
-      indicatorState: 'armed',
+      hudMessage: 'WALK MODE · Capturing cursor...',
     });
     expect(getNavigationModePresentation('active')).toMatchObject({
       engaged: true,
-      indicatorLabel: 'Walk [2]',
-      indicatorState: 'active',
+      hudMessage:
+        'WALK MODE · 1 Inspect · WASD fly · Mouse look · Q/E vertical · Z/C roll · Shift sprint · ESC exit',
     });
   });
 });

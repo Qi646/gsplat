@@ -34,6 +34,12 @@ import type { ViewerAdapter } from './viewer/ViewerAdapter';
 const CAMERA_ROLL_STEP_RADIANS = Math.PI / 36;
 const SUPPORTED_LOCAL_SCENE_FILE_PATTERN = /\.(ply|splat|ksplat)$/i;
 
+interface AgenticPathStatus {
+  available: boolean;
+  model: string | null;
+  reason: string | null;
+}
+
 function $(selector: string): HTMLElement {
   const element = document.querySelector<HTMLElement>(selector);
   if (!element) {
@@ -44,11 +50,11 @@ function $(selector: string): HTMLElement {
 
 function setNavigationModeUI(state: WalkControlState): void {
   const presentation = getNavigationModePresentation(state);
-  $('#btn-walk-mode').classList.toggle('active', presentation.engaged);
+  const isWalkMode = presentation.engaged;
+  ($('#btn-inspect-mode') as HTMLButtonElement).classList.toggle('active', !isWalkMode);
+  ($('#btn-walk-mode') as HTMLButtonElement).classList.toggle('active', isWalkMode);
   $('#walkmode-hud').classList.toggle('visible', presentation.engaged);
   $('#walkmode-hud').textContent = presentation.hudMessage;
-  $('#navigation-mode-indicator').setAttribute('data-mode-state', presentation.indicatorState);
-  $('#navigation-mode-value').textContent = presentation.indicatorLabel;
 }
 
 function setSceneButtonsEnabled(sceneLoaded: boolean, previewActive: boolean, walkState: WalkControlState): void {
@@ -57,6 +63,7 @@ function setSceneButtonsEnabled(sceneLoaded: boolean, previewActive: boolean, wa
   ($('#btn-frame-scene') as HTMLButtonElement).disabled = !sceneLoaded || previewActive || walkModeEngaged;
   ($('#btn-reset-view') as HTMLButtonElement).disabled = !sceneLoaded || previewActive || walkModeEngaged;
   ($('#btn-walk-mode') as HTMLButtonElement).disabled = !sceneLoaded || previewActive;
+  ($('#btn-inspect-mode') as HTMLButtonElement).disabled = false;
 }
 
 function formatSeconds(seconds: number): string {
@@ -80,6 +87,23 @@ function formatFileSize(sizeBytes: number): string {
   const megabytes = sizeBytes / (1024 * 1024);
   const decimals = megabytes >= 10 ? 0 : 1;
   return `${megabytes.toFixed(decimals)} MB`;
+}
+
+function parseAgenticPathStatus(input: unknown): AgenticPathStatus {
+  if (typeof input !== 'object' || input === null) {
+    return {
+      available: false,
+      model: null,
+      reason: 'Agentic path generation is unavailable because the server capability check returned invalid data.',
+    };
+  }
+
+  const record = input as Record<string, unknown>;
+  return {
+    available: record['available'] === true,
+    model: typeof record['model'] === 'string' ? record['model'] : null,
+    reason: typeof record['reason'] === 'string' ? record['reason'] : null,
+  };
 }
 
 async function main(): Promise<void> {
@@ -106,8 +130,10 @@ async function main(): Promise<void> {
   const exportProfileSelect = $('#export-profile-select') as HTMLSelectElement;
   const exportFpsInput = $('#export-fps-input') as HTMLInputElement;
   const exportFileBaseInput = $('#export-file-base-input') as HTMLInputElement;
+  const agenticPathNote = $('#agentic-path-note');
   const pathPromptInput = $('#path-prompt-input') as HTMLTextAreaElement;
   const generatePathButton = $('#btn-generate-path') as HTMLButtonElement;
+  const agenticPromptButtons = Array.from(document.querySelectorAll<HTMLButtonElement>('[data-agentic-prompt]'));
   const pathFileInput = $('#path-file-input') as HTMLInputElement;
   const timelineScrubber = $('#timeline-scrubber') as HTMLInputElement;
   const pathVisualsButton = $('#btn-toggle-path-visuals') as HTMLButtonElement;
@@ -193,6 +219,11 @@ async function main(): Promise<void> {
   let suppressWalkExitStatus = false;
   let exportPlanSettings: ExportPlanSettings = { ...DEFAULT_EXPORT_PLAN_SETTINGS };
   let currentExportProgress: ExportProgress | null = null;
+  let agenticPathStatus: AgenticPathStatus = {
+    available: false,
+    model: null,
+    reason: 'Checking whether agentic path generation is available on the server…',
+  };
   const isSceneLoaded = () => !sceneLoadInProgress && viewer.isSceneLoaded();
   const isInteractionLocked = () =>
     keyframeManager.isPreviewActive() || exportManager.isExporting() || agenticPathGenerator.isGenerating();
@@ -424,6 +455,24 @@ async function main(): Promise<void> {
     keyframeList.classList.toggle('disabled', active);
   };
 
+  const updateAgenticPathNote = () => {
+    if (!agenticPathStatus.available) {
+      agenticPathNote.textContent =
+        agenticPathStatus.reason ?? 'Agentic path generation is currently unavailable.';
+      return;
+    }
+
+    if (!isSceneLoaded()) {
+      agenticPathNote.textContent =
+        'Load a scene to enable prompt-driven orbit generation. It uses the current view plus four scout captures.';
+      return;
+    }
+
+    const modelLabel = agenticPathStatus.model ? ` Using ${agenticPathStatus.model}.` : '';
+    agenticPathNote.textContent =
+      `Prompt a cinematic orbit and append generated keyframes based on the current view plus four scout captures.${modelLabel}`;
+  };
+
   const updateTimelineUI = (timeSeconds: number, durationSeconds: number) => {
     scrubberTimeLeft.textContent = formatSeconds(timeSeconds);
     scrubberTimeRight.textContent = formatSeconds(durationSeconds);
@@ -473,11 +522,18 @@ async function main(): Promise<void> {
     exportProfileSelect.disabled = exportActive || generationActive;
     exportFpsInput.disabled = exportActive || generationActive;
     exportFileBaseInput.disabled = exportActive || generationActive;
-    pathPromptInput.disabled = !sceneLoaded || exportActive || generationActive;
+    pathPromptInput.disabled = !sceneLoaded || exportActive || generationActive || !agenticPathStatus.available;
     generatePathButton.disabled =
-      !sceneLoaded || exportActive || generationActive || pathPromptInput.value.trim().length === 0;
+      !sceneLoaded
+      || exportActive
+      || generationActive
+      || !agenticPathStatus.available
+      || pathPromptInput.value.trim().length === 0;
     generatePathButton.classList.toggle('active', generationActive);
     generatePathButton.textContent = generationActive ? 'Analyzing…' : '✨ Generate Path';
+    agenticPromptButtons.forEach(button => {
+      button.disabled = !sceneLoaded || exportActive || generationActive || !agenticPathStatus.available;
+    });
     setSceneButtonsEnabled(sceneLoaded, interactionLocked, walkState);
     setSceneSourceEnabled(!exportActive && !generationActive);
     setExportInteractionLock(exportActive || generationActive);
@@ -485,6 +541,33 @@ async function main(): Promise<void> {
     updateExportButton(currentExportProgress);
     updatePerformanceControlsState();
     updatePathVisualsButton();
+    updateAgenticPathNote();
+  };
+
+  const loadAgenticPathStatus = async () => {
+    try {
+      const response = await fetch('/api/path/status');
+      if (!response.ok) {
+        throw new Error(`Unexpected status ${response.status}`);
+      }
+
+      agenticPathStatus = parseAgenticPathStatus(await response.json() as unknown);
+      if (!agenticPathStatus.available && !agenticPathStatus.reason) {
+        agenticPathStatus = {
+          available: false,
+          model: agenticPathStatus.model,
+          reason: 'Agentic path generation is unavailable on this server.',
+        };
+      }
+    } catch {
+      agenticPathStatus = {
+        available: false,
+        model: null,
+        reason: 'Agentic path generation is unavailable because the server capability check failed.',
+      };
+    }
+
+    updatePathControlsState();
   };
 
   const renderKeyframeList = () => {
@@ -777,7 +860,7 @@ async function main(): Promise<void> {
     updatePathControlsState();
   });
 
-  document.querySelectorAll<HTMLButtonElement>('[data-agentic-prompt]').forEach(button => {
+  agenticPromptButtons.forEach(button => {
     button.addEventListener('click', () => {
       pathPromptInput.value = button.dataset['agenticPrompt'] ?? '';
       pathPromptInput.focus();
@@ -846,6 +929,12 @@ async function main(): Promise<void> {
     }
 
     enterWalkMode();
+  });
+
+  ($('#btn-inspect-mode') as HTMLButtonElement).addEventListener('click', () => {
+    if (walkState !== 'inactive') {
+      stopWalkMode({ statusMessage: 'Inspect mode active. Camera controls restored.' });
+    }
   });
 
   addKeyframeButton.addEventListener('click', () => {
@@ -1105,6 +1194,7 @@ async function main(): Promise<void> {
     syncPathVisualsState();
   });
 
+  await loadAgenticPathStatus();
   renderKeyframeList();
   applyExportPlanSettings(DEFAULT_EXPORT_PLAN_SETTINGS);
   setStatusNote('Ready to load a scene URL, preset, or local file.');
