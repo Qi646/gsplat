@@ -4,16 +4,32 @@ import type { Keyframe } from '../types';
 import {
   buildKeyframeFrustumWorldPoints,
   getOverlayFrustumDepth,
+  type OverlayFrustumProjection,
   projectKeyframeVisuals,
   projectPathToViewport,
   projectWorldPointToViewport,
   sampleCameraPathPositions,
 } from '../path/cameraPathVisuals';
 
-function createCamera(): THREE.PerspectiveCamera {
-  const camera = new THREE.PerspectiveCamera(60, 2, 0.1, 1000);
-  camera.position.set(0, 0, 0);
-  camera.lookAt(new THREE.Vector3(0, 0, -1));
+function createCamera(options: {
+  aspect?: number;
+  far?: number;
+  fov?: number;
+  near?: number;
+  position?: THREE.Vector3;
+  target?: THREE.Vector3;
+} = {}): THREE.PerspectiveCamera {
+  const {
+    aspect = 2,
+    far = 1000,
+    fov = 60,
+    near = 0.1,
+    position = new THREE.Vector3(0, 0, 0),
+    target = new THREE.Vector3(0, 0, -1),
+  } = options;
+  const camera = new THREE.PerspectiveCamera(fov, aspect, near, far);
+  camera.position.copy(position);
+  camera.lookAt(target);
   camera.updateMatrixWorld(true);
   camera.updateProjectionMatrix();
   return camera;
@@ -27,6 +43,41 @@ function createKeyframe(overrides: Partial<Keyframe> = {}): Keyframe {
     quaternion: { x: 0, y: 0, z: 0, w: 1 },
     time: 0,
     ...overrides,
+  };
+}
+
+function getProjectedFrustumRadius(frustum: OverlayFrustumProjection): number {
+  return Math.max(
+    ...frustum.corners.map(corner => Math.hypot(corner.x - frustum.origin.x, corner.y - frustum.origin.y)),
+  );
+}
+
+function projectManualFrustum(
+  keyframe: Keyframe,
+  camera: THREE.PerspectiveCamera,
+  viewport: { height: number; width: number },
+  depth: number,
+): OverlayFrustumProjection | null {
+  const worldFrustum = buildKeyframeFrustumWorldPoints(
+    keyframe,
+    viewport.width / Math.max(viewport.height, 1),
+    depth,
+  );
+  const origin = projectWorldPointToViewport(worldFrustum.origin, camera, viewport, 1_000_000);
+  const corners = worldFrustum.corners.map(corner => projectWorldPointToViewport(corner, camera, viewport, 1_000_000));
+
+  if (!origin || corners.some(corner => !corner)) {
+    return null;
+  }
+
+  return {
+    origin,
+    corners: corners as [
+      { x: number; y: number },
+      { x: number; y: number },
+      { x: number; y: number },
+      { x: number; y: number },
+    ],
   };
 }
 
@@ -167,5 +218,56 @@ describe('projectKeyframeVisuals', () => {
       selected: true,
     });
     expect(projections[1]?.frustum).not.toBeNull();
+  });
+
+  it('caps frustum size when the viewer zooms in close to a keyframe', () => {
+    const viewport = { height: 400, width: 800 };
+    const keyframe = createKeyframe();
+    const camera = createCamera({
+      position: new THREE.Vector3(0, 0, -2.4),
+      target: new THREE.Vector3(0, 0, -3),
+    });
+
+    const [projection] = projectKeyframeVisuals([keyframe], camera, viewport, null, null);
+    const boundedFrustum = projection?.frustum;
+    const unboundedFrustum = projectManualFrustum(
+      keyframe,
+      camera,
+      viewport,
+      getOverlayFrustumDepth(null, [keyframe]),
+    );
+
+    expect(boundedFrustum).not.toBeNull();
+    expect(unboundedFrustum).not.toBeNull();
+    expect(getProjectedFrustumRadius(boundedFrustum!)).toBeLessThan(25);
+    expect(getProjectedFrustumRadius(boundedFrustum!)).toBeLessThan(getProjectedFrustumRadius(unboundedFrustum!) * 0.2);
+  });
+
+  it('shrinks nearby frusta so clustered keyframes do not dominate the screen', () => {
+    const camera = createCamera();
+    const viewport = { height: 400, width: 800 };
+    const projections = projectKeyframeVisuals([
+      createKeyframe({
+        id: 'kf-1',
+        position: { x: -0.05, y: 0, z: -3 },
+      }),
+      createKeyframe({
+        id: 'kf-2',
+        position: { x: 0.05, y: 0, z: -3 },
+        time: 1,
+      }),
+    ], camera, viewport, null, null);
+
+    const first = projections[0];
+    const second = projections[1];
+    const markerSpacing = Math.hypot(
+      (first?.screenPoint.x ?? 0) - (second?.screenPoint.x ?? 0),
+      (first?.screenPoint.y ?? 0) - (second?.screenPoint.y ?? 0),
+    );
+
+    expect(first?.frustum).not.toBeNull();
+    expect(second?.frustum).not.toBeNull();
+    expect(getProjectedFrustumRadius(first!.frustum!)).toBeLessThanOrEqual(markerSpacing * 0.36);
+    expect(getProjectedFrustumRadius(second!.frustum!)).toBeLessThanOrEqual(markerSpacing * 0.36);
   });
 });

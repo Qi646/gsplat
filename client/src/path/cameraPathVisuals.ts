@@ -32,6 +32,14 @@ export interface OverlayKeyframeProjection {
 
 const DEFAULT_PATH_SAMPLES_PER_SEGMENT = 24;
 const DEFAULT_VIEWPORT_PADDING_PX = 48;
+const DEFAULT_MAX_FRUSTUM_SCREEN_RADIUS_PX = 24;
+const FRUSTUM_NEIGHBOR_SCREEN_RADIUS_FACTOR = 0.35;
+
+interface VisibleOverlayKeyframe {
+  index: number;
+  keyframe: Keyframe;
+  screenPoint: OverlayScreenPoint;
+}
 
 function keyframeToVector3(keyframe: Keyframe): THREE.Vector3 {
   return new THREE.Vector3(keyframe.position.x, keyframe.position.y, keyframe.position.z);
@@ -56,6 +64,10 @@ function isFiniteViewport(viewport: OverlayViewport): boolean {
 
 function isFiniteBox(box: THREE.Box3): boolean {
   return [box.min.x, box.min.y, box.min.z, box.max.x, box.max.y, box.max.z].every(Number.isFinite);
+}
+
+function getScreenDistance(left: OverlayScreenPoint, right: OverlayScreenPoint): number {
+  return Math.hypot(left.x - right.x, left.y - right.y);
 }
 
 function buildPathBounds(keyframes: Keyframe[]): THREE.Box3 | null {
@@ -208,6 +220,114 @@ export function projectPathToViewport(
   return segments;
 }
 
+function getCameraDepthForPoint(point: THREE.Vector3, camera: THREE.PerspectiveCamera): number | null {
+  camera.updateMatrixWorld(true);
+
+  const cameraSpacePoint = point.clone().applyMatrix4(camera.matrixWorldInverse);
+  const cameraDepth = -cameraSpacePoint.z;
+  if (!Number.isFinite(cameraDepth) || cameraDepth <= camera.near) {
+    return null;
+  }
+
+  return cameraDepth;
+}
+
+function getFrustumScreenRadius(frustum: OverlayFrustumProjection): number {
+  return Math.max(
+    ...frustum.corners.map(corner => getScreenDistance(frustum.origin, corner)),
+  );
+}
+
+function clampFrustumToScreenRadius(
+  frustum: OverlayFrustumProjection,
+  maxRadiusPx: number,
+): OverlayFrustumProjection {
+  if (!(maxRadiusPx > 0)) {
+    return frustum;
+  }
+
+  const currentRadius = getFrustumScreenRadius(frustum);
+  if (!Number.isFinite(currentRadius) || currentRadius <= maxRadiusPx || currentRadius <= 0) {
+    return frustum;
+  }
+
+  const scale = maxRadiusPx / currentRadius;
+  const corners = frustum.corners.map(corner => ({
+    x: frustum.origin.x + (corner.x - frustum.origin.x) * scale,
+    y: frustum.origin.y + (corner.y - frustum.origin.y) * scale,
+  })) as [
+    OverlayScreenPoint,
+    OverlayScreenPoint,
+    OverlayScreenPoint,
+    OverlayScreenPoint,
+  ];
+
+  return {
+    origin: frustum.origin,
+    corners,
+  };
+}
+
+function getMaxFrustumScreenRadiusPx(
+  visibleKeyframe: VisibleOverlayKeyframe,
+  visibleKeyframes: VisibleOverlayKeyframe[],
+): number {
+  let nearestMarkerDistance = Number.POSITIVE_INFINITY;
+
+  visibleKeyframes.forEach(candidate => {
+    if (candidate.index === visibleKeyframe.index) {
+      return;
+    }
+
+    nearestMarkerDistance = Math.min(
+      nearestMarkerDistance,
+      getScreenDistance(visibleKeyframe.screenPoint, candidate.screenPoint),
+    );
+  });
+
+  if (!Number.isFinite(nearestMarkerDistance)) {
+    return DEFAULT_MAX_FRUSTUM_SCREEN_RADIUS_PX;
+  }
+
+  return Math.max(
+    0,
+    Math.min(
+      DEFAULT_MAX_FRUSTUM_SCREEN_RADIUS_PX,
+      nearestMarkerDistance * FRUSTUM_NEIGHBOR_SCREEN_RADIUS_FACTOR,
+    ),
+  );
+}
+
+function getFrustumDepthForScreenRadius(
+  keyframe: Keyframe,
+  camera: THREE.PerspectiveCamera,
+  viewport: OverlayViewport,
+  maxScreenRadiusPx: number,
+): number | null {
+  if (!isFiniteViewport(viewport) || !(maxScreenRadiusPx > 0)) {
+    return null;
+  }
+
+  const cameraDepth = getCameraDepthForPoint(keyframeToVector3(keyframe), camera);
+  if (cameraDepth === null) {
+    return null;
+  }
+
+  const viewHalfHeight = Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) * cameraDepth;
+  const maxWorldHalfHeight = (Math.min(maxScreenRadiusPx, viewport.height / 2) / (viewport.height / 2)) * viewHalfHeight;
+  const keyframeHalfHeightFactor = Math.tan(THREE.MathUtils.degToRad(keyframe.fov) / 2);
+  if (!Number.isFinite(keyframeHalfHeightFactor) || keyframeHalfHeightFactor <= 0) {
+    return null;
+  }
+
+  const frustumDepth = maxWorldHalfHeight / keyframeHalfHeightFactor;
+  if (!Number.isFinite(frustumDepth) || frustumDepth <= 0) {
+    return null;
+  }
+
+  return frustumDepth;
+}
+
 export function buildKeyframeFrustumWorldPoints(
   keyframe: Keyframe,
   aspect: number,
@@ -252,9 +372,8 @@ export function projectKeyframeVisuals(
   paddingPx = DEFAULT_VIEWPORT_PADDING_PX,
 ): OverlayKeyframeProjection[] {
   const aspect = viewport.width / Math.max(viewport.height, 1);
-  const frustumDepth = getOverlayFrustumDepth(sceneBounds, keyframes);
-
-  return keyframes.flatMap((keyframe, index) => {
+  const baseFrustumDepth = getOverlayFrustumDepth(sceneBounds, keyframes);
+  const visibleKeyframes = keyframes.flatMap<VisibleOverlayKeyframe>((keyframe, index) => {
     const screenPoint = projectWorldPointToViewport(
       keyframeToVector3(keyframe),
       camera,
@@ -266,6 +385,27 @@ export function projectKeyframeVisuals(
       return [];
     }
 
+    return [{
+      index,
+      keyframe,
+      screenPoint,
+    }];
+  });
+
+  return visibleKeyframes.map(({ index, keyframe, screenPoint }) => {
+    const maxScreenRadiusPx = getMaxFrustumScreenRadiusPx(
+      { index, keyframe, screenPoint },
+      visibleKeyframes,
+    );
+    const cappedFrustumDepth = getFrustumDepthForScreenRadius(
+      keyframe,
+      camera,
+      viewport,
+      maxScreenRadiusPx,
+    );
+    const frustumDepth = cappedFrustumDepth === null
+      ? baseFrustumDepth
+      : Math.min(baseFrustumDepth, cappedFrustumDepth);
     const frustumWorld = buildKeyframeFrustumWorldPoints(keyframe, aspect, frustumDepth);
     const projectedOrigin = projectWorldPointToViewport(frustumWorld.origin, camera, viewport, paddingPx);
     const projectedCorners = frustumWorld.corners.map(corner => (
@@ -273,7 +413,7 @@ export function projectKeyframeVisuals(
     ));
 
     const frustum = projectedOrigin && projectedCorners.every(Boolean)
-      ? {
+      ? clampFrustumToScreenRadius({
           origin: projectedOrigin,
           corners: projectedCorners as [
             OverlayScreenPoint,
@@ -281,16 +421,16 @@ export function projectKeyframeVisuals(
             OverlayScreenPoint,
             OverlayScreenPoint,
           ],
-        }
+        }, maxScreenRadiusPx)
       : null;
 
-    return [{
+    return {
       frustum,
       id: keyframe.id,
       index,
       label: `KF ${String(index + 1).padStart(2, '0')}`,
       screenPoint,
       selected: keyframe.id === selectedKeyframeId,
-    }];
+    };
   });
 }
