@@ -21,6 +21,19 @@ function createPathGenerationRequest() {
         role: 'current',
         width: 640,
       },
+      {
+        camera: {
+          aspect: 16 / 9,
+          fov: 60,
+          position: { x: 0, y: 1, z: 4 },
+          quaternion: { x: 0, y: 0, z: 0, w: 1 },
+        },
+        height: 360,
+        id: 'capture-scout-1',
+        imageDataUrl: 'data:image/jpeg;base64,AA==',
+        role: 'scout',
+        width: 640,
+      },
     ],
     currentCamera: {
       aspect: 16 / 9,
@@ -29,9 +42,7 @@ function createPathGenerationRequest() {
       quaternion: { x: 0, y: 0, z: 0, w: 1 },
     },
     pathTail: null,
-    plannerHistory: [],
     prompt: 'Orbit the truck and keep the camera on it.',
-    remainingStepBudget: 2,
     sceneBounds: {
       max: { x: 2, y: 2, z: 2 },
       min: { x: -2, y: -2, z: -2 },
@@ -169,16 +180,15 @@ describe('OpenAIVisionPathPlanner request compatibility', () => {
           {
             message: {
               content: JSON.stringify({
-                message: 'Need one more nearby view.',
-                requestedCaptures: [
-                  {
-                    captureId: 'capture-follow-up-1',
-                    lateralOffsetScale: 0.1,
-                    reason: 'Shift right for parallax.',
-                    referenceCaptureId: 'capture-current',
-                  },
+                shotSpec: {
+                  fullOrbit: false,
+                  orientationMode: 'look-at-subject',
+                  pathType: 'orbit',
+                },
+                subjectLocalizations: [
+                  { captureId: 'capture-current', confidence: 0.96, pixelX: 320, pixelY: 240 },
+                  { captureId: 'capture-scout-1', confidence: 0.91, pixelX: 300, pixelY: 220 },
                 ],
-                status: 'needs-captures',
               }),
             },
           },
@@ -197,9 +207,13 @@ describe('OpenAIVisionPathPlanner request compatibility', () => {
     const response = await planner.generatePathPlan(createPathGenerationRequest());
 
     expect(response).toMatchObject({
-      message: 'Need one more nearby view.',
-      status: 'needs-captures',
+      shotSpec: {
+        fullOrbit: false,
+        orientationMode: 'look-at-subject',
+        pathType: 'orbit',
+      },
     });
+    expect(response.subjectLocalizations).toHaveLength(2);
     expect(requestBodies).toHaveLength(2);
     expect(requestBodies[0]?.['max_completion_tokens']).toBe(1600);
     expect(requestBodies[0]?.['max_tokens']).toBeUndefined();
@@ -216,16 +230,15 @@ describe('OpenAIVisionPathPlanner request compatibility', () => {
           {
             message: {
               content: JSON.stringify({
-                message: 'Need one more nearby view.',
-                requestedCaptures: [
-                  {
-                    captureId: 'capture-follow-up-1',
-                    lateralOffsetScale: 0.1,
-                    reason: 'Shift right for parallax.',
-                    referenceCaptureId: 'capture-current',
-                  },
+                shotSpec: {
+                  fullOrbit: false,
+                  orientationMode: 'look-at-subject',
+                  pathType: 'orbit',
+                },
+                subjectLocalizations: [
+                  { captureId: 'capture-current', confidence: 0.96, pixelX: 320, pixelY: 240 },
+                  { captureId: 'capture-scout-1', confidence: 0.91, pixelX: 300, pixelY: 220 },
                 ],
-                status: 'needs-captures',
               }),
             },
           },
@@ -244,9 +257,13 @@ describe('OpenAIVisionPathPlanner request compatibility', () => {
     const response = await planner.generatePathPlan(createPathGenerationRequest());
 
     expect(response).toMatchObject({
-      message: 'Need one more nearby view.',
-      status: 'needs-captures',
+      shotSpec: {
+        fullOrbit: false,
+        orientationMode: 'look-at-subject',
+        pathType: 'orbit',
+      },
     });
+    expect(response.subjectLocalizations).toHaveLength(2);
     expect(requestBodies).toHaveLength(1);
     expect(requestBodies[0]?.['max_completion_tokens']).toBe(1600);
     expect(requestBodies[0]?.['reasoning_effort']).toBe('minimal');
@@ -280,16 +297,15 @@ describe('OpenAIVisionPathPlanner request compatibility', () => {
                 {
                   text: {
                     value: JSON.stringify({
-                      message: 'Need one more nearby view.',
-                      requestedCaptures: [
-                        {
-                          captureId: 'capture-follow-up-1',
-                          lateralOffsetScale: 0.1,
-                          reason: 'Shift right for parallax.',
-                          referenceCaptureId: 'capture-current',
-                        },
+                      shotSpec: {
+                        fullOrbit: false,
+                        orientationMode: 'look-at-subject',
+                        pathType: 'orbit',
+                      },
+                      subjectLocalizations: [
+                        { captureId: 'capture-current', confidence: 0.96, pixelX: 320, pixelY: 240 },
+                        { captureId: 'capture-scout-1', confidence: 0.91, pixelX: 300, pixelY: 220 },
                       ],
-                      status: 'needs-captures',
                     }),
                   },
                   type: 'output_text',
@@ -312,9 +328,13 @@ describe('OpenAIVisionPathPlanner request compatibility', () => {
     const response = await planner.generatePathPlan(createPathGenerationRequest());
 
     expect(response).toMatchObject({
-      message: 'Need one more nearby view.',
-      status: 'needs-captures',
+      shotSpec: {
+        fullOrbit: false,
+        orientationMode: 'look-at-subject',
+        pathType: 'orbit',
+      },
     });
+    expect(response.subjectLocalizations).toHaveLength(2);
     expect(requestBodies).toHaveLength(2);
     expect(requestBodies[0]?.['reasoning_effort']).toBe('minimal');
     expect(requestBodies[1]?.['reasoning_effort']).toBeUndefined();
@@ -356,16 +376,15 @@ describe('OpenAIVisionPathPlanner request compatibility', () => {
           {
             message: {
               content: JSON.stringify({
-                message: 'Need one more nearby view.',
-                requestedCaptures: [
-                  {
-                    captureId: 'capture-follow-up-1',
-                    lateralOffsetScale: 0.1,
-                    reason: 'Shift right for parallax.',
-                    referenceCaptureId: 'capture-current',
-                  },
+                shotSpec: {
+                  fullOrbit: false,
+                  orientationMode: 'look-at-subject',
+                  pathType: 'orbit',
+                },
+                subjectLocalizations: [
+                  { captureId: 'capture-current', confidence: 0.96, pixelX: 320, pixelY: 240 },
+                  { captureId: 'capture-scout-1', confidence: 0.91, pixelX: 300, pixelY: 220 },
                 ],
-                status: 'needs-captures',
               }),
             },
           },
@@ -384,9 +403,13 @@ describe('OpenAIVisionPathPlanner request compatibility', () => {
     const response = await planner.generatePathPlan(createPathGenerationRequest());
 
     expect(response).toMatchObject({
-      message: 'Need one more nearby view.',
-      status: 'needs-captures',
+      shotSpec: {
+        fullOrbit: false,
+        orientationMode: 'look-at-subject',
+        pathType: 'orbit',
+      },
     });
+    expect(response.subjectLocalizations).toHaveLength(2);
     expect(requestBodies).toHaveLength(3);
     expect(requestBodies[0]?.['temperature']).toBe(0.2);
     expect(requestBodies[0]?.['response_format']).toEqual({ type: 'json_object' });
