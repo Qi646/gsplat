@@ -7,7 +7,7 @@ This file tracks current progress against [ASSIGNMENT.md](./ASSIGNMENT.md). Upda
 ## Summary
 
 - MVP requirements: 4/4 implemented in the root app.
-- Optional extras from `ASSIGNMENT.md`: 0/10 fully implemented, 4/10 partially implemented.
+- Optional extras from `ASSIGNMENT.md`: 1/10 fully implemented, 4/10 partially implemented.
 - Deliverables: repo + README are present; demo recording and one-page design note are still pending.
 - Latest validation on 2026-03-10: `npm test` and `npm run build` passed at the repo root.
 
@@ -27,7 +27,7 @@ This file tracks current progress against [ASSIGNMENT.md](./ASSIGNMENT.md). Upda
 | Cinematic presets | Not implemented | No one-click turntable, dolly-in, crane-up, or figure-8 path presets exist. |
 | Quality modes | Not implemented | No Fast / High render-quality mode switch exists in the product UI. |
 | Auto-exposure / tone mapping | Not implemented | No exposure, brightness, contrast, or tone-mapping controls exist. |
-| LOD / point budget slider | Not implemented | No point-budget or gaussians-rendered cap control exists. |
+| LOD / point budget slider | Implemented | The new `Performance` section adds an `Adaptive FPS` toggle plus target-FPS slider (`15-60`, step `5`). When enabled, live viewing automatically caps the rendered gaussian budget to stay near the selected FPS target, reports the live `rendered / total` count plus budget percentage, and works in both the default `mkkellogg` path and the SparkJS comparison path. MP4 export temporarily disables the cap and renders full quality before restoring the prior live budget. |
 | Timeline editor | Partial | The app has a scrubber, explicit move-up / move-down / delete controls, and a toggleable viewer overlay for path and keyframe frustum visuals, but not draggable keyframe times or a full timeline editor. |
 | Easing curves | Partial | Playback uses a fixed global smoothstep easing curve, but there is no per-segment or user-selectable easing mode. |
 | Path smoothing | Not implemented | Spline interpolation is built into playback, but there is no user-adjustable smoothing control or previewable smoothing strength. |
@@ -42,7 +42,7 @@ This file tracks current progress against [ASSIGNMENT.md](./ASSIGNMENT.md). Upda
 | Repo + README with one-command run | Implemented | The root workspace is documented in `README.md`, and `npm run dev` is the primary one-command local run path. |
 | 30-90s demo recording | Not implemented | No committed demo recording was found in the repo. |
 | <= 1 page design note | Not implemented | No committed design note was found in the repo. |
-| README extras list | Partial | The README describes implemented capabilities and current gaps, but there is no separate "implemented optional extras" section because none of the assignment's optional extras are fully complete. |
+| README extras list | Implemented | `README.md` now includes an `Implemented Optional Extras` section describing the live adaptive-FPS / gaussian-budget control and its export behavior. |
 
 ## Additional Non-MVP Work
 

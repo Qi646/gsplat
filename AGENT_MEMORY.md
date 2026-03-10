@@ -64,11 +64,15 @@
 - The SparkJS diagnostic path uses `@sparkjsdev/spark` + Three.js `OrbitControls`, emits the same scene load events as the default viewer, supports `.ply` / `.splat` / `.ksplat`, and applies Spark-friendly high-quality sort defaults (`sort32: true`, `sortRadial: false`, `stochastic: false`) for renderer A/B checks.
 - The root viewer adapter interface now also supports export capture via `renderNow()` and `captureFrame()`, so both the default `mkkellogg` path and the SparkJS comparison path can participate in the same MP4 export workflow.
 - `client/src/export/ExportManager.ts` now renders path poses directly from `PathInterpolator`, resizes the active viewer to fixed `1280x720 @ 30 FPS`, uploads PNG frames to the backend, restores the previous camera/viewport state afterward, and drives export progress entirely from client-known frame counts plus a final encoding phase.
+- The root client now includes an optional `Performance` panel with an `Adaptive FPS` toggle and target-FPS slider. `client/src/performance/AdaptiveRenderBudgetController.ts` drives a live-only gaussian render budget from the shared stats loop so the viewer can reduce rendered splats to stay near the selected FPS target.
+- Both renderer adapters now expose `setRenderBudget()` / `getRenderBudget()` / `getRenderedSplatCount()`. The `mkkellogg` path caps the current sorted visible set through the splat mesh draw/instance count, and the Spark path caps the current Spark geometry instance count after its explicit renderer update.
+- MP4 export now always forces full quality regardless of the live adaptive budget, then restores the prior live budget in `finally` after the export completes or fails.
 - The root server now exposes `/api/export/jobs`, `/api/export/jobs/:jobId/frame`, `/api/export/jobs/:jobId/finalize`, and `/api/export/jobs/:jobId` backed by `server/src/exportService.ts`, which spawns FFmpeg, streams PNG frames through stdin, returns `output.mp4`, and cleans temp job state on success, failure, or cancel.
 - A built-service smoke check on 2026-03-09 successfully encoded a tiny real MP4 through `server/dist/exportService.js` and the local `ffmpeg` binary after feeding it a generated 2x2 PNG frame fixture from `/tmp`.
 - As of 2026-03-09, `npm test` and `npm run build` both pass again at the repo root after the renderer-adapter + SparkJS comparison spike.
 - The current client build emits a Spark-related Vite warning about a packaged WASM data URL remaining unresolved until runtime; the build still completes successfully.
 - After the export milestone on 2026-03-09, root `npm test` and `npm run build` passed again, and the existing Spark WASM/runtime warning remained non-fatal during build.
+- After the adaptive-FPS / live render-budget milestone on 2026-03-10, root `npm test` and `npm run build` passed again, and the existing Spark WASM/runtime warning remained non-fatal during build.
 - After restoring compatibility mode as the startup default on 2026-03-09, root `npm test` and `npm run build` passed again; the existing Spark WASM/runtime warning remained non-fatal during build.
 - After switching walk mode to fly-through movement on 2026-03-09, root `npm test` and `npm run build` passed again; the existing Spark WASM/runtime warning remained non-fatal during build.
 - After adding direct walk-mode capture, visible mode state, and `1`/`2` navigation shortcuts on 2026-03-10, root `npm test` and `npm run build` passed again; the existing Spark WASM/runtime warning remained non-fatal during build.
@@ -99,13 +103,14 @@
 - Keep the root camera-path UI lightweight: explicit move-up/move-down reordering, no drag-and-drop timeline editor yet.
 - Prefer a shared projected SVG overlay for camera-path visuals so both renderer adapters show the same path/frustum guidance without depending on renderer-specific helper-scene ordering.
 - Keep the root MP4 export UI lightweight for the MVP: one `Export MP4` action, fixed `1280x720 @ 30 FPS` defaults, same-origin PNG-to-FFmpeg streaming, no user-editable settings, and no cancel button yet.
+- Keep adaptive FPS opt-in and live-only: use it to cap live rendered gaussians in both renderer adapters, but always suspend it and export full quality MP4 frames.
 - Disable path import until a scene is loaded, and clear the current path on successful scene changes.
 - Always document current expected behaviour in repo-facing docs when behavior changes or when user-visible limitations/quirks are clarified.
 - For browser-level viewer regressions, prefer the committed local smoke fixture plus the app debug snapshot over remote presets so failures separate browser startup, viewer init, scene load, and visible render phases.
 
 ## Active Plan
 - Next viewer-specific bug follow-up should investigate the Firefox `Error creating WebGL context.` startup failure now captured by the Playwright regression harness.
-- After the Firefox follow-up, finish deliverable polish: README/demo/design note cleanup and any selected extras.
+- Finish the remaining deliverable polish: demo recording plus the one-page design note.
 
 ## Archived Plans
 - 2026-03-08: Created the initial import commit with `AGENTS.md`, `AGENT_MEMORY.md`, the root `.gitignore`, and the `gsplat-viewer/` source tree.
@@ -137,3 +142,4 @@
 - 2026-03-09: Added a shared toggleable camera-path overlay using projected SVG path/frustum visuals across both renderer adapters, extended client coverage for overlay math plus bounds accessors, updated README/assignment progress docs, and revalidated with passing root `npm test` / `npm run build`.
 - 2026-03-10: Removed hardcoded preset framing/rotation and the manual orientation UI, added a shared deterministic projected-box framing helper across both renderer adapters, rolled camera-path output back to v1 while keeping tolerant v2 import, and revalidated with passing root `npm test` / `npm run build`.
 - 2026-03-10: Added a persistent navigation-mode indicator, direct `1` Inspect / `2` Walk shortcuts, immediate pointer-lock capture from the initiating button/key gesture, walk lock-failure handling, and matching client unit coverage; revalidated with passing root `npm test` / `npm run build`.
+- 2026-03-10: Added the optional adaptive-FPS / live render-budget extra with a new `Performance` panel, shared controller logic, matching `mkkellogg` + Spark render-budget caps, export full-quality override/restore, expanded client unit coverage, updated repo docs/progress, and revalidated with passing root `npm test` / `npm run build`.

@@ -7,10 +7,14 @@ The active product code lives at the repo root in `client/` and `server/`. The i
 ## Current Status
 
 - MVP requirements in `ASSIGNMENT.md`: 4/4 implemented in the root app.
-- Optional extras in `ASSIGNMENT.md`: 0/10 fully implemented, with partial progress on timeline editing, easing, deterministic export, and export cancellation.
+- Optional extras in `ASSIGNMENT.md`: 1/10 fully implemented, with partial progress on timeline editing, easing, deterministic export, and export cancellation.
 - Deliverables: the repo + README are present; the demo recording and one-page design note are still pending.
 
 Precise requirement-by-requirement status lives in [ASSIGNMENT_PROGRESS.md](./ASSIGNMENT_PROGRESS.md). Keep that file updated whenever implementation or deliverable status changes relative to `ASSIGNMENT.md`.
+
+## Implemented Optional Extras
+
+- Adaptive FPS / point-budget control: the `Performance` panel can cap live rendered gaussians automatically to stay near a selected target FPS. It is off by default, works in both renderer adapters, and MP4 export temporarily disables it so exported frames stay full quality.
 
 ## Repo Layout
 
@@ -112,6 +116,7 @@ Notes:
 - `client/src/path/PathInterpolator.ts`, `client/src/path/KeyframeManager.ts`, and `client/src/path/cameraPath.ts` own keyframe capture, interpolation, preview playback, and path JSON serialization. Saved paths now write camera-path JSON v1, while the importer still accepts older v2 files and ignores the deprecated `sceneRotation` field.
 - `client/src/path/cameraPathVisuals.ts` and `client/src/path/CameraPathOverlay.ts` project the recorded camera path into a shared SVG overlay so both renderer adapters show the same numbered keyframes, movement path, and zoom-aware frustum gizmos.
 - `client/src/export/ExportManager.ts` renders the active camera path into PNG frames at fixed `1280x720 @ 30 FPS`, uploads them to the backend export job, and restores the live viewer state after success or failure.
+- `client/src/performance/AdaptiveRenderBudgetController.ts` owns the optional live-only adaptive FPS controller. `client/src/main.ts` drives it from the shared stats loop, and both renderer adapters expose a shared `setRenderBudget()` seam so the current sorted/visible splat count can be capped consistently.
 - `server/src/presetArchive.ts` caches preset assets under `/tmp/gsplat-presets`, mixing archive-backed verified `.ksplat` entries with direct-download `.ply` presets behind the same preset routes exposed by `server/src/app.ts`.
 - `server/src/exportService.ts` owns FFmpeg export jobs and powers `/api/export/jobs`, `/api/export/jobs/:jobId/frame`, `/api/export/jobs/:jobId/finalize`, and `/api/export/jobs/:jobId`.
 
@@ -140,6 +145,8 @@ Notes:
 - Saved camera paths now write the original v1 schema. The importer accepts both legacy v1 JSON and older v2 files, but deprecated v2 `sceneRotation` metadata is ignored.
 - MP4 export requires a loaded scene plus at least two keyframes. While export is running, scene/path controls and viewer pointer interaction are locked until the job completes or fails.
 - The camera-path overlay is viewer-only guidance. It is hidden during export and is not burned into the captured MP4 frames.
+- The `Performance` section exposes an optional `Adaptive FPS` toggle plus target slider. When enabled, live viewing can reduce the rendered gaussian budget to stay near the target FPS, and the note reports the live `rendered / total` count plus the current budget percentage.
+- `Adaptive FPS` is a live-view optimization only. MP4 export pauses it, renders all frames at full quality, then restores the previous live budget afterward.
 - Export currently uses fixed defaults of `1280x720 @ 30 FPS`, streams PNG frames to the same-origin backend, and downloads `output.mp4` when FFmpeg finishes.
 - Export progress is client-driven from rendered/uploaded frame counts plus a final `Encoding MP4 with FFmpeg…` phase. There is not yet a user-visible cancel button.
 - The committed browser smoke fixture lives at `client/public/test-assets/smoke-grid.ply` and is used by the Firefox Playwright regression test.
@@ -158,4 +165,4 @@ The next milestone is Firefox/renderer follow-up plus deliverable polish:
 
 - investigate the Firefox `Init error: Error creating WebGL context.` startup failure now captured by the Playwright regression harness
 - capture/update the demo recording and one-page design note around the now-implemented export pipeline
-- decide whether any optional extras should be added after the core deliverable is fully documented
+- decide whether any additional optional extras should be added after the core deliverable is fully documented

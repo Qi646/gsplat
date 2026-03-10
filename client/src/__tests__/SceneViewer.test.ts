@@ -41,6 +41,9 @@ vi.mock('@mkkellogg/gaussian-splats-3d', async () => {
     renderCalls: 0,
     sceneCount: 0,
     splatCount: 0,
+    availableRenderCount: 0,
+    geometryInstanceCount: 0,
+    lastDrawRange: null as { count: number; start: number } | null,
     boundsMin: [-1, -1, -1] as [number, number, number],
     boundsMax: [1, 1, 1] as [number, number, number],
     sampleCenters: [] as Array<[number, number, number]>,
@@ -48,6 +51,18 @@ vi.mock('@mkkellogg/gaussian-splats-3d', async () => {
   };
 
   class MockSplatMesh {
+    geometry = {
+      get instanceCount(): number {
+        return state.geometryInstanceCount;
+      },
+      set instanceCount(value: number) {
+        state.geometryInstanceCount = value;
+      },
+      setDrawRange(start: number, count: number): void {
+        state.lastDrawRange = { count, start };
+      },
+    };
+
     getSplatCount(): number {
       return state.splatCount;
     }
@@ -81,6 +96,7 @@ vi.mock('@mkkellogg/gaussian-splats-3d', async () => {
   }
 
   class MockViewer {
+    splatRenderCount = state.availableRenderCount;
     renderer = {
       domElement: {
         requestPointerLock() {},
@@ -116,7 +132,9 @@ vi.mock('@mkkellogg/gaussian-splats-3d', async () => {
       state.sceneCount = 0;
     }
 
-    update(): void {}
+    update(): void {
+      this.splatRenderCount = state.availableRenderCount;
+    }
 
     render(): void {
       state.renderCalls += 1;
@@ -148,6 +166,9 @@ type MockModule = typeof GaussianSplats3D & {
     renderCalls: number;
     sceneCount: number;
     splatCount: number;
+    availableRenderCount: number;
+    geometryInstanceCount: number;
+    lastDrawRange: { count: number; start: number } | null;
     boundsMin: [number, number, number];
     boundsMax: [number, number, number];
     sampleCenters: Array<[number, number, number]>;
@@ -170,6 +191,9 @@ describe('SceneViewer', () => {
     mockModule.__mockState.renderCalls = 0;
     mockModule.__mockState.sceneCount = 0;
     mockModule.__mockState.splatCount = 1024;
+    mockModule.__mockState.availableRenderCount = 1024;
+    mockModule.__mockState.geometryInstanceCount = 1024;
+    mockModule.__mockState.lastDrawRange = null;
     mockModule.__mockState.boundsMin = [-2, -1, -3];
     mockModule.__mockState.boundsMax = [4, 5, 6];
     mockModule.__mockState.sampleCenters = [];
@@ -249,6 +273,32 @@ describe('SceneViewer', () => {
 
     expect(mockModule.__mockState.renderCalls).toBe(1);
     await expect(frame.text()).resolves.toBe('scene-frame');
+  });
+
+  it('applies and restores render budgets against the current visible splat count', async () => {
+    const events = new AppEvents();
+    const hostElement = {} as HTMLDivElement;
+    const viewer = new SceneViewer({ hostElement, events });
+
+    await viewer.init();
+    await viewer.loadScene('/api/presets/truck.ksplat');
+
+    mockModule.__mockState.availableRenderCount = 900;
+    viewer.setRenderBudget(400);
+    viewer.renderNow();
+
+    expect(viewer.getRenderedSplatCount()).toBe(400);
+    expect(mockModule.__mockState.geometryInstanceCount).toBe(400);
+    expect(mockModule.__mockState.lastDrawRange).toEqual({ count: 400, start: 0 });
+    expect(viewer.getDebugSnapshot().splatRenderCount).toBe(400);
+
+    viewer.setRenderBudget(null);
+    viewer.renderNow();
+
+    expect(viewer.getRenderedSplatCount()).toBe(900);
+    expect(mockModule.__mockState.geometryInstanceCount).toBe(900);
+    expect(mockModule.__mockState.lastDrawRange).toEqual({ count: 900, start: 0 });
+    expect(viewer.getDebugSnapshot().splatRenderCount).toBe(900);
   });
 
   it('resumes camera controls from an inverted walk pose without changing the camera', async () => {

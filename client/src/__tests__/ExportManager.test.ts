@@ -16,8 +16,11 @@ class FakeViewer implements ViewerAdapter {
     width: 640,
   } as HTMLCanvasElement;
   readonly appliedFovs: number[] = [];
+  readonly renderBudgetHistory: Array<number | null> = [];
+  readonly renderBudgetAtRender: Array<number | null> = [];
   readonly resizeCalls: Array<{ height: number; width: number }> = [];
   renderCount = 0;
+  renderBudget: number | null = null;
   sceneLoaded = true;
 
   constructor() {
@@ -88,7 +91,7 @@ class FakeViewer implements ViewerAdapter {
   }
 
   getRenderBudget(): number | null {
-    return null;
+    return this.renderBudget;
   }
 
   getInteractionSurface(): HTMLCanvasElement {
@@ -104,7 +107,7 @@ class FakeViewer implements ViewerAdapter {
   }
 
   getRenderedSplatCount(): number {
-    return 123;
+    return this.renderBudget === null ? 123 : Math.min(123, this.renderBudget);
   }
 
   init(): Promise<void> {
@@ -121,6 +124,7 @@ class FakeViewer implements ViewerAdapter {
 
   renderNow(): void {
     this.renderCount += 1;
+    this.renderBudgetAtRender.push(this.renderBudget);
   }
 
   resetView(): void {}
@@ -131,7 +135,10 @@ class FakeViewer implements ViewerAdapter {
 
   setFrameHook(): void {}
 
-  setRenderBudget(): void {}
+  setRenderBudget(maxRenderCount: number | null): void {
+    this.renderBudget = maxRenderCount;
+    this.renderBudgetHistory.push(maxRenderCount);
+  }
 
   setNavigationMode(): void {}
 
@@ -225,6 +232,7 @@ describe('ExportManager', () => {
 
   it('renders, uploads, finalizes, and restores the prior camera pose and size', async () => {
     const viewer = new FakeViewer();
+    viewer.setRenderBudget(77);
     const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
       const url = String(input);
       if (url === '/api/export/jobs') {
@@ -266,6 +274,10 @@ describe('ExportManager', () => {
       { height: 720, width: 1280 },
       { height: 360, width: 640 },
     ]);
+    expect(viewer.renderBudgetHistory.slice(-2)).toEqual([null, 77]);
+    expect(viewer.renderBudgetAtRender.slice(0, -1).every(budget => budget === null)).toBe(true);
+    expect(viewer.renderBudgetAtRender.at(-1)).toBe(77);
+    expect(viewer.getRenderBudget()).toBe(77);
     expect(viewer.camera.position.toArray()).toEqual([5, 6, 7]);
     expect(viewer.camera.fov).toBe(42);
     expect(manager.isExporting()).toBe(false);
@@ -273,6 +285,7 @@ describe('ExportManager', () => {
 
   it('cancels the server job and restores local state when frame upload fails', async () => {
     const viewer = new FakeViewer();
+    viewer.setRenderBudget(55);
     const fetchImpl = vi.fn<typeof fetch>(async (input) => {
       const url = String(input);
       if (url === '/api/export/jobs') {
@@ -308,6 +321,10 @@ describe('ExportManager', () => {
       { height: 720, width: 1280 },
       { height: 360, width: 640 },
     ]);
+    expect(viewer.renderBudgetHistory.slice(-2)).toEqual([null, 55]);
+    expect(viewer.renderBudgetAtRender.slice(0, -1).every(budget => budget === null)).toBe(true);
+    expect(viewer.renderBudgetAtRender.at(-1)).toBe(55);
+    expect(viewer.getRenderBudget()).toBe(55);
     expect(viewer.camera.position.toArray()).toEqual([5, 6, 7]);
     expect(manager.isExporting()).toBe(false);
   });

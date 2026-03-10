@@ -96,18 +96,29 @@ vi.mock('@sparkjsdev/spark', async () => {
   const state = {
     boundsMax: [1, 1, 1] as [number, number, number],
     boundsMin: [-1, -1, -1] as [number, number, number],
+    availableRenderCount: 0,
     fileType: null as string | null,
     lastParsedMesh: null as MockSplatMesh | null,
     loadCalls: [] as string[],
     samples: [] as Array<{ center: [number, number, number]; opacity: number }>,
+    lastSparkRenderer: null as MockSparkRenderer | null,
     sparkRendererOptions: null as Record<string, unknown> | null,
     splatCount: 0,
   };
 
   class MockSparkRenderer extends THREE.Object3D {
+    geometry = {
+      instanceCount: state.availableRenderCount,
+    };
+
     constructor(options: Record<string, unknown>) {
       super();
       state.sparkRendererOptions = options;
+      state.lastSparkRenderer = this;
+    }
+
+    update(): void {
+      this.geometry.instanceCount = state.availableRenderCount;
     }
   }
 
@@ -185,8 +196,10 @@ type MockSparkModule = typeof Spark & {
   __mockState: {
     boundsMax: [number, number, number];
     boundsMin: [number, number, number];
+    availableRenderCount: number;
     fileType: string | null;
     lastParsedMesh: THREE.Object3D | null;
+    lastSparkRenderer: THREE.Object3D | null;
     loadCalls: string[];
     samples: Array<{ center: [number, number, number]; opacity: number }>;
     sparkRendererOptions: Record<string, unknown> | null;
@@ -204,8 +217,10 @@ describe('SparkSceneViewer', () => {
   beforeEach(() => {
     mockModule.__mockState.boundsMin = [-2, -1, -3];
     mockModule.__mockState.boundsMax = [4, 5, 6];
+    mockModule.__mockState.availableRenderCount = 128;
     mockModule.__mockState.fileType = null;
     mockModule.__mockState.lastParsedMesh = null;
+    mockModule.__mockState.lastSparkRenderer = null;
     mockModule.__mockState.loadCalls = [];
     mockModule.__mockState.sparkRendererOptions = null;
     mockModule.__mockState.splatCount = 128;
@@ -290,6 +305,46 @@ describe('SparkSceneViewer', () => {
       ).renderer.renderCount,
     ).toBe(1);
     await expect(frame.text()).resolves.toBe('spark-frame');
+  });
+
+  it('applies and restores render budgets against the current Spark geometry instance count', async () => {
+    const events = new AppEvents();
+    const hostElement = {
+      clientHeight: 600,
+      clientWidth: 800,
+      replaceChildren: vi.fn(),
+    } as unknown as HTMLDivElement;
+    const viewer = new SparkSceneViewer({ hostElement, events });
+
+    await viewer.init();
+    await viewer.loadScene('/api/presets/truck.ksplat');
+
+    mockModule.__mockState.availableRenderCount = 96;
+    viewer.setRenderBudget(40);
+    viewer.renderNow();
+
+    expect(viewer.getRenderedSplatCount()).toBe(40);
+    expect(
+      (
+        viewer as unknown as {
+          sparkRenderer: { geometry: { instanceCount: number } };
+        }
+      ).sparkRenderer.geometry.instanceCount,
+    ).toBe(40);
+    expect(viewer.getDebugSnapshot().splatRenderCount).toBe(40);
+
+    viewer.setRenderBudget(null);
+    viewer.renderNow();
+
+    expect(viewer.getRenderedSplatCount()).toBe(96);
+    expect(
+      (
+        viewer as unknown as {
+          sparkRenderer: { geometry: { instanceCount: number } };
+        }
+      ).sparkRenderer.geometry.instanceCount,
+    ).toBe(96);
+    expect(viewer.getDebugSnapshot().splatRenderCount).toBe(96);
   });
 
   it('resumes camera controls from an inverted walk pose without changing the camera', async () => {
