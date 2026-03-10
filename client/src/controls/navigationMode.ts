@@ -34,14 +34,14 @@ export function getNavigationModePresentation(
   if (state === 'armed') {
     return {
       engaged: true,
-      hudMessage: 'WALK MODE · Capturing cursor...',
+      hudMessage: 'FLY MODE · Capturing cursor...',
     };
   }
 
   if (state === 'active') {
     return {
       engaged: true,
-      hudMessage: 'WALK MODE · 1 Inspect · WASD fly · Mouse look · Q/E vertical · Z/C roll · Shift sprint · ESC exit',
+      hudMessage: 'FLY MODE · 1 Inspect · WASD fly · Mouse look · Q/E vertical · Z/C roll · Shift sprint · ESC exit',
     };
   }
 

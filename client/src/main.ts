@@ -302,7 +302,7 @@ async function main(): Promise<void> {
       if (queuedWalkStatusMessage) {
         setStatusNote(queuedWalkStatusMessage);
       } else if (previousState === 'active') {
-        setStatusNote('Walk mode exited. Camera controls restored.');
+        setStatusNote('Fly mode exited. Camera controls restored.');
       }
     }
 
@@ -353,7 +353,7 @@ async function main(): Promise<void> {
     camera,
     canvas: interactionSurface,
     onLockError: () => {
-      queuedWalkStatusMessage = 'Walk mode could not capture the cursor. Press 2 to try again.';
+      queuedWalkStatusMessage = 'Fly mode could not capture the cursor. Press 2 to try again.';
       suppressWalkExitStatus = false;
     },
     onStateChange: nextState => {
@@ -370,10 +370,10 @@ async function main(): Promise<void> {
       } else {
         viewer.setNavigationMode('walk');
         if (walkState === 'armed') {
-          setStatusNote('Capturing cursor for walk mode...');
+          setStatusNote('Capturing cursor for fly mode...');
         }
         if (walkState === 'active') {
-          setStatusNote('Walk mode active. Press 1 or Esc to return to Inspect.');
+          setStatusNote('Fly mode active. Press 1 or Esc to return to Inspect.');
         }
       }
 

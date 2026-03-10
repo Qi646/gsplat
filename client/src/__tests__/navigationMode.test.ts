@@ -5,19 +5,19 @@ import {
 } from '../controls/navigationMode';
 
 describe('getNavigationModePresentation', () => {
-  it('maps inspect and walk states to walk-mode HUD behavior', () => {
+  it('maps inspect and walk states to fly-mode HUD behavior', () => {
     expect(getNavigationModePresentation('inactive')).toMatchObject({
       engaged: false,
       hudMessage: '',
     });
     expect(getNavigationModePresentation('armed')).toMatchObject({
       engaged: true,
-      hudMessage: 'WALK MODE · Capturing cursor...',
+      hudMessage: 'FLY MODE · Capturing cursor...',
     });
     expect(getNavigationModePresentation('active')).toMatchObject({
       engaged: true,
       hudMessage:
-        'WALK MODE · 1 Inspect · WASD fly · Mouse look · Q/E vertical · Z/C roll · Shift sprint · ESC exit',
+        'FLY MODE · 1 Inspect · WASD fly · Mouse look · Q/E vertical · Z/C roll · Shift sprint · ESC exit',
     });
   });
 });
