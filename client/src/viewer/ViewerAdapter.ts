@@ -13,6 +13,8 @@ export interface ViewerAdapter {
   loadScene(url: string): Promise<void>;
   resize(width: number, height: number): void;
   setFrameHook(frameHook: (() => void) | null): void;
+  setRenderBudget(maxRenderCount: number | null): void;
+  getRenderBudget(): number | null;
   setNavigationMode(mode: 'orbit' | 'walk'): void;
   resumeOrbitFromCamera(distance?: number): void;
   renderNow(): void;
@@ -25,6 +27,7 @@ export interface ViewerAdapter {
   getInteractionSurface(): HTMLCanvasElement | null;
   getFPS(): number;
   getSplatCount(): number;
+  getRenderedSplatCount(): number;
   isSceneLoaded(): boolean;
   getCompatibilityStatusMessage(): string | null;
   getRendererId(): ViewerRendererId;

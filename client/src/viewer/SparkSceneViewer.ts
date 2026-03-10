@@ -49,6 +49,7 @@ export class SparkSceneViewer implements ViewerAdapter {
   private animationFrameId: number | null = null;
   private frameHook: (() => void) | null = null;
   private navigationMode: NavigationMode = 'orbit';
+  private renderBudget: number | null = null;
 
   constructor(options: ViewerAdapterOptions) {
     this.hostElement = options.hostElement;
@@ -156,6 +157,14 @@ export class SparkSceneViewer implements ViewerAdapter {
 
   setFrameHook(frameHook: (() => void) | null): void {
     this.frameHook = frameHook;
+  }
+
+  setRenderBudget(maxRenderCount: number | null): void {
+    this.renderBudget = maxRenderCount;
+  }
+
+  getRenderBudget(): number | null {
+    return this.renderBudget;
   }
 
   setNavigationMode(mode: 'orbit' | 'walk'): void {
@@ -266,6 +275,14 @@ export class SparkSceneViewer implements ViewerAdapter {
     return this.splatCount;
   }
 
+  getRenderedSplatCount(): number {
+    const renderedCount = this.readSplatCount();
+    if (this.renderBudget === null) {
+      return renderedCount;
+    }
+    return Math.min(renderedCount, this.renderBudget);
+  }
+
   isSceneLoaded(): boolean {
     return this.sceneLoaded;
   }
@@ -307,7 +324,7 @@ export class SparkSceneViewer implements ViewerAdapter {
       sceneCount: this.splatMesh ? 1 : 0,
       sceneLoaded: this.sceneLoaded,
       splatCount: this.readSplatCount(),
-      splatRenderCount: this.readSplatCount(),
+      splatRenderCount: this.getRenderedSplatCount(),
       lastSortTime: null,
     };
   }

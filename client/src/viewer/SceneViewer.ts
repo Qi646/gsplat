@@ -42,6 +42,7 @@ export class SceneViewer implements ViewerAdapter {
   private navigationMode: NavigationMode = 'orbit';
   private compatibilityMode = false;
   private compatibilityStatusMessage: string | null = null;
+  private renderBudget: number | null = null;
   private runtimeViewerOptions: ViewerRuntimeOptions = {
     gpuAcceleratedSort: false,
     sharedMemoryForWorkers: false,
@@ -149,6 +150,14 @@ export class SceneViewer implements ViewerAdapter {
 
   setFrameHook(frameHook: (() => void) | null): void {
     this.frameHook = frameHook;
+  }
+
+  setRenderBudget(maxRenderCount: number | null): void {
+    this.renderBudget = maxRenderCount;
+  }
+
+  getRenderBudget(): number | null {
+    return this.renderBudget;
   }
 
   setNavigationMode(mode: 'orbit' | 'walk'): void {
@@ -259,6 +268,10 @@ export class SceneViewer implements ViewerAdapter {
     return this.splatCount;
   }
 
+  getRenderedSplatCount(): number {
+    return this.readRenderedSplatCount();
+  }
+
   isSceneLoaded(): boolean {
     return this.sceneLoaded;
   }
@@ -308,7 +321,7 @@ export class SceneViewer implements ViewerAdapter {
       sceneCount: this.viewer?.getSceneCount?.() ?? 0,
       sceneLoaded: this.sceneLoaded,
       splatCount: Math.max(this.splatCount, this.readSplatCount()),
-      splatRenderCount: internalViewer?.splatRenderCount ?? 0,
+      splatRenderCount: this.readRenderedSplatCount(),
       lastSortTime: typeof internalViewer?.lastSortTime === 'number' ? internalViewer.lastSortTime : null,
     };
   }
@@ -361,6 +374,17 @@ export class SceneViewer implements ViewerAdapter {
     } catch {
       return 0;
     }
+  }
+
+  private readRenderedSplatCount(): number {
+    const internalViewer = this.viewer as (GaussianSplats3D.Viewer & {
+      splatRenderCount?: number;
+    }) | null;
+    const availableCount = internalViewer?.splatRenderCount ?? this.readSplatCount();
+    if (this.renderBudget === null) {
+      return availableCount;
+    }
+    return Math.min(availableCount, this.renderBudget);
   }
 
   private computeSceneBounds(): void {

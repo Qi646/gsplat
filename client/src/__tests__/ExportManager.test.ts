@@ -87,6 +87,10 @@ class FakeViewer implements ViewerAdapter {
     return 60;
   }
 
+  getRenderBudget(): number | null {
+    return null;
+  }
+
   getInteractionSurface(): HTMLCanvasElement {
     return this.surface;
   }
@@ -96,6 +100,10 @@ class FakeViewer implements ViewerAdapter {
   }
 
   getSplatCount(): number {
+    return 123;
+  }
+
+  getRenderedSplatCount(): number {
     return 123;
   }
 
@@ -122,6 +130,8 @@ class FakeViewer implements ViewerAdapter {
   }
 
   setFrameHook(): void {}
+
+  setRenderBudget(): void {}
 
   setNavigationMode(): void {}
 

@@ -8,6 +8,10 @@ import { parseAppRuntimeQuery } from './lib/runtimeQuery';
 import { SCENE_PRESETS } from './lib/scenePresets';
 import { CameraPathOverlay } from './path/CameraPathOverlay';
 import { KeyframeManager } from './path/KeyframeManager';
+import {
+  AdaptiveRenderBudgetController,
+  buildAdaptiveRenderBudgetNote,
+} from './performance/AdaptiveRenderBudgetController';
 import { AppEvents, type AppBootPhase, type Keyframe, type ViewerRendererId } from './types';
 import { createViewerAdapter } from './viewer/createViewerAdapter';
 import { rollOrbitCamera } from './viewer/orbitControls';
@@ -76,6 +80,10 @@ async function main(): Promise<void> {
   const pathFileInput = $('#path-file-input') as HTMLInputElement;
   const timelineScrubber = $('#timeline-scrubber') as HTMLInputElement;
   const pathVisualsButton = $('#btn-toggle-path-visuals') as HTMLButtonElement;
+  const adaptiveFpsButton = $('#btn-adaptive-fps') as HTMLButtonElement;
+  const targetFpsSlider = $('#target-fps-slider') as HTMLInputElement;
+  const targetFpsValue = $('#target-fps-value');
+  const performanceNote = $('#performance-note');
   const pathOverlayElement = document.querySelector<SVGSVGElement>('#camera-path-overlay');
   if (!pathOverlayElement) {
     throw new Error('Missing element: #camera-path-overlay');
@@ -142,6 +150,7 @@ async function main(): Promise<void> {
 
   const keyframeManager = new KeyframeManager({ viewer, events });
   const exportManager = new ExportManager({ viewer });
+  const adaptiveRenderBudgetController = new AdaptiveRenderBudgetController();
   const pathOverlay = new CameraPathOverlay(pathOverlayElement);
   let walkState: WalkControlState = 'inactive';
   let pathVisualsEnabled = true;
@@ -152,6 +161,10 @@ async function main(): Promise<void> {
   const defaultExportNote = `${DEFAULT_EXPORT_SETTINGS.width}x${DEFAULT_EXPORT_SETTINGS.height} · ${DEFAULT_EXPORT_SETTINGS.fps} FPS via FFmpeg`;
   const isSceneLoaded = () => !sceneLoadInProgress && viewer.isSceneLoaded();
   const isInteractionLocked = () => keyframeManager.isPreviewActive() || exportManager.isExporting();
+  targetFpsSlider.min = String(adaptiveRenderBudgetController.getState().minTargetFps);
+  targetFpsSlider.max = String(adaptiveRenderBudgetController.getState().maxTargetFps);
+  targetFpsSlider.step = String(adaptiveRenderBudgetController.getState().sliderStep);
+  targetFpsSlider.value = String(adaptiveRenderBudgetController.getState().targetFps);
 
   const getPathVisualsState = () => {
     const keyframes = keyframeManager.getKeyframes();
@@ -310,6 +323,27 @@ async function main(): Promise<void> {
     timelineScrubber.value = String(Math.round(ratio * 1000));
   };
 
+  const updatePerformanceControlsState = () => {
+    const controllerState = adaptiveRenderBudgetController.getState();
+    const sceneLoaded = isSceneLoaded();
+    const exportActive = exportManager.isExporting();
+    const totalSplatCount = sceneLoaded ? viewer.getSplatCount() : 0;
+    const renderedSplatCount = sceneLoaded ? viewer.getRenderedSplatCount() : 0;
+
+    adaptiveFpsButton.disabled = !sceneLoaded || exportActive;
+    adaptiveFpsButton.classList.toggle('active', controllerState.enabled);
+    adaptiveFpsButton.setAttribute('aria-pressed', String(controllerState.enabled));
+    adaptiveFpsButton.textContent = controllerState.enabled ? 'Adaptive FPS On' : 'Adaptive FPS Off';
+
+    targetFpsSlider.disabled = exportActive;
+    targetFpsValue.textContent = String(controllerState.targetFps);
+    performanceNote.textContent = buildAdaptiveRenderBudgetNote(controllerState, {
+      fps: viewer.getFPS(),
+      renderedSplatCount,
+      totalSplatCount,
+    });
+  };
+
   const updatePathControlsState = () => {
     const keyframeCount = keyframeManager.getKeyframes().length;
     const sceneLoaded = isSceneLoaded();
@@ -329,6 +363,7 @@ async function main(): Promise<void> {
     setExportInteractionLock(exportActive);
     updatePreviewButton();
     updateExportButton();
+    updatePerformanceControlsState();
     updatePathVisualsButton();
   };
 
@@ -446,6 +481,8 @@ async function main(): Promise<void> {
   const loadScene = async (url: string) => {
     stopWalkMode({ silent: true });
     keyframeManager.stopPreview();
+    adaptiveRenderBudgetController.resetScene();
+    viewer.setRenderBudget(null);
     sceneLoadInProgress = true;
     loadingOverlay.classList.remove('hidden');
     progressFill.style.width = '0%';
@@ -467,6 +504,7 @@ async function main(): Promise<void> {
       keyframeManager.clear();
       selectedKeyframeId = null;
       sceneLoadInProgress = false;
+      viewer.setRenderBudget(adaptiveRenderBudgetController.getState().budgetCount);
       renderKeyframeList();
       updatePathControlsState();
       syncPathVisualsState();
@@ -516,6 +554,25 @@ async function main(): Promise<void> {
     if (url) {
       void loadScene(url);
     }
+  });
+
+  targetFpsSlider.addEventListener('input', () => {
+    adaptiveRenderBudgetController.setTargetFps(Number(targetFpsSlider.value));
+    targetFpsSlider.value = String(adaptiveRenderBudgetController.getState().targetFps);
+    updatePerformanceControlsState();
+  });
+
+  adaptiveFpsButton.addEventListener('click', () => {
+    if (!isSceneLoaded() || exportManager.isExporting()) {
+      return;
+    }
+
+    const nextEnabled = !adaptiveRenderBudgetController.getState().enabled;
+    adaptiveRenderBudgetController.setEnabled(nextEnabled);
+    viewer.setRenderBudget(adaptiveRenderBudgetController.getState().budgetCount);
+    viewer.renderNow();
+    updatePerformanceControlsState();
+    setStatusNote(nextEnabled ? 'Adaptive FPS enabled for live viewing.' : 'Adaptive FPS disabled. Full quality restored.');
   });
 
   sceneUrlInput.addEventListener('keydown', event => {
@@ -667,6 +724,7 @@ async function main(): Promise<void> {
   exportButton.addEventListener('click', async () => {
     stopWalkMode({ silent: true });
     keyframeManager.stopPreview();
+    adaptiveRenderBudgetController.setSuspended(true);
 
     const exportPromise = exportManager.exportPath(keyframeManager.getKeyframes(), {
       onProgress: progress => {
@@ -687,6 +745,8 @@ async function main(): Promise<void> {
     } catch (error) {
       setStatusNote(error instanceof Error ? error.message : 'MP4 export failed.');
     } finally {
+      adaptiveRenderBudgetController.setSuspended(false);
+      viewer.setRenderBudget(adaptiveRenderBudgetController.getState().budgetCount);
       updatePathControlsState();
       syncPathVisualsState();
     }
@@ -771,8 +831,21 @@ async function main(): Promise<void> {
 
   window.setInterval(() => {
     const fps = viewer.getFPS();
+    if (isSceneLoaded()) {
+      const nextBudget = adaptiveRenderBudgetController.update({
+        fps,
+        renderedSplatCount: viewer.getRenderedSplatCount(),
+        totalSplatCount: viewer.getSplatCount(),
+      }, performance.now());
+      if (viewer.getRenderBudget() !== nextBudget) {
+        viewer.setRenderBudget(nextBudget);
+      }
+    } else {
+      viewer.setRenderBudget(null);
+    }
     statFps.textContent = String(fps);
     statFps.className = `val fps-val${fps < 20 ? ' bad' : fps < 45 ? ' warn' : ''}`;
+    updatePerformanceControlsState();
   }, 500);
 }
 

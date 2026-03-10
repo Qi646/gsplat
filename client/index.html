@@ -407,6 +407,40 @@
       margin-bottom: 10px;
     }
 
+    .performance-controls {
+      display: grid;
+      gap: 10px;
+    }
+
+    .range-field {
+      display: grid;
+      gap: 6px;
+    }
+
+    .range-label {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      font-size: 10px;
+      color: var(--muted);
+    }
+
+    .range-label strong {
+      color: var(--text);
+      font-weight: 500;
+    }
+
+    .range-value {
+      color: var(--accent);
+      font-weight: 500;
+    }
+
+    .range-input {
+      width: 100%;
+      accent-color: var(--accent);
+    }
+
     .path-secondary-actions {
       display: grid;
       grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -627,6 +661,21 @@
           <div><strong>Inspect:</strong> press 1, or left drag rotate freely, right drag pan, scroll zoom, Z/C roll</div>
           <div><strong>Walk:</strong> press 2 or click Walk Mode for instant WASD fly-through + mouse look + Q/E + Z/C roll</div>
           <div><strong>Scene:</strong> Frame Scene fits bounds, Reset View returns to the default framing</div>
+        </div>
+      </div>
+
+      <div class="panel-section">
+        <div class="section-label">Performance</div>
+        <div class="performance-controls">
+          <button class="btn" id="btn-adaptive-fps" disabled aria-pressed="false">Adaptive FPS</button>
+          <div class="range-field">
+            <label class="range-label" for="target-fps-slider">
+              <strong>Target FPS</strong>
+              <span class="range-value" id="target-fps-value">30</span>
+            </label>
+            <input class="range-input" id="target-fps-slider" type="range" min="15" max="60" step="5" value="30" />
+          </div>
+          <div class="note" id="performance-note">Load a scene to enable adaptive FPS.</div>
         </div>
       </div>
 
