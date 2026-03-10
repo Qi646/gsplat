@@ -50,6 +50,7 @@ export class SparkSceneViewer implements ViewerAdapter {
   private frameHook: (() => void) | null = null;
   private navigationMode: NavigationMode = 'orbit';
   private renderBudget: number | null = null;
+  private renderedSplatCount = 0;
 
   constructor(options: ViewerAdapterOptions) {
     this.hostElement = options.hostElement;
@@ -70,6 +71,8 @@ export class SparkSceneViewer implements ViewerAdapter {
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
 
     this.sparkRenderer = new Spark.SparkRenderer({
+      autoUpdate: false,
+      preUpdate: true,
       renderer: this.renderer,
       view: { ...SPARK_VIEW_OPTIONS },
     });
@@ -185,6 +188,8 @@ export class SparkSceneViewer implements ViewerAdapter {
     this.frameHook?.();
     updateOrbitControls(this.controls, this.navigationMode);
     this.syncCameraProjection();
+    this.updateSparkRenderer();
+    this.applyRenderBudgetToFrame();
     if (this.scene && this.camera) {
       this.renderer?.render(this.scene, this.camera);
     }
@@ -276,11 +281,7 @@ export class SparkSceneViewer implements ViewerAdapter {
   }
 
   getRenderedSplatCount(): number {
-    const renderedCount = this.readSplatCount();
-    if (this.renderBudget === null) {
-      return renderedCount;
-    }
-    return Math.min(renderedCount, this.renderBudget);
+    return this.renderedSplatCount;
   }
 
   isSceneLoaded(): boolean {
@@ -367,6 +368,8 @@ export class SparkSceneViewer implements ViewerAdapter {
       this.frameHook?.();
       updateOrbitControls(this.controls, this.navigationMode);
       this.syncCameraProjection();
+      this.updateSparkRenderer();
+      this.applyRenderBudgetToFrame();
       if (this.scene && this.camera) {
         this.renderer?.render(this.scene, this.camera);
       }
@@ -378,6 +381,51 @@ export class SparkSceneViewer implements ViewerAdapter {
 
   private readSplatCount(): number {
     return this.splatMesh?.packedSplats?.numSplats ?? this.splatCount;
+  }
+
+  private updateSparkRenderer(): void {
+    if (!this.scene || !this.camera) {
+      return;
+    }
+
+    const sparkRenderer = this.sparkRenderer as (Spark.SparkRenderer & {
+      update?: (options: {
+        scene: THREE.Scene;
+        viewToWorld: THREE.Matrix4;
+      }) => void;
+    }) | null;
+
+    sparkRenderer?.update?.({
+      scene: this.scene,
+      viewToWorld: this.camera.matrixWorld.clone(),
+    });
+  }
+
+  private readAvailableRenderedSplatCount(): number {
+    const sparkRenderer = this.sparkRenderer as (Spark.SparkRenderer & {
+      geometry?: {
+        instanceCount?: number;
+        ordering?: Uint32Array;
+      };
+    }) | null;
+
+    return sparkRenderer?.geometry?.instanceCount ?? this.readSplatCount();
+  }
+
+  private applyRenderBudgetToFrame(): void {
+    const sparkRenderer = this.sparkRenderer as (Spark.SparkRenderer & {
+      geometry?: {
+        instanceCount?: number;
+      };
+    }) | null;
+    const availableCount = this.readAvailableRenderedSplatCount();
+    const renderCount = this.renderBudget === null ? availableCount : Math.min(availableCount, this.renderBudget);
+
+    if (sparkRenderer?.geometry && typeof sparkRenderer.geometry.instanceCount === 'number') {
+      sparkRenderer.geometry.instanceCount = renderCount;
+    }
+
+    this.renderedSplatCount = renderCount;
   }
 
   private computeSceneBounds(): void {
@@ -407,6 +455,7 @@ export class SparkSceneViewer implements ViewerAdapter {
   private resetSceneState(): void {
     this.sceneLoaded = false;
     this.splatCount = 0;
+    this.renderedSplatCount = 0;
     this.sceneBounds.makeEmpty();
     this.initialPosition.set(0, 0, 0);
     this.initialTarget.set(0, 0, 0);

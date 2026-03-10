@@ -43,6 +43,7 @@ export class SceneViewer implements ViewerAdapter {
   private compatibilityMode = false;
   private compatibilityStatusMessage: string | null = null;
   private renderBudget: number | null = null;
+  private renderedSplatCount = 0;
   private runtimeViewerOptions: ViewerRuntimeOptions = {
     gpuAcceleratedSort: false,
     sharedMemoryForWorkers: false,
@@ -178,6 +179,7 @@ export class SceneViewer implements ViewerAdapter {
     this.frameHook?.();
     updateOrbitControls(this.controls, this.navigationMode);
     this.viewer?.update();
+    this.applyRenderBudgetToFrame();
     this.syncCameraProjection();
     this.viewer?.render();
   }
@@ -360,6 +362,7 @@ export class SceneViewer implements ViewerAdapter {
       this.frameHook?.();
       updateOrbitControls(this.controls, this.navigationMode);
       this.viewer?.update();
+      this.applyRenderBudgetToFrame();
       this.syncCameraProjection();
       this.viewer?.render();
       this.animationFrameId = requestAnimationFrame(tick);
@@ -377,14 +380,34 @@ export class SceneViewer implements ViewerAdapter {
   }
 
   private readRenderedSplatCount(): number {
+    return this.renderedSplatCount;
+  }
+
+  private applyRenderBudgetToFrame(): void {
+    const availableCount = this.readAvailableRenderedSplatCount();
+    const renderCount = this.renderBudget === null ? availableCount : Math.min(availableCount, this.renderBudget);
+    const splatMesh = this.viewer?.getSplatMesh() as (GaussianSplats3D.SplatMesh & {
+      geometry?: {
+        instanceCount?: number;
+        setDrawRange?: (start: number, count: number) => void;
+      };
+    }) | null;
+
+    if (splatMesh?.geometry) {
+      if (typeof splatMesh.geometry.instanceCount === 'number') {
+        splatMesh.geometry.instanceCount = renderCount;
+      }
+      splatMesh.geometry.setDrawRange?.(0, renderCount);
+    }
+
+    this.renderedSplatCount = renderCount;
+  }
+
+  private readAvailableRenderedSplatCount(): number {
     const internalViewer = this.viewer as (GaussianSplats3D.Viewer & {
       splatRenderCount?: number;
     }) | null;
-    const availableCount = internalViewer?.splatRenderCount ?? this.readSplatCount();
-    if (this.renderBudget === null) {
-      return availableCount;
-    }
-    return Math.min(availableCount, this.renderBudget);
+    return internalViewer?.splatRenderCount ?? this.readSplatCount();
   }
 
   private computeSceneBounds(): void {
@@ -412,6 +435,7 @@ export class SceneViewer implements ViewerAdapter {
   private resetSceneState(): void {
     this.sceneLoaded = false;
     this.splatCount = 0;
+    this.renderedSplatCount = 0;
     this.sceneBounds.makeEmpty();
     this.initialPosition.set(0, 0, 0);
     this.initialTarget.set(0, 0, 0);

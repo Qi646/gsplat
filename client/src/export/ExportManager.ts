@@ -100,6 +100,7 @@ export class ExportManager {
       position: camera.position.clone(),
       quaternion: camera.quaternion.clone(),
     };
+    const previousRenderBudget = this.viewer.getRenderBudget();
     const previousSize = {
       height: Math.max(interactionSurface.clientHeight || interactionSurface.height || 0, 1),
       width: Math.max(interactionSurface.clientWidth || interactionSurface.width || 0, 1),
@@ -120,6 +121,7 @@ export class ExportManager {
     });
 
     try {
+      this.viewer.setRenderBudget(null);
       jobId = await this.createJob(settings);
       this.viewer.resize(settings.width, settings.height);
       this.viewer.renderNow();
@@ -188,6 +190,7 @@ export class ExportManager {
     } finally {
       this.viewer.resize(previousSize.width, previousSize.height);
       this.viewer.applyCameraPose(previousPose);
+      this.viewer.setRenderBudget(previousRenderBudget);
       this.viewer.renderNow();
       this.exporting = false;
     }
