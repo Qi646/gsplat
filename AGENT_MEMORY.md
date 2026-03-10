@@ -1,7 +1,9 @@
 # AGENT_MEMORY
 
 ## Current Context
+- 2026-03-10: Navigation mode indicator labels now include key hints for both modes (`Inspect [1]` and `Walk [2]`), and the default mode pill now renders `Inspect [1]` in initial HTML so the UI no longer shows a missing Inspect shortcut hint.
 - The root app now supports agentic camera-path insertion: the Camera Path panel captures the current view plus four scout views, sends them to a server-side vision planner, triangulates a subject anchor locally, and appends deterministic orbit keyframes back into the normal keyframe path flow.
+- The app now explicitly supports running without `OPENAI_API_KEY`: the server exposes `/api/path/status`, the client disables prompt-driven controls when the planner is unavailable, and the rest of the viewer/path/export workflow remains usable.
 - Repo root `/home/qi/proj/gsplat_1` now has an initial import commit for the `gsplat-viewer` project.
 - The imported project lives under `gsplat-viewer/`.
 - A local archive copy exists at `gsplat-viewer.zip` and should stay untracked.

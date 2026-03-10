@@ -673,7 +673,7 @@
       <div class="topbar-sep"></div>
       <div class="mode-indicator" id="navigation-mode-indicator" data-mode-state="inspect" aria-live="polite">
         <span class="mode-indicator-label">Mode</span>
-        <span class="mode-indicator-value" id="navigation-mode-value">Inspect</span>
+        <span class="mode-indicator-value" id="navigation-mode-value">Inspect [1]</span>
       </div>
       <button class="btn" id="btn-walk-mode" disabled aria-keyshortcuts="2">⬡ Walk Mode [2]</button>
     </header>
@@ -747,8 +747,8 @@
 
       <div class="panel-section">
         <div class="section-label">Camera Path</div>
-        <div class="note" style="margin-bottom: 10px">
-          Prompt a cinematic orbit and append generated keyframes based on the current view plus four scout captures.
+        <div class="note" id="agentic-path-note" style="margin-bottom: 10px">
+          Load a scene to enable prompt-driven orbit generation. It uses the current view plus four scout captures.
         </div>
         <textarea
           id="path-prompt-input"

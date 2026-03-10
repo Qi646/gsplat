@@ -9,17 +9,17 @@ describe('getNavigationModePresentation', () => {
     expect(getNavigationModePresentation('inactive')).toMatchObject({
       engaged: false,
       hudMessage: '',
-      indicatorLabel: 'Inspect',
+      indicatorLabel: 'Inspect [1]',
       indicatorState: 'inspect',
     });
     expect(getNavigationModePresentation('armed')).toMatchObject({
       engaged: true,
-      indicatorLabel: 'Walk (locking)',
+      indicatorLabel: 'Walk [2] (locking)',
       indicatorState: 'armed',
     });
     expect(getNavigationModePresentation('active')).toMatchObject({
       engaged: true,
-      indicatorLabel: 'Walk',
+      indicatorLabel: 'Walk [2]',
       indicatorState: 'active',
     });
   });

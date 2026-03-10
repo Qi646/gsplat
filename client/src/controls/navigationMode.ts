@@ -37,7 +37,7 @@ export function getNavigationModePresentation(
     return {
       engaged: true,
       hudMessage: 'WALK MODE · Capturing cursor...',
-      indicatorLabel: 'Walk (locking)',
+      indicatorLabel: 'Walk [2] (locking)',
       indicatorState: 'armed',
     };
   }
@@ -46,7 +46,7 @@ export function getNavigationModePresentation(
     return {
       engaged: true,
       hudMessage: 'WALK MODE · 1 Inspect · WASD fly · Mouse look · Q/E vertical · Z/C roll · Shift sprint · ESC exit',
-      indicatorLabel: 'Walk',
+      indicatorLabel: 'Walk [2]',
       indicatorState: 'active',
     };
   }
@@ -54,7 +54,7 @@ export function getNavigationModePresentation(
   return {
     engaged: false,
     hudMessage: '',
-    indicatorLabel: 'Inspect',
+    indicatorLabel: 'Inspect [1]',
     indicatorState: 'inspect',
   };
 }
