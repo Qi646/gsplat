@@ -7,7 +7,7 @@ This file tracks current progress against [ASSIGNMENT.md](./ASSIGNMENT.md). Upda
 ## Summary
 
 - MVP requirements: 4/4 implemented in the root app.
-- Optional extras from `ASSIGNMENT.md`: 1/10 fully implemented, 4/10 partially implemented.
+- Optional extras from `ASSIGNMENT.md`: 4/10 fully implemented, 2/10 partially implemented.
 - Deliverables: repo + README are present; demo recording and one-page design note are still pending.
 - Latest validation on 2026-03-10: `npm test` and `npm run build` passed at the repo root.
 
@@ -18,7 +18,7 @@ This file tracks current progress against [ASSIGNMENT.md](./ASSIGNMENT.md). Upda
 | 1. Load and render a scene Gaussian splat | Implemented | The app loads public `.ply`, `.splat`, and `.ksplat` scene URLs, browser-selected local `.ply` / `.splat` / `.ksplat` files, plus same-origin cached presets. It shows loading progress, FPS, and splat count, includes `Frame Scene` and `Reset View`, and now frames both presets and arbitrary URL/local loads with the same deterministic bounds-fitting algorithm rather than preset-specific camera overrides. Caveat: scene loading is still non-progressive, so the scene stays hidden until processing completes and the progress bar resets when download switches to processing. |
 | 2. Scene navigation controls | Implemented | Orbit / pan / zoom are available through the shared camera controls, and `Walk Mode` provides fly-style WASD + mouse-look navigation with pointer lock. Press `2` or click `Walk Mode` to capture the cursor immediately, press `1` to return to Inspect mode, and the top bar now shows the current navigation mode. `Z/C` roll the camera around its current view axis in both Inspect and active Walk mode, mouse look preserves arbitrary roll, and `Q/E` follow the camera-local up axis so walk mode stays coherent after inverted views. |
 | 3. Camera path recording | Implemented | Users can add keyframes, delete them, reorder them, scrub the path, preview playback, and inspect a toggleable in-view path/frustum overlay. Playback uses Catmull-Rom position interpolation, quaternion slerp, FOV interpolation, and fixed smoothstep ease-in/out timing, while the shared frustum gizmos now clamp their on-screen size when zoomed in and around tightly clustered keyframes to reduce overlap. Saved path JSON now writes the original v1 schema while still accepting older v2 imports that may contain deprecated `sceneRotation`. Caveat: keyframe timing is not directly editable beyond reorder + scrub. |
-| 4. Render-to-video export | Implemented | `Export MP4` renders the recorded path at fixed `1280x720 @ 30 FPS`, streams PNG frames to the backend, encodes with FFmpeg, shows progress, and downloads `output.mp4`. Caveat: there is no user-facing cancel button or editable export settings yet. |
+| 4. Render-to-video export | Implemented | `Export MP4` renders the recorded path into same-origin backend FFmpeg jobs, shows client-driven progress, supports explicit cancel, and now exposes deterministic export settings through built-in `720p`, `1080p`, and `720p + 1080p Batch` profiles plus FPS and file-base controls. |
 
 ## Optional Extras
 
@@ -31,9 +31,9 @@ This file tracks current progress against [ASSIGNMENT.md](./ASSIGNMENT.md). Upda
 | Timeline editor | Partial | The app has a scrubber, explicit move-up / move-down / delete controls, and a toggleable viewer overlay for path and keyframe frustum visuals, but not draggable keyframe times or a full timeline editor. |
 | Easing curves | Partial | Playback uses a fixed global smoothstep easing curve, but there is no per-segment or user-selectable easing mode. |
 | Path smoothing | Not implemented | Spline interpolation is built into playback, but there is no user-adjustable smoothing control or previewable smoothing strength. |
-| Deterministic export | Partial | Camera paths can be saved and reloaded as JSON, export uses fixed defaults, and old v2 path files still import cleanly, but the app does not save render settings alongside the path or expose an explicit deterministic re-run workflow. |
-| Progress + cancellation | Partial | Export progress is visible, and the backend supports job cancellation for cleanup, but the UI does not expose a cancel action. |
-| Batch export | Not implemented | Only one MP4 is exported per run. |
+| Deterministic export | Implemented | The export panel can now save a `camera-export-plan.json` document that stores the current camera path plus the selected export profile, FPS, and output base name. Loading that document restores both path and export settings, so rerunning export on the same scene reproduces the same MP4 target list and timing. |
+| Progress + cancellation | Implemented | Export progress remains visible through rendered/uploaded frame counts plus a final encode phase, and the UI now exposes a `Cancel` button that aborts the active request, deletes the live backend FFmpeg job, and returns the viewer to its pre-export state. |
+| Batch export | Implemented | The export panel now includes a `720p + 1080p Batch` profile that renders the same recorded path into two sequential MP4 jobs and downloads both files with deterministic suffixed names. |
 
 ## Deliverables
 
@@ -42,7 +42,7 @@ This file tracks current progress against [ASSIGNMENT.md](./ASSIGNMENT.md). Upda
 | Repo + README with one-command run | Implemented | The root workspace is documented in `README.md`, and `npm run dev` is the primary one-command local run path. |
 | 30-90s demo recording | Not implemented | No committed demo recording was found in the repo. |
 | <= 1 page design note | Not implemented | No committed design note was found in the repo. |
-| README extras list | Implemented | `README.md` now includes an `Implemented Optional Extras` section describing the live adaptive-FPS / gaussian-budget control and its export behavior. |
+| README extras list | Implemented | `README.md` now includes an `Implemented Optional Extras` section covering adaptive FPS, deterministic export plans, and the new cancelable batch export workflow. |
 
 ## Additional Non-MVP Work
 

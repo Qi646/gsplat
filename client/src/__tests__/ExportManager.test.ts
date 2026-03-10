@@ -290,12 +290,13 @@ describe('ExportManager', () => {
 
   it('exports multiple MP4 targets sequentially with aggregate progress', async () => {
     const viewer = new FakeViewer();
+    let createdJobCount = 0;
     const fetchImpl = vi.fn<typeof fetch>(async (input) => {
       const url = String(input);
 
       if (url === '/api/export/jobs') {
-        const nextJobId = fetchImpl.mock.calls.filter(([calledUrl]) => String(calledUrl) === '/api/export/jobs').length;
-        return new Response(JSON.stringify({ jobId: `job-${nextJobId}` }), {
+        createdJobCount += 1;
+        return new Response(JSON.stringify({ jobId: `job-${createdJobCount}` }), {
           headers: { 'Content-Type': 'application/json' },
           status: 200,
         });

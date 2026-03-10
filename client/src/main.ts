@@ -3,7 +3,18 @@ import {
   getNavigationModePresentation,
   resolveNavigationShortcutAction,
 } from './controls/navigationMode';
-import { DEFAULT_EXPORT_SETTINGS, ExportManager, type ExportProgress } from './export/ExportManager';
+import { ExportManager, type ExportProgress } from './export/ExportManager';
+import {
+  DEFAULT_EXPORT_PLAN_SETTINGS,
+  EXPORT_PROFILES,
+  buildExportPlanDocument,
+  buildExportPlanSummary,
+  buildExportSettingsList,
+  getExportProfile,
+  parseImportedExportDocument,
+  resolveExportPlanSettings,
+  type ExportPlanSettings,
+} from './export/exportPlan';
 import { parseAppRuntimeQuery } from './lib/runtimeQuery';
 import { detectSceneFormat } from './lib/sceneFormat';
 import { resolveSceneLoadSource, type SceneLoadInput, type SceneLoadSource } from './lib/sceneSource';
@@ -88,7 +99,12 @@ async function main(): Promise<void> {
   const savePathButton = $('#btn-save-path') as HTMLButtonElement;
   const loadPathButton = $('#btn-load-path') as HTMLButtonElement;
   const exportButton = $('#btn-export-mp4') as HTMLButtonElement;
+  const cancelExportButton = $('#btn-cancel-export') as HTMLButtonElement;
+  const saveExportPlanButton = $('#btn-save-export-plan') as HTMLButtonElement;
   const exportNote = $('#export-note');
+  const exportProfileSelect = $('#export-profile-select') as HTMLSelectElement;
+  const exportFpsInput = $('#export-fps-input') as HTMLInputElement;
+  const exportFileBaseInput = $('#export-file-base-input') as HTMLInputElement;
   const pathFileInput = $('#path-file-input') as HTMLInputElement;
   const timelineScrubber = $('#timeline-scrubber') as HTMLInputElement;
   const pathVisualsButton = $('#btn-toggle-path-visuals') as HTMLButtonElement;
@@ -171,13 +187,20 @@ async function main(): Promise<void> {
   let selectedKeyframeId: string | null = null;
   let queuedWalkStatusMessage: string | null = null;
   let suppressWalkExitStatus = false;
-  const defaultExportNote = `${DEFAULT_EXPORT_SETTINGS.width}x${DEFAULT_EXPORT_SETTINGS.height} · ${DEFAULT_EXPORT_SETTINGS.fps} FPS via FFmpeg`;
+  let exportPlanSettings: ExportPlanSettings = { ...DEFAULT_EXPORT_PLAN_SETTINGS };
+  let currentExportProgress: ExportProgress | null = null;
   const isSceneLoaded = () => !sceneLoadInProgress && viewer.isSceneLoaded();
   const isInteractionLocked = () => keyframeManager.isPreviewActive() || exportManager.isExporting();
   targetFpsSlider.min = String(adaptiveRenderBudgetController.getState().minTargetFps);
   targetFpsSlider.max = String(adaptiveRenderBudgetController.getState().maxTargetFps);
   targetFpsSlider.step = String(adaptiveRenderBudgetController.getState().sliderStep);
   targetFpsSlider.value = String(adaptiveRenderBudgetController.getState().targetFps);
+  EXPORT_PROFILES.forEach(profile => {
+    const option = document.createElement('option');
+    option.value = profile.id;
+    option.textContent = profile.label;
+    exportProfileSelect.appendChild(option);
+  });
 
   const getPathVisualsState = () => {
     const keyframes = keyframeManager.getKeyframes();
@@ -314,16 +337,50 @@ async function main(): Promise<void> {
     previewButton.textContent = keyframeManager.isPreviewActive() ? '■ Stop' : '▶ Preview';
   };
 
-  const updateExportButton = (progress?: ExportProgress | null) => {
+  const buildIdleExportNote = () => {
+    const summary = buildExportPlanSummary(exportPlanSettings);
+    const targetCount = buildExportSettingsList(exportPlanSettings).length;
+    return targetCount > 1 ? `${summary} · ${targetCount} MP4s` : summary;
+  };
+
+  const updateExportButton = (progress: ExportProgress | null = currentExportProgress) => {
     if (!exportManager.isExporting()) {
       exportButton.textContent = '⬇ Export MP4';
-      exportNote.textContent = defaultExportNote;
+      cancelExportButton.textContent = '✕ Cancel';
+      exportNote.textContent = buildIdleExportNote();
       return;
     }
 
     const percent = Math.round(progress?.percent ?? 0);
-    exportButton.textContent = `⬇ Exporting ${percent}%`;
+    const batchProgressLabel =
+      progress && progress.totalJobs > 1 ? ` ${progress.currentJobIndex}/${progress.totalJobs}` : '';
+    exportButton.textContent = `⬇ Exporting${batchProgressLabel} ${percent}%`;
+    cancelExportButton.textContent =
+      exportManager.isCancelling() || progress?.stage === 'cancelling' ? '✕ Cancelling…' : '✕ Cancel';
     exportNote.textContent = progress?.message ?? 'Exporting path to MP4…';
+  };
+
+  const applyExportPlanSettings = (nextSettings: Partial<ExportPlanSettings> | undefined) => {
+    exportPlanSettings = resolveExportPlanSettings(nextSettings);
+    exportProfileSelect.value = exportPlanSettings.profileId;
+    exportFpsInput.value = String(exportPlanSettings.fps);
+    exportFileBaseInput.value = exportPlanSettings.fileBaseName;
+    updateExportButton(currentExportProgress);
+  };
+
+  const syncExportPlanSettingsFromControls = (): boolean => {
+    try {
+      applyExportPlanSettings({
+        fileBaseName: exportFileBaseInput.value,
+        fps: Number(exportFpsInput.value),
+        profileId: exportProfileSelect.value as ExportPlanSettings['profileId'],
+      });
+      return true;
+    } catch (error) {
+      applyExportPlanSettings(exportPlanSettings);
+      setStatusNote(error instanceof Error ? error.message : 'Invalid export settings.');
+      return false;
+    }
   };
 
   const setSceneSourceEnabled = (enabled: boolean) => {
@@ -395,20 +452,26 @@ async function main(): Promise<void> {
     const sceneLoaded = isSceneLoaded();
     const previewActive = keyframeManager.isPreviewActive();
     const exportActive = exportManager.isExporting();
+    const exportCancelling = exportManager.isCancelling();
     const interactionLocked = previewActive || exportActive;
 
     addKeyframeButton.disabled = !sceneLoaded || exportActive;
     clearKeyframesButton.disabled = keyframeCount === 0 || exportActive;
     previewButton.disabled = !sceneLoaded || keyframeCount < 2 || exportActive;
     savePathButton.disabled = keyframeCount === 0 || exportActive;
+    saveExportPlanButton.disabled = keyframeCount === 0 || exportActive;
     loadPathButton.disabled = !sceneLoaded || exportActive;
     timelineScrubber.disabled = !sceneLoaded || keyframeCount < 2 || exportActive;
     exportButton.disabled = !sceneLoaded || keyframeCount < 2 || exportActive;
+    cancelExportButton.disabled = !exportActive || exportCancelling;
+    exportProfileSelect.disabled = exportActive;
+    exportFpsInput.disabled = exportActive;
+    exportFileBaseInput.disabled = exportActive;
     setSceneButtonsEnabled(sceneLoaded, interactionLocked, walkState);
     setSceneSourceEnabled(!exportActive);
     setExportInteractionLock(exportActive);
     updatePreviewButton();
-    updateExportButton();
+    updateExportButton(currentExportProgress);
     updatePerformanceControlsState();
     updatePathVisualsButton();
   };
@@ -647,6 +710,39 @@ async function main(): Promise<void> {
     updatePerformanceControlsState();
   });
 
+  exportProfileSelect.addEventListener('change', () => {
+    const previousProfileId = exportPlanSettings.profileId;
+    if (!syncExportPlanSettingsFromControls()) {
+      return;
+    }
+
+    if (previousProfileId !== exportPlanSettings.profileId) {
+      setStatusNote(`Export profile set to ${getExportProfile(exportPlanSettings.profileId).label}.`);
+    }
+  });
+
+  exportFpsInput.addEventListener('change', () => {
+    const previousFps = exportPlanSettings.fps;
+    if (!syncExportPlanSettingsFromControls()) {
+      return;
+    }
+
+    if (previousFps !== exportPlanSettings.fps) {
+      setStatusNote(`Export FPS set to ${exportPlanSettings.fps}.`);
+    }
+  });
+
+  exportFileBaseInput.addEventListener('change', () => {
+    const previousFileBaseName = exportPlanSettings.fileBaseName;
+    if (!syncExportPlanSettingsFromControls()) {
+      return;
+    }
+
+    if (previousFileBaseName !== exportPlanSettings.fileBaseName) {
+      setStatusNote(`Export file base set to ${exportPlanSettings.fileBaseName}.`);
+    }
+  });
+
   adaptiveFpsButton.addEventListener('click', () => {
     if (!isSceneLoaded() || exportManager.isExporting()) {
       return;
@@ -771,6 +867,21 @@ async function main(): Promise<void> {
     setStatusNote(`Saved camera path with ${path.keyframes.length} keyframe${path.keyframes.length === 1 ? '' : 's'}.`);
   });
 
+  saveExportPlanButton.addEventListener('click', () => {
+    if (!syncExportPlanSettingsFromControls()) {
+      return;
+    }
+
+    const path = keyframeManager.toJSON();
+    const exportPlan = buildExportPlanDocument(path, exportPlanSettings);
+    const blob = new Blob([JSON.stringify(exportPlan, null, 2)], { type: 'application/json' });
+    const exportTargetCount = buildExportSettingsList(exportPlanSettings).length;
+    downloadBlob(blob, 'camera-export-plan.json');
+    setStatusNote(
+      `Saved export plan with ${path.keyframes.length} keyframe${path.keyframes.length === 1 ? '' : 's'} and ${exportTargetCount} export target${exportTargetCount === 1 ? '' : 's'}.`,
+    );
+  });
+
   loadPathButton.addEventListener('click', () => {
     pathFileInput.click();
   });
@@ -783,12 +894,23 @@ async function main(): Promise<void> {
 
     try {
       const text = await file.text();
-      const path = keyframeManager.fromJSON(JSON.parse(text) as unknown);
+      const imported = parseImportedExportDocument(JSON.parse(text) as unknown);
+      const path = keyframeManager.fromJSON(imported.cameraPath);
+      if (imported.exportSettings) {
+        applyExportPlanSettings(imported.exportSettings);
+      }
       selectedKeyframeId = path.keyframes[0]?.id ?? null;
       renderKeyframeList();
       updatePathControlsState();
       syncPathVisualsState();
-      setStatusNote(`Loaded camera path with ${path.keyframes.length} keyframe${path.keyframes.length === 1 ? '' : 's'}.`);
+      if (imported.exportSettings) {
+        const exportTargetCount = buildExportSettingsList(imported.exportSettings).length;
+        setStatusNote(
+          `Loaded export plan with ${path.keyframes.length} keyframe${path.keyframes.length === 1 ? '' : 's'} and ${exportTargetCount} export target${exportTargetCount === 1 ? '' : 's'}.`,
+        );
+      } else {
+        setStatusNote(`Loaded camera path with ${path.keyframes.length} keyframe${path.keyframes.length === 1 ? '' : 's'}.`);
+      }
     } catch (error) {
       setStatusNote(error instanceof Error ? error.message : 'Invalid camera path file.');
     } finally {
@@ -805,15 +927,22 @@ async function main(): Promise<void> {
   });
 
   exportButton.addEventListener('click', async () => {
+    if (!syncExportPlanSettingsFromControls()) {
+      return;
+    }
+
     stopWalkMode({ silent: true });
     keyframeManager.stopPreview();
     adaptiveRenderBudgetController.setSuspended(true);
-
-    const exportPromise = exportManager.exportPath(keyframeManager.getKeyframes(), {
+    currentExportProgress = null;
+    const exportTargets = buildExportSettingsList(exportPlanSettings);
+    const exportPromise = exportManager.exportBatch(keyframeManager.getKeyframes(), {
       onProgress: progress => {
+        currentExportProgress = progress;
         updateExportButton(progress);
         setStatusNote(progress.message);
       },
+      settingsList: exportTargets,
     });
 
     updatePathControlsState();
@@ -821,18 +950,39 @@ async function main(): Promise<void> {
 
     try {
       const result = await exportPromise;
-      downloadBlob(result.blob, result.fileName);
-      setStatusNote(
-        `Export complete. Downloaded ${result.fileName} with ${result.totalFrames} frame${result.totalFrames === 1 ? '' : 's'}.`,
-      );
+      result.results.forEach(exportResult => {
+        downloadBlob(exportResult.blob, exportResult.fileName);
+      });
+      if (result.results.length === 1) {
+        const singleResult = result.results[0];
+        if (singleResult) {
+          setStatusNote(
+            `Export complete. Downloaded ${singleResult.fileName} with ${singleResult.totalFrames} frame${singleResult.totalFrames === 1 ? '' : 's'}.`,
+          );
+        }
+      } else {
+        setStatusNote(
+          `Batch export complete. Downloaded ${result.results.length} MP4s: ${result.results.map(exportResult => exportResult.fileName).join(', ')}.`,
+        );
+      }
     } catch (error) {
       setStatusNote(error instanceof Error ? error.message : 'MP4 export failed.');
     } finally {
+      currentExportProgress = null;
       adaptiveRenderBudgetController.setSuspended(false);
       viewer.setRenderBudget(adaptiveRenderBudgetController.getState().budgetCount);
       updatePathControlsState();
       syncPathVisualsState();
     }
+  });
+
+  cancelExportButton.addEventListener('click', () => {
+    if (!exportManager.cancelExport()) {
+      return;
+    }
+
+    updatePathControlsState();
+    setStatusNote('Cancelling export…');
   });
 
   events.on('scene:progress', ({ percent, message }) => {
@@ -900,10 +1050,10 @@ async function main(): Promise<void> {
   });
 
   renderKeyframeList();
+  applyExportPlanSettings(DEFAULT_EXPORT_PLAN_SETTINGS);
   setStatusNote('Ready to load a scene URL, preset, or local file.');
   selectSceneSourceTab('url');
   setNavigationModeUI(walkState);
-  updateExportButton();
   updatePathControlsState();
   syncPathVisualsState();
   updateTimelineUI(0, 0);

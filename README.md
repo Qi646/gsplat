@@ -7,7 +7,7 @@ The active product code lives at the repo root in `client/` and `server/`. The i
 ## Current Status
 
 - MVP requirements in `ASSIGNMENT.md`: 4/4 implemented in the root app.
-- Optional extras in `ASSIGNMENT.md`: 1/10 fully implemented, with partial progress on timeline editing, easing, deterministic export, and export cancellation.
+- Optional extras in `ASSIGNMENT.md`: 4/10 fully implemented, with partial progress on timeline editing and easing.
 - Deliverables: the repo + README are present; the demo recording and one-page design note are still pending.
 
 Precise requirement-by-requirement status lives in [ASSIGNMENT_PROGRESS.md](./ASSIGNMENT_PROGRESS.md). Keep that file updated whenever implementation or deliverable status changes relative to `ASSIGNMENT.md`.
@@ -15,6 +15,8 @@ Precise requirement-by-requirement status lives in [ASSIGNMENT_PROGRESS.md](./AS
 ## Implemented Optional Extras
 
 - Adaptive FPS / point-budget control: the `Performance` panel can cap live rendered gaussians automatically to stay near a selected target FPS. It is off by default, works in both renderer adapters, and MP4 export temporarily disables it so exported frames stay full quality.
+- Deterministic export plans: the export panel can now save a `camera-export-plan.json` file that captures the current camera path plus the selected export profile, FPS, and output base name. Loading that plan restores the path and export settings so the same scene can be re-exported deterministically.
+- Export cancellation and batch export: the export panel now supports explicit cancel during active rendering/encoding plus a built-in `720p + 1080p Batch` profile that renders and downloads multiple MP4 targets in one run.
 
 ## Repo Layout
 
@@ -115,7 +117,8 @@ Notes:
 - `renderer=spark` switches the viewer adapter to SparkJS for renderer A/B comparisons. `viewerMode` only affects the default `mkkellogg` path.
 - `client/src/path/PathInterpolator.ts`, `client/src/path/KeyframeManager.ts`, and `client/src/path/cameraPath.ts` own keyframe capture, interpolation, preview playback, and path JSON serialization. Saved paths now write camera-path JSON v1, while the importer still accepts older v2 files and ignores the deprecated `sceneRotation` field.
 - `client/src/path/cameraPathVisuals.ts` and `client/src/path/CameraPathOverlay.ts` project the recorded camera path into a shared SVG overlay so both renderer adapters show the same numbered keyframes, movement path, and zoom-aware frustum gizmos.
-- `client/src/export/ExportManager.ts` renders the active camera path into PNG frames at fixed `1280x720 @ 30 FPS`, uploads them to the backend export job, and restores the live viewer state after success or failure.
+- `client/src/export/exportPlan.ts` defines the saved export-plan document format plus the available export profiles (`720p`, `1080p`, and `720p + 1080p Batch`) and the deterministic filename/profile resolution used by the UI.
+- `client/src/export/ExportManager.ts` now renders the active camera path into PNG frames for one or more export targets, uploads them to the backend export job(s), supports explicit cancellation, and restores the live viewer state after success, cancel, or failure.
 - `client/src/performance/AdaptiveRenderBudgetController.ts` owns the optional live-only adaptive FPS controller. `client/src/main.ts` drives it from the shared stats loop, and both renderer adapters expose a shared `setRenderBudget()` seam so the current sorted/visible splat count can be capped consistently.
 - `server/src/presetArchive.ts` caches preset assets under `/tmp/gsplat-presets`, mixing archive-backed verified `.ksplat` entries with direct-download `.ply` presets behind the same preset routes exposed by `server/src/app.ts`.
 - `server/src/exportService.ts` owns FFmpeg export jobs and powers `/api/export/jobs`, `/api/export/jobs/:jobId/frame`, `/api/export/jobs/:jobId/finalize`, and `/api/export/jobs/:jobId`.
@@ -144,13 +147,14 @@ Notes:
 - Walk-mode mouse look is roll-aware, so entering walk mode from an inverted camera pose no longer forces yaw/pitch behavior back through a world-up Euler decomposition.
 - Press `K` to capture a keyframe from the active camera pose; this matches the **+ Add Keyframe** action.
 - Path import and path editing controls remain disabled until a scene has loaded successfully.
-- Saved camera paths now write the original v1 schema. The importer accepts both legacy v1 JSON and older v2 files, but deprecated v2 `sceneRotation` metadata is ignored.
+- Saved camera paths now write the original v1 schema. The importer accepts both legacy v1 JSON and older v2 files, but deprecated v2 `sceneRotation` metadata is ignored. The same load control also accepts `camera-export-plan.json` documents and restores saved export settings when present.
 - MP4 export requires a loaded scene plus at least two keyframes. While export is running, scene/path controls and viewer pointer interaction are locked until the job completes or fails.
 - The camera-path overlay is viewer-only guidance. It is hidden during export and is not burned into the captured MP4 frames.
 - The `Performance` section exposes an optional `Adaptive FPS` toggle plus target slider. When enabled, live viewing can reduce the rendered gaussian budget to stay near the target FPS, and the note reports the live `rendered / total` count plus the current budget percentage.
 - `Adaptive FPS` is a live-view optimization only. MP4 export pauses it, renders all frames at full quality, then restores the previous live budget afterward.
-- Export currently uses fixed defaults of `1280x720 @ 30 FPS`, streams PNG frames to the same-origin backend, and downloads `output.mp4` when FFmpeg finishes.
-- Export progress is client-driven from rendered/uploaded frame counts plus a final `Encoding MP4 with FFmpeg…` phase. There is not yet a user-visible cancel button.
+- The export panel now exposes deterministic export settings: a profile selector (`720p`, `1080p`, or `720p + 1080p Batch`), an integer FPS input, a file-base input, and a `Save Export Plan` action that writes those settings alongside the current path.
+- Export progress is client-driven from rendered/uploaded frame counts plus a final `Encoding MP4 with FFmpeg…` phase. A dedicated `Cancel` button aborts the active request, tells the backend to kill/clean the FFmpeg job, and leaves no partially downloaded MP4 in the UI.
+- Batch export runs one target at a time against the same recorded path and downloads each finished MP4 with deterministic file names (`<base>.mp4` for single-target profiles, `<base>-720p.mp4` / `<base>-1080p.mp4` for the batch profile).
 - The committed browser smoke fixture lives at `client/public/test-assets/smoke-grid.ply` and is used by the Firefox Playwright regression test.
 - In the current host environment, the Firefox browser regression test fails before any scene load begins in both the `?viewerMode=default` and `?viewerMode=compat` paths with `Init error: Error creating WebGL context.` The same symptom can be caused by Firefox lacking WebGL support in headless mode, so interpret it as an environment compatibility failure first and an app regression only after confirming raw Firefox WebGL works on the host.
 - The current client build emits a Vite warning from Spark's packaged WASM data URL during bundling, but the build still completes successfully.
@@ -163,8 +167,8 @@ Notes:
 
 ## Next Milestone
 
-The next milestone is Firefox/renderer follow-up plus deliverable polish:
+The next milestone is deliverable polish plus Firefox/renderer follow-up:
 
+- capture/update the demo recording and one-page design note around the now-expanded export workflow
 - investigate the Firefox `Init error: Error creating WebGL context.` startup failure now captured by the Playwright regression harness
-- capture/update the demo recording and one-page design note around the now-implemented export pipeline
-- decide whether any additional optional extras should be added after the core deliverable is fully documented
+- decide whether any additional optional extras should be added after the core deliverables are documented

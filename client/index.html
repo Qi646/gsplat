@@ -448,7 +448,63 @@
       margin-bottom: 10px;
     }
 
+    .export-settings {
+      display: grid;
+      gap: 10px;
+      margin-bottom: 10px;
+    }
+
+    .export-settings-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 0.75fr) minmax(0, 1.25fr);
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+
+    .field-stack {
+      display: grid;
+      gap: 6px;
+      font-size: 10px;
+      color: var(--muted);
+    }
+
+    .field-stack strong {
+      color: var(--text);
+      font-weight: 500;
+    }
+
+    .select-input,
+    .mini-input {
+      width: 100%;
+      padding: 7px 10px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      color: var(--text);
+      font-family: var(--mono);
+      font-size: 11px;
+      outline: none;
+    }
+
+    .select-input:focus,
+    .mini-input:focus {
+      border-color: var(--accent);
+    }
+
+    .select-input:disabled,
+    .mini-input:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+
     .path-export-actions {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 6px;
+      margin-bottom: 10px;
+    }
+
+    .export-plan-actions {
       margin-bottom: 10px;
     }
 
@@ -700,10 +756,30 @@
           <button class="btn" id="btn-save-path" disabled>⬇ Save</button>
           <button class="btn" id="btn-load-path" disabled>⬆ Load</button>
         </div>
-        <div class="path-export-actions">
-          <button class="btn" id="btn-export-mp4" disabled style="width: 100%">⬇ Export MP4</button>
+        <div class="export-settings">
+          <label class="field-stack" for="export-profile-select">
+            <strong>Export Profile</strong>
+            <select class="select-input" id="export-profile-select"></select>
+          </label>
         </div>
-        <div class="note" id="export-note">1280x720 · 30 FPS via FFmpeg</div>
+        <div class="export-settings-grid">
+          <label class="field-stack" for="export-fps-input">
+            <strong>FPS</strong>
+            <input class="mini-input" id="export-fps-input" type="number" min="1" max="120" step="1" value="30" />
+          </label>
+          <label class="field-stack" for="export-file-base-input">
+            <strong>File Base</strong>
+            <input class="mini-input" id="export-file-base-input" type="text" value="output" placeholder="output" />
+          </label>
+        </div>
+        <div class="path-export-actions">
+          <button class="btn" id="btn-export-mp4" disabled>⬇ Export MP4</button>
+          <button class="btn" id="btn-cancel-export" disabled>✕ Cancel</button>
+        </div>
+        <div class="export-plan-actions">
+          <button class="btn" id="btn-save-export-plan" disabled style="width: 100%">⬇ Save Export Plan</button>
+        </div>
+        <div class="note" id="export-note">720p · 30 FPS via FFmpeg</div>
         <input type="file" id="path-file-input" accept=".json,application/json" hidden />
 
         <div class="timeline-row">
