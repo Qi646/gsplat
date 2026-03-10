@@ -216,6 +216,20 @@ describe('buildScoutCameraPoses', () => {
     });
   });
 
+  it('changes the nearby scout pattern across retry attempts', () => {
+    const bounds = new THREE.Box3(
+      new THREE.Vector3(-4, -4, -6),
+      new THREE.Vector3(4, 4, 6),
+    );
+    const center = bounds.getCenter(new THREE.Vector3());
+    const camera = createCamera(new THREE.Vector3(5, 0, 3), center);
+
+    const firstAttempt = buildScoutCameraPoses(bounds, camera, 0);
+    const secondAttempt = buildScoutCameraPoses(bounds, camera, 1);
+
+    expect(firstAttempt[0]!.position.distanceTo(secondAttempt[0]!.position)).toBeGreaterThan(0.25);
+  });
+
   it('preserves the live camera orbit axis for non-Y-up views', () => {
     const bounds = new THREE.Box3(
       new THREE.Vector3(-4, -4, -6),
@@ -406,6 +420,49 @@ describe('AgenticPathGenerator', () => {
       'Triangulating…',
       'Building path…',
     ]);
+  });
+
+  it('retries recoverable planner failures with a different scout batch', async () => {
+    installCapturePipelineStubs();
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      callback(0);
+      return 1;
+    });
+
+    const progressMessages: string[] = [];
+    const { viewer } = createMockViewer();
+    let requestCount = 0;
+    const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      requestCount += 1;
+      if (requestCount === 1) {
+        return new Response(JSON.stringify({
+          error: 'The planner could not localize the requested subject in enough captured views.',
+        }), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 400,
+        });
+      }
+
+      const request = JSON.parse(String(init?.body ?? '{}')) as { captures: AgenticPathCapture[] };
+      return createPlannerResponse(request.captures);
+    }) as unknown as typeof fetch;
+
+    const generator = new AgenticPathGenerator({
+      fetchImpl,
+      onProgress: progress => {
+        progressMessages.push(progress.message);
+      },
+      viewer,
+    });
+
+    const keyframes = await generator.generatePath({
+      existingKeyframes: [],
+      prompt: 'Do a cinematic orbit around the subject.',
+    });
+
+    expect(keyframes.length).toBeGreaterThan(0);
+    expect(requestCount).toBe(2);
+    expect(progressMessages.some(message => /Trying a different nearby scout set/i.test(message))).toBe(true);
   });
 
   it('times out stalled generation and restores the live camera pose', async () => {
