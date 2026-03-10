@@ -19,10 +19,11 @@ export class WalkControls {
   private readonly sprintMult: number;
   private readonly onStateChange?: (state: WalkControlState) => void;
   private keys: Record<string, boolean> = {};
-  private readonly euler = new THREE.Euler(0, 0, 0, 'YXZ');
   private readonly forward = new THREE.Vector3();
   private readonly right = new THREE.Vector3();
-  private readonly up = new THREE.Vector3(0, 1, 0);
+  private readonly up = new THREE.Vector3();
+  private readonly pitchRotation = new THREE.Quaternion();
+  private readonly yawRotation = new THREE.Quaternion();
   private lastTime = 0;
   private state: WalkControlState = 'inactive';
 
@@ -56,7 +57,6 @@ export class WalkControls {
       return;
     }
 
-    this.euler.setFromQuaternion(this.camera.quaternion, 'YXZ');
     this.lastTime = performance.now();
     this.setState('armed');
 
@@ -113,6 +113,7 @@ export class WalkControls {
 
     this.forward.set(0, 0, -1).applyQuaternion(this.camera.quaternion).normalize();
     this.right.set(1, 0, 0).applyQuaternion(this.camera.quaternion).normalize();
+    this.up.set(0, 1, 0).applyQuaternion(this.camera.quaternion).normalize();
 
     if (this.keys['KeyW'] || this.keys['ArrowUp']) {
       this.camera.position.addScaledVector(this.forward, distance);
@@ -187,10 +188,13 @@ export class WalkControls {
       return;
     }
 
-    this.euler.y -= event.movementX * this.lookSpeed;
-    this.euler.x -= event.movementY * this.lookSpeed;
-    this.euler.x = Math.max(-Math.PI / 2 + 0.05, Math.min(Math.PI / 2 - 0.05, this.euler.x));
-    this.camera.quaternion.setFromEuler(this.euler);
+    this.up.set(0, 1, 0).applyQuaternion(this.camera.quaternion).normalize();
+    this.yawRotation.setFromAxisAngle(this.up, -event.movementX * this.lookSpeed);
+    this.camera.quaternion.premultiply(this.yawRotation).normalize();
+
+    this.right.set(1, 0, 0).applyQuaternion(this.camera.quaternion).normalize();
+    this.pitchRotation.setFromAxisAngle(this.right, -event.movementY * this.lookSpeed);
+    this.camera.quaternion.premultiply(this.pitchRotation).normalize();
   }
 
   private onCanvasClick(event: MouseEvent): void {

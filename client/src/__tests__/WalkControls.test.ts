@@ -256,6 +256,44 @@ describe('WalkControls', () => {
     expect(camera.position.z).toBeCloseTo(expected.z);
   });
 
+  it('moves Q and E along the camera local up axis when the camera is rolled', () => {
+    camera.quaternion.setFromAxisAngle(new THREE.Vector3(0, 0, 1), Math.PI / 2);
+
+    const controls = new WalkControls({
+      camera,
+      canvas: canvas as unknown as HTMLCanvasElement,
+    });
+
+    activateControls(controls);
+    dispatchKey('keydown', 'KeyE');
+    now = 1000;
+    controls.update();
+
+    const expected = new THREE.Vector3(0, 1, 0)
+      .applyQuaternion(camera.quaternion)
+      .multiplyScalar(0.2);
+
+    expect(camera.position.x).toBeCloseTo(expected.x);
+    expect(camera.position.y).toBeCloseTo(expected.y);
+    expect(camera.position.z).toBeCloseTo(expected.z);
+  });
+
+  it('preserves roll when mouse look yaws around the current local up axis', () => {
+    camera.quaternion.setFromAxisAngle(new THREE.Vector3(0, 0, 1), Math.PI / 2);
+    const initialUp = new THREE.Vector3(0, 1, 0).applyQuaternion(camera.quaternion).normalize();
+
+    const controls = new WalkControls({
+      camera,
+      canvas: canvas as unknown as HTMLCanvasElement,
+    });
+
+    activateControls(controls);
+    documentMock.dispatchEvent({ movementX: 120, movementY: 0, type: 'mousemove' });
+
+    const nextUp = new THREE.Vector3(0, 1, 0).applyQuaternion(camera.quaternion).normalize();
+    expect(nextUp.dot(initialUp)).toBeCloseTo(1, 6);
+  });
+
   it('keeps vertical motion on Q and E', () => {
     const controls = new WalkControls({
       camera,

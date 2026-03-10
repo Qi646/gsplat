@@ -2,7 +2,8 @@ import * as GaussianSplats3D from '@mkkellogg/gaussian-splats-3d';
 import * as THREE from 'three';
 import { formatLoadProgress } from '../lib/loadProgress';
 import { computeRobustSceneBounds } from '../lib/robustSceneBounds';
-import type { AppEvents, InterpolatedPose, ViewerDebugSnapshot } from '../types';
+import { findScenePresetByUrl } from '../lib/scenePresets';
+import type { AppEvents, InterpolatedPose, SceneView, ViewerDebugSnapshot } from '../types';
 import { detectSceneFormat } from '../lib/sceneFormat';
 import { applyAdaptiveCameraFrustum } from './adaptiveCameraFrustum';
 import {
@@ -113,12 +114,24 @@ export class SceneViewer implements ViewerAdapter {
         throw new Error('Loaded scene contains no splats.');
       }
 
+      const preset = findScenePresetByUrl(url);
+      if (preset?.sceneRotation) {
+        this.applySceneRotation(
+          new THREE.Quaternion(
+            preset.sceneRotation.x,
+            preset.sceneRotation.y,
+            preset.sceneRotation.z,
+            preset.sceneRotation.w,
+          ),
+        );
+      }
+
       this.computeSceneBounds();
       if (!this.hasUsableSceneBounds()) {
         throw new Error('Loaded scene bounds are invalid.');
       }
 
-      if (!this.frameScene()) {
+      if (!(preset?.defaultView ? this.applySceneView(preset.defaultView) : this.frameScene())) {
         throw new Error('Loaded scene could not be framed.');
       }
 
@@ -238,6 +251,11 @@ export class SceneViewer implements ViewerAdapter {
     return this.camera;
   }
 
+  getSceneRotation(): THREE.Quaternion | null {
+    const scene = this.getActiveScene();
+    return scene ? scene.quaternion.clone() : null;
+  }
+
   getSceneBounds(): THREE.Box3 | null {
     if (!this.sceneLoaded || !this.hasUsableSceneBounds()) {
       return null;
@@ -265,6 +283,19 @@ export class SceneViewer implements ViewerAdapter {
 
   isSceneLoaded(): boolean {
     return this.sceneLoaded;
+  }
+
+  setSceneRotation(rotation: THREE.Quaternion): void {
+    if (!this.applySceneRotation(rotation)) {
+      return;
+    }
+
+    this.computeSceneBounds();
+    if (this.hasUsableSceneBounds() && this.frameScene()) {
+      this.saveInitialCamera();
+    } else {
+      this.syncCameraProjection(true);
+    }
   }
 
   isCompatibilityMode(): boolean {
@@ -389,6 +420,33 @@ export class SceneViewer implements ViewerAdapter {
     }
   }
 
+  private applySceneRotation(rotation: THREE.Quaternion): boolean {
+    const scene = this.getActiveScene();
+    if (!scene) {
+      return false;
+    }
+
+    scene.quaternion.copy(rotation).normalize();
+    scene.updateMatrixWorld(true);
+    this.viewer?.update();
+    return true;
+  }
+
+  private applySceneView(view: SceneView): boolean {
+    if (!this.camera || !this.controls) {
+      return false;
+    }
+
+    this.camera.position.set(view.position.x, view.position.y, view.position.z);
+    this.camera.up.set(view.up?.x ?? 0, view.up?.y ?? 1, view.up?.z ?? 0);
+    this.controls.target.set(view.target.x, view.target.y, view.target.z);
+    this.camera.fov = view.fov;
+    this.camera.lookAt(this.controls.target);
+    this.syncCameraProjection(true);
+    updateOrbitControls(this.controls, 'orbit');
+    return true;
+  }
+
   private resetSceneState(): void {
     this.sceneLoaded = false;
     this.splatCount = 0;
@@ -424,6 +482,14 @@ export class SceneViewer implements ViewerAdapter {
     this.initialUp.copy(this.camera.up);
     this.initialQuaternion.copy(this.camera.quaternion);
     this.initialFov = this.camera.fov;
+  }
+
+  private getActiveScene(): GaussianSplats3D.SplatScene | null {
+    if (!this.viewer || this.viewer.getSceneCount() === 0) {
+      return null;
+    }
+
+    return this.viewer.getSplatScene(0);
   }
 
   private syncCameraProjection(forceProjectionUpdate = false): void {

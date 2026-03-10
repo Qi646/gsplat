@@ -21,11 +21,13 @@ export interface ViewerAdapter {
   resetView(): void;
   applyCameraPose(pose: InterpolatedPose): void;
   getCamera(): THREE.PerspectiveCamera | null;
+  getSceneRotation(): THREE.Quaternion | null;
   getSceneBounds(): THREE.Box3 | null;
   getInteractionSurface(): HTMLCanvasElement | null;
   getFPS(): number;
   getSplatCount(): number;
   isSceneLoaded(): boolean;
+  setSceneRotation(rotation: THREE.Quaternion): void;
   getCompatibilityStatusMessage(): string | null;
   getRendererId(): ViewerRendererId;
   getDebugSnapshot(): ViewerDebugSnapshot;

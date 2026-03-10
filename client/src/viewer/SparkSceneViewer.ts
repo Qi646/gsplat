@@ -1,11 +1,13 @@
 import * as Spark from '@sparkjsdev/spark';
 import * as THREE from 'three';
 import {
+  computeFramedSceneBoundsFromSortedSamples,
   DEFAULT_ROBUST_SCENE_BOUNDS_OPTIONS,
   type RobustSceneBoundsOptions,
 } from '../lib/robustSceneBounds';
+import { findScenePresetByUrl } from '../lib/scenePresets';
 import { detectSceneFormat } from '../lib/sceneFormat';
-import type { InterpolatedPose, ViewerDebugSnapshot } from '../types';
+import type { InterpolatedPose, SceneView, ViewerDebugSnapshot } from '../types';
 import { applyAdaptiveCameraFrustum } from './adaptiveCameraFrustum';
 import {
   createViewerOrbitControls,
@@ -114,12 +116,24 @@ export class SparkSceneViewer implements ViewerAdapter {
         throw new Error('Loaded scene contains no splats.');
       }
 
+      const preset = findScenePresetByUrl(url);
+      if (preset?.sceneRotation) {
+        this.applySceneRotation(
+          new THREE.Quaternion(
+            preset.sceneRotation.x,
+            preset.sceneRotation.y,
+            preset.sceneRotation.z,
+            preset.sceneRotation.w,
+          ),
+        );
+      }
+
       this.computeSceneBounds();
       if (!this.hasUsableSceneBounds()) {
         throw new Error('Loaded scene bounds are invalid.');
       }
 
-      if (!this.frameScene()) {
+      if (!(preset?.defaultView ? this.applySceneView(preset.defaultView) : this.frameScene())) {
         throw new Error('Loaded scene could not be framed.');
       }
 
@@ -244,6 +258,10 @@ export class SparkSceneViewer implements ViewerAdapter {
     return this.camera;
   }
 
+  getSceneRotation(): THREE.Quaternion | null {
+    return this.splatMesh?.quaternion.clone() ?? null;
+  }
+
   getSceneBounds(): THREE.Box3 | null {
     if (!this.sceneLoaded || !this.hasUsableSceneBounds()) {
       return null;
@@ -271,6 +289,19 @@ export class SparkSceneViewer implements ViewerAdapter {
 
   isSceneLoaded(): boolean {
     return this.sceneLoaded;
+  }
+
+  setSceneRotation(rotation: THREE.Quaternion): void {
+    if (!this.applySceneRotation(rotation)) {
+      return;
+    }
+
+    this.computeSceneBounds();
+    if (this.hasUsableSceneBounds() && this.frameScene()) {
+      this.saveInitialCamera();
+    } else {
+      this.syncCameraProjection(true);
+    }
   }
 
   getCompatibilityStatusMessage(): string | null {
@@ -390,6 +421,31 @@ export class SparkSceneViewer implements ViewerAdapter {
     this.sceneBounds.makeEmpty();
   }
 
+  private applySceneRotation(rotation: THREE.Quaternion): boolean {
+    if (!this.splatMesh) {
+      return false;
+    }
+
+    this.splatMesh.quaternion.copy(rotation).normalize();
+    this.splatMesh.updateMatrixWorld(true);
+    return true;
+  }
+
+  private applySceneView(view: SceneView): boolean {
+    if (!this.camera || !this.controls) {
+      return false;
+    }
+
+    this.camera.position.set(view.position.x, view.position.y, view.position.z);
+    this.camera.up.set(view.up?.x ?? 0, view.up?.y ?? 1, view.up?.z ?? 0);
+    this.controls.target.set(view.target.x, view.target.y, view.target.z);
+    this.camera.fov = view.fov;
+    this.camera.lookAt(this.controls.target);
+    this.syncCameraProjection(true);
+    this.controls.update();
+    return true;
+  }
+
   private resetSceneState(): void {
     this.sceneLoaded = false;
     this.splatCount = 0;
@@ -499,49 +555,12 @@ function computeSparkSceneBounds(
     zs.push(center.z);
   });
 
-  if (xs.length < resolvedOptions.minimumRetainedSamples) {
-    return null;
-  }
-
   xs.sort((left, right) => left - right);
   ys.sort((left, right) => left - right);
   zs.sort((left, right) => left - right);
 
-  const box = new THREE.Box3(
-    new THREE.Vector3(
-      interpolateQuantile(xs, resolvedOptions.lowerQuantile),
-      interpolateQuantile(ys, resolvedOptions.lowerQuantile),
-      interpolateQuantile(zs, resolvedOptions.lowerQuantile),
-    ),
-    new THREE.Vector3(
-      interpolateQuantile(xs, resolvedOptions.upperQuantile),
-      interpolateQuantile(ys, resolvedOptions.upperQuantile),
-      interpolateQuantile(zs, resolvedOptions.upperQuantile),
-    ),
-  );
-
-  if (!isFiniteBox(box) || box.isEmpty()) {
-    return null;
-  }
-
-  return box;
+  return computeFramedSceneBoundsFromSortedSamples(xs, ys, zs, resolvedOptions);
 }
-
-function interpolateQuantile(sortedValues: number[], quantile: number): number {
-  const clampedQuantile = THREE.MathUtils.clamp(quantile, 0, 1);
-  const index = (sortedValues.length - 1) * clampedQuantile;
-  const lowerIndex = Math.floor(index);
-  const upperIndex = Math.ceil(index);
-  const lowerValue = sortedValues[lowerIndex] ?? sortedValues[sortedValues.length - 1] ?? 0;
-  const upperValue = sortedValues[upperIndex] ?? lowerValue;
-
-  return THREE.MathUtils.lerp(lowerValue, upperValue, index - lowerIndex);
-}
-
-function isFiniteBox(box: THREE.Box3): boolean {
-  return [box.min.x, box.min.y, box.min.z, box.max.x, box.max.y, box.max.z].every(Number.isFinite);
-}
-
 function canvasToBlob(canvas: HTMLCanvasElement): Promise<Blob> {
   return new Promise((resolve, reject) => {
     canvas.toBlob(blob => {

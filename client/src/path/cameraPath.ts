@@ -5,7 +5,7 @@ import type {
   SerializableVector3,
 } from '../types';
 
-const CAMERA_PATH_VERSION = 1 as const;
+const CAMERA_PATH_VERSION = 2 as const;
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -66,6 +66,15 @@ function readQuaternion(value: unknown, context: string): SerializableQuaternion
   };
 }
 
+function isIdentityQuaternion(quaternion: SerializableQuaternion): boolean {
+  return (
+    Math.abs(quaternion.x) < 1e-6 &&
+    Math.abs(quaternion.y) < 1e-6 &&
+    Math.abs(quaternion.z) < 1e-6 &&
+    Math.abs(quaternion.w - 1) < 1e-6
+  );
+}
+
 function cloneKeyframe(keyframe: Keyframe): Keyframe {
   return {
     id: keyframe.id,
@@ -80,6 +89,16 @@ function normalizeKeyframes(keyframes: Keyframe[]): Keyframe[] {
   return keyframes
     .map(cloneKeyframe)
     .sort((left, right) => left.time - right.time);
+}
+
+function normalizeSceneRotation(
+  sceneRotation?: SerializableQuaternion | null,
+): SerializableQuaternion | undefined {
+  if (!sceneRotation || isIdentityQuaternion(sceneRotation)) {
+    return undefined;
+  }
+
+  return { ...sceneRotation };
 }
 
 function parseKeyframe(value: unknown, index: number): Keyframe {
@@ -108,13 +127,18 @@ function parseKeyframe(value: unknown, index: number): Keyframe {
   };
 }
 
-export function buildCameraPath(keyframes: Keyframe[], createdAt = new Date().toISOString()): CameraPath {
+export function buildCameraPath(
+  keyframes: Keyframe[],
+  createdAt = new Date().toISOString(),
+  sceneRotation?: SerializableQuaternion | null,
+): CameraPath {
   const normalizedKeyframes = normalizeKeyframes(keyframes);
   return {
     version: CAMERA_PATH_VERSION,
     keyframes: normalizedKeyframes,
     totalDuration: normalizedKeyframes.at(-1)?.time ?? 0,
     createdAt,
+    sceneRotation: normalizeSceneRotation(sceneRotation),
   };
 }
 
@@ -123,7 +147,8 @@ export function parseCameraPath(input: unknown): CameraPath {
     throw new Error('Invalid camera path file: root value must be an object.');
   }
 
-  if (input['version'] !== CAMERA_PATH_VERSION) {
+  const version = input['version'];
+  if (version !== 1 && version !== CAMERA_PATH_VERSION) {
     throw new Error('Invalid camera path file: unsupported version.');
   }
 
@@ -142,5 +167,10 @@ export function parseCameraPath(input: unknown): CameraPath {
   }
 
   const createdAt = typeof input['createdAt'] === 'string' ? input['createdAt'] : new Date().toISOString();
-  return buildCameraPath(normalizedKeyframes, createdAt);
+  const sceneRotation =
+    version === CAMERA_PATH_VERSION && input['sceneRotation'] !== undefined
+      ? readQuaternion(input['sceneRotation'], 'scene')
+      : undefined;
+
+  return buildCameraPath(normalizedKeyframes, createdAt, sceneRotation);
 }

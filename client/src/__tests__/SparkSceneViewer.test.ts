@@ -431,7 +431,7 @@ describe('SparkSceneViewer', () => {
     expect(internalBounds.max.toArray()).toEqual(originalMax.toArray());
   });
 
-  it('loads scenes without forcing a spark mesh rotation override', async () => {
+  it('applies the calibrated preset scene rotation for truck', async () => {
     const events = new AppEvents();
     const hostElement = {
       clientHeight: 600,
@@ -443,7 +443,8 @@ describe('SparkSceneViewer', () => {
     await viewer.init();
     await viewer.loadScene('/api/presets/truck.ksplat');
 
-    expect(mockModule.__mockState.lastParsedMesh?.quaternion.toArray()).toEqual([0, 0, 0, 1]);
+    expect(mockModule.__mockState.lastParsedMesh?.quaternion.toArray()).toEqual([1, 0, 0, 0]);
+    expect(viewer.getSceneRotation()?.toArray()).toEqual([1, 0, 0, 0]);
   });
 
   it('maps cached ply presets to the Spark ply file type', async () => {
@@ -460,6 +461,30 @@ describe('SparkSceneViewer', () => {
 
     expect(mockModule.__mockState.loadCalls).toEqual(['/api/presets/luigi.ply']);
     expect(mockModule.__mockState.fileType).toBe('ply');
+  });
+
+  it('updates Spark scene rotation live and refreshes reset view from the new framing', async () => {
+    const events = new AppEvents();
+    const hostElement = {
+      clientHeight: 600,
+      clientWidth: 800,
+      replaceChildren: vi.fn(),
+    } as unknown as HTMLDivElement;
+    const viewer = new SparkSceneViewer({ hostElement, events });
+
+    await viewer.init();
+    await viewer.loadScene('/api/presets/luigi.ply');
+
+    const rotation = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), Math.PI / 2);
+    viewer.setSceneRotation(rotation);
+    const refreshedResetPosition = viewer.getCamera()?.position.clone();
+
+    viewer.getCamera()?.position.set(99, 99, 99);
+    viewer.resetView();
+
+    expect(mockModule.__mockState.lastParsedMesh?.quaternion.toArray()).toEqual(rotation.toArray());
+    expect(viewer.getSceneRotation()?.toArray()).toEqual(rotation.toArray());
+    expect(viewer.getCamera()?.position.toArray()).toEqual(refreshedResetPosition?.toArray());
   });
 
   it('applies inverted camera poses without snapping them upright', async () => {

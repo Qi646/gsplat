@@ -1,6 +1,9 @@
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
-import { computeRobustSceneBounds } from '../lib/robustSceneBounds';
+import {
+  computeFramedSceneBoundsFromSortedSamples,
+  computeRobustSceneBounds,
+} from '../lib/robustSceneBounds';
 
 describe('computeRobustSceneBounds', () => {
   it('trims extreme outliers from sampled splat bounds', () => {
@@ -51,6 +54,36 @@ describe('computeRobustSceneBounds', () => {
     ]);
 
     expect(computeRobustSceneBounds(splatMesh, { minimumRetainedSamples: 1 })).toBeNull();
+  });
+
+  it('switches to tighter framing bounds when wide quantiles are much larger', () => {
+    const xs = [-100, -80, ...Array.from({ length: 200 }, (_, index) => index / 10), 80, 100].sort(
+      (left, right) => left - right,
+    );
+    const ys = Array.from({ length: xs.length }, (_, index) => (index % 5) - 2).sort((left, right) => left - right);
+    const zs = Array.from({ length: xs.length }, (_, index) => (index % 7) - 3).sort((left, right) => left - right);
+
+    const box = computeFramedSceneBoundsFromSortedSamples(xs, ys, zs, {
+      minimumRetainedSamples: 1,
+    });
+
+    expect(box).not.toBeNull();
+    expect(box!.min.x).toBeGreaterThan(-10);
+    expect(box!.max.x).toBeLessThan(30);
+  });
+
+  it('keeps the wider framing bounds when the scene is uniformly distributed', () => {
+    const xs = Array.from({ length: 200 }, (_, index) => -10 + index * 0.1);
+    const ys = Array.from({ length: 200 }, (_, index) => -5 + index * 0.05);
+    const zs = Array.from({ length: 200 }, (_, index) => -3 + index * 0.03);
+
+    const box = computeFramedSceneBoundsFromSortedSamples(xs, ys, zs, {
+      minimumRetainedSamples: 1,
+    });
+
+    expect(box).not.toBeNull();
+    expect(box!.min.x).toBeCloseTo(-9.801, 3);
+    expect(box!.max.x).toBeCloseTo(9.701, 3);
   });
 });
 

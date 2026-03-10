@@ -8,6 +8,9 @@ export interface SceneBoundsSplatMesh {
 }
 
 export interface RobustSceneBoundsOptions {
+  framingTighteningRadiusRatio: number;
+  framingUpperQuantile: number;
+  framingLowerQuantile: number;
   lowerQuantile: number;
   maxSamples: number;
   minimumAlpha: number;
@@ -16,6 +19,9 @@ export interface RobustSceneBoundsOptions {
 }
 
 export const DEFAULT_ROBUST_SCENE_BOUNDS_OPTIONS: RobustSceneBoundsOptions = {
+  framingTighteningRadiusRatio: 1.4,
+  framingUpperQuantile: 0.95,
+  framingLowerQuantile: 0.05,
   lowerQuantile: 0.01,
   maxSamples: 16_384,
   minimumAlpha: 5,
@@ -70,24 +76,78 @@ export function computeRobustSceneBounds(
   ys.sort((left, right) => left - right);
   zs.sort((left, right) => left - right);
 
-  const box = new THREE.Box3(
-    new THREE.Vector3(
-      interpolateQuantile(xs, resolvedOptions.lowerQuantile),
-      interpolateQuantile(ys, resolvedOptions.lowerQuantile),
-      interpolateQuantile(zs, resolvedOptions.lowerQuantile),
-    ),
-    new THREE.Vector3(
-      interpolateQuantile(xs, resolvedOptions.upperQuantile),
-      interpolateQuantile(ys, resolvedOptions.upperQuantile),
-      interpolateQuantile(zs, resolvedOptions.upperQuantile),
-    ),
-  );
+  return computeFramedSceneBoundsFromSortedSamples(xs, ys, zs, resolvedOptions);
+}
 
-  if (!isFiniteBox(box) || box.isEmpty()) {
+export function computeFramedSceneBoundsFromSortedSamples(
+  xs: number[],
+  ys: number[],
+  zs: number[],
+  options: Partial<RobustSceneBoundsOptions> = {},
+): THREE.Box3 | null {
+  const resolvedOptions = {
+    ...DEFAULT_ROBUST_SCENE_BOUNDS_OPTIONS,
+    ...options,
+  };
+
+  if (xs.length < resolvedOptions.minimumRetainedSamples || ys.length < resolvedOptions.minimumRetainedSamples || zs.length < resolvedOptions.minimumRetainedSamples) {
     return null;
   }
 
-  return box;
+  const wideBox = createQuantileBox(
+    xs,
+    ys,
+    zs,
+    resolvedOptions.lowerQuantile,
+    resolvedOptions.upperQuantile,
+  );
+  if (!isFiniteBox(wideBox) || wideBox.isEmpty()) {
+    return null;
+  }
+
+  const tightBox = createQuantileBox(
+    xs,
+    ys,
+    zs,
+    resolvedOptions.framingLowerQuantile,
+    resolvedOptions.framingUpperQuantile,
+  );
+
+  if (!isFiniteBox(tightBox) || tightBox.isEmpty()) {
+    return wideBox;
+  }
+
+  const wideRadius = wideBox.getBoundingSphere(new THREE.Sphere()).radius;
+  const tightRadius = tightBox.getBoundingSphere(new THREE.Sphere()).radius;
+  if (
+    tightRadius > 0 &&
+    wideRadius / tightRadius > resolvedOptions.framingTighteningRadiusRatio
+  ) {
+    return tightBox;
+  }
+
+  return wideBox;
+}
+
+function createQuantileBox(
+  xs: number[],
+  ys: number[],
+  zs: number[],
+  lowerQuantile: number,
+  upperQuantile: number,
+): THREE.Box3 {
+  return new THREE.Box3(
+    new THREE.Vector3(
+      interpolateQuantile(xs, lowerQuantile),
+      interpolateQuantile(ys, lowerQuantile),
+      interpolateQuantile(zs, lowerQuantile),
+    ),
+    new THREE.Vector3(
+      interpolateQuantile(xs, upperQuantile),
+      interpolateQuantile(ys, upperQuantile),
+      interpolateQuantile(zs, upperQuantile),
+    ),
+  );
 }
 
 function interpolateQuantile(sortedValues: number[], quantile: number): number {

@@ -1,7 +1,8 @@
+import * as THREE from 'three';
 import { WalkControls, type WalkControlState } from './controls/WalkControls';
 import { DEFAULT_EXPORT_SETTINGS, ExportManager, type ExportProgress } from './export/ExportManager';
 import { parseAppRuntimeQuery } from './lib/runtimeQuery';
-import { SCENE_PRESETS } from './lib/scenePresets';
+import { findScenePresetByUrl, SCENE_PRESETS } from './lib/scenePresets';
 import { CameraPathOverlay } from './path/CameraPathOverlay';
 import { KeyframeManager } from './path/KeyframeManager';
 import { AppEvents, type AppBootPhase, type Keyframe, type ViewerRendererId } from './types';
@@ -36,6 +37,20 @@ function setSceneButtonsEnabled(sceneLoaded: boolean, previewActive: boolean, wa
   ($('#btn-walk-mode') as HTMLButtonElement).disabled = !sceneLoaded || previewActive;
 }
 
+function setOrientationButtonsEnabled(
+  sceneLoaded: boolean,
+  interactionLocked: boolean,
+  walkState: WalkControlState,
+): void {
+  const disabled = !sceneLoaded || interactionLocked || walkState !== 'inactive';
+
+  document
+    .querySelectorAll<HTMLButtonElement>('[data-scene-rotation], #btn-reset-orientation')
+    .forEach(button => {
+      button.disabled = disabled;
+    });
+}
+
 function formatSeconds(seconds: number): string {
   return `${seconds.toFixed(1)}s`;
 }
@@ -51,6 +66,31 @@ function downloadBlob(blob: Blob, fileName: string): void {
   anchor.download = fileName;
   anchor.click();
   URL.revokeObjectURL(url);
+}
+
+function serializableQuaternionToThree(
+  quaternion?: { x: number; y: number; z: number; w: number } | null,
+): THREE.Quaternion {
+  if (!quaternion) {
+    return new THREE.Quaternion();
+  }
+
+  return new THREE.Quaternion(quaternion.x, quaternion.y, quaternion.z, quaternion.w).normalize();
+}
+
+function createSceneRotationDelta(
+  axis: 'pitch' | 'yaw' | 'roll',
+  degrees: number,
+): THREE.Quaternion {
+  const radians = THREE.MathUtils.degToRad(degrees);
+  const axisVector =
+    axis === 'pitch'
+      ? new THREE.Vector3(1, 0, 0)
+      : axis === 'yaw'
+        ? new THREE.Vector3(0, 1, 0)
+        : new THREE.Vector3(0, 0, 1);
+
+  return new THREE.Quaternion().setFromAxisAngle(axisVector, radians);
 }
 
 async function main(): Promise<void> {
@@ -86,6 +126,7 @@ async function main(): Promise<void> {
   const statCount = $('#stat-count');
   const statScene = $('#stat-scene');
   const statFps = $('#stat-fps');
+  const resetOrientationButton = $('#btn-reset-orientation') as HTMLButtonElement;
 
   const events = new AppEvents();
   const getDebugSnapshot = () => ({
@@ -142,6 +183,7 @@ async function main(): Promise<void> {
   let walkState: WalkControlState = 'inactive';
   let pathVisualsEnabled = true;
   let sceneLoadInProgress = false;
+  let currentSceneUrl: string | null = null;
   let selectedKeyframeId: string | null = null;
   const defaultExportNote = `${DEFAULT_EXPORT_SETTINGS.width}x${DEFAULT_EXPORT_SETTINGS.height} · ${DEFAULT_EXPORT_SETTINGS.fps} FPS via FFmpeg`;
 
@@ -263,6 +305,7 @@ async function main(): Promise<void> {
     const sceneLoaded = !sceneLoadInProgress && viewer.isSceneLoaded();
     const previewActive = keyframeManager.isPreviewActive();
     const exportActive = exportManager.isExporting();
+    const interactionLocked = previewActive || exportActive;
 
     addKeyframeButton.disabled = !sceneLoaded || exportActive;
     clearKeyframesButton.disabled = keyframeCount === 0 || exportActive;
@@ -271,7 +314,8 @@ async function main(): Promise<void> {
     loadPathButton.disabled = !sceneLoaded || exportActive;
     timelineScrubber.disabled = !sceneLoaded || keyframeCount < 2 || exportActive;
     exportButton.disabled = !sceneLoaded || keyframeCount < 2 || exportActive;
-    setSceneButtonsEnabled(sceneLoaded, previewActive || exportActive, walkState);
+    setSceneButtonsEnabled(sceneLoaded, interactionLocked, walkState);
+    setOrientationButtonsEnabled(sceneLoaded, interactionLocked, walkState);
     setSceneSourceEnabled(!exportActive);
     setExportInteractionLock(exportActive);
     updatePreviewButton();
@@ -283,6 +327,42 @@ async function main(): Promise<void> {
     if (walkState !== 'inactive') {
       walkControls.disable();
     }
+  };
+
+  const getCurrentScenePreset = () => (currentSceneUrl ? findScenePresetByUrl(currentSceneUrl) : null);
+
+  const getBaselineSceneRotation = () =>
+    serializableQuaternionToThree(getCurrentScenePreset()?.sceneRotation);
+
+  const applySceneRotation = (
+    nextRotation: THREE.Quaternion,
+    statusMessage: string,
+  ): boolean => {
+    if (!viewer.isSceneLoaded()) {
+      return false;
+    }
+
+    const keyframeCount = keyframeManager.getKeyframes().length;
+    if (
+      keyframeCount > 0 &&
+      !window.confirm('Rotating the scene clears the current camera path. Continue?')
+    ) {
+      return false;
+    }
+
+    keyframeManager.stopPreview();
+    stopWalkMode();
+
+    if (keyframeCount > 0) {
+      selectedKeyframeId = null;
+      keyframeManager.clear();
+    }
+
+    viewer.setSceneRotation(nextRotation);
+    updatePathControlsState();
+    syncPathVisualsState();
+    setStatusNote(statusMessage);
+    return true;
   };
 
   const renderKeyframeList = () => {
@@ -400,6 +480,7 @@ async function main(): Promise<void> {
     stopWalkMode();
     keyframeManager.stopPreview();
     sceneLoadInProgress = true;
+    currentSceneUrl = null;
     loadingOverlay.classList.remove('hidden');
     progressFill.style.width = '0%';
     progressLabel.textContent = 'Starting…';
@@ -417,6 +498,7 @@ async function main(): Promise<void> {
 
     try {
       await viewer.loadScene(url);
+      currentSceneUrl = url;
       keyframeManager.clear();
       selectedKeyframeId = null;
       sceneLoadInProgress = false;
@@ -427,6 +509,7 @@ async function main(): Promise<void> {
       setStatusNote('Scene loaded. Capture keyframes, scrub the path, or preview a camera move.');
     } catch (error) {
       sceneLoadInProgress = false;
+      currentSceneUrl = null;
       const message = error instanceof Error ? error.message : 'Unknown load error';
       progressLabel.textContent = `Error: ${message}`;
       setStatusNote('Scene load failed. Try another public URL or preset.');
@@ -483,6 +566,46 @@ async function main(): Promise<void> {
 
   ($('#btn-reset-view') as HTMLButtonElement).addEventListener('click', () => {
     viewer.resetView();
+  });
+
+  document.querySelectorAll<HTMLButtonElement>('[data-scene-rotation]').forEach(button => {
+    button.addEventListener('click', () => {
+      const rotationSpec = button.dataset['sceneRotation'];
+      if (!rotationSpec) {
+        return;
+      }
+
+      const [axisValue, degreesValue] = rotationSpec.split(':');
+      if (
+        (axisValue !== 'pitch' && axisValue !== 'yaw' && axisValue !== 'roll') ||
+        !degreesValue
+      ) {
+        return;
+      }
+
+      const degrees = Number(degreesValue);
+      if (!Number.isFinite(degrees)) {
+        return;
+      }
+
+      const currentRotation = viewer.getSceneRotation() ?? new THREE.Quaternion();
+      const nextRotation = currentRotation
+        .clone()
+        .multiply(createSceneRotationDelta(axisValue, degrees))
+        .normalize();
+
+      applySceneRotation(nextRotation, `Scene rotated ${axisValue} ${degrees > 0 ? '+' : ''}${degrees}°.`);
+    });
+  });
+
+  resetOrientationButton.addEventListener('click', () => {
+    const preset = getCurrentScenePreset();
+    applySceneRotation(
+      getBaselineSceneRotation(),
+      preset
+        ? `Scene orientation reset to the ${preset.name} preset calibration.`
+        : 'Scene orientation reset to the source-native baseline.',
+    );
   });
 
   pathVisualsButton.addEventListener('click', () => {

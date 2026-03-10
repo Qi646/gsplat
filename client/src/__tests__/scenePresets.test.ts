@@ -11,6 +11,8 @@ describe('SCENE_PRESETS', () => {
       expect(preset.url.trim().length).toBeGreaterThan(0);
       expect(preset.description.trim().length).toBeGreaterThan(0);
       expect(preset.sizeMB).toBeGreaterThan(0);
+      expect(preset.sceneRotation).toBeDefined();
+      expect(preset.defaultView).toBeDefined();
       expect(urls.has(preset.url)).toBe(false);
       urls.add(preset.url);
     }
@@ -31,5 +33,19 @@ describe('SCENE_PRESETS', () => {
       '/api/presets/truck.ksplat',
     ]);
     expect(detectSceneFormat(SCENE_PRESETS[0]!.url)).toBe('ply');
+  });
+
+  it('stores upright calibration for the large ksplat demo presets', () => {
+    expect(SCENE_PRESETS.find(preset => preset.name === 'Luigi')?.sceneRotation).toEqual({
+      x: 0,
+      y: 0,
+      z: 0,
+      w: 1,
+    });
+    expect(SCENE_PRESETS.filter(preset => preset.name !== 'Luigi').map(preset => preset.sceneRotation)).toEqual([
+      { x: 1, y: 0, z: 0, w: 0 },
+      { x: 1, y: 0, z: 0, w: 0 },
+      { x: 1, y: 0, z: 0, w: 0 },
+    ]);
   });
 });
