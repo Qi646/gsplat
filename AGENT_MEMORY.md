@@ -1,6 +1,7 @@
 # AGENT_MEMORY
 
 ## Current Context
+- The root app now supports agentic camera-path insertion: the Camera Path panel captures the current view plus four scout views, sends them to a server-side vision planner, triangulates a subject anchor locally, and appends deterministic orbit keyframes back into the normal keyframe path flow.
 - Repo root `/home/qi/proj/gsplat_1` now has an initial import commit for the `gsplat-viewer` project.
 - The imported project lives under `gsplat-viewer/`.
 - A local archive copy exists at `gsplat-viewer.zip` and should stay untracked.
@@ -149,3 +150,4 @@
 - 2026-03-10: Added a persistent navigation-mode indicator, direct `1` Inspect / `2` Walk shortcuts, immediate pointer-lock capture from the initiating button/key gesture, walk lock-failure handling, and matching client unit coverage; revalidated with passing root `npm test` / `npm run build`.
 - 2026-03-10: Added the optional adaptive-FPS / live render-budget extra with a new `Performance` panel, shared controller logic, matching `mkkellogg` + Spark render-budget caps, export full-quality override/restore, expanded client unit coverage, updated repo docs/progress, and revalidated with passing root `npm test` / `npm run build`.
 - 2026-03-10: Completed the remaining export/engineering extras by adding deterministic export-plan JSON save/load, cancelable export orchestration, and sequential 720p + 1080p batch export with aggregate progress; revalidated with passing root `npm test` / `npm run build`.
+- 2026-03-10: Added prompt-driven agentic orbit generation with current-plus-scout image capture, a server-side OpenAI-compatible vision planner route, client-side subject triangulation + deterministic keyframe insertion, matching client/server unit coverage, and repo-facing docs/progress updates.

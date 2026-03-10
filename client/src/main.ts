@@ -19,6 +19,7 @@ import { parseAppRuntimeQuery } from './lib/runtimeQuery';
 import { detectSceneFormat } from './lib/sceneFormat';
 import { resolveSceneLoadSource, type SceneLoadInput, type SceneLoadSource } from './lib/sceneSource';
 import { SCENE_PRESETS } from './lib/scenePresets';
+import { AgenticPathGenerator } from './path/agenticPath';
 import { CameraPathOverlay } from './path/CameraPathOverlay';
 import { KeyframeManager } from './path/KeyframeManager';
 import {
@@ -105,6 +106,8 @@ async function main(): Promise<void> {
   const exportProfileSelect = $('#export-profile-select') as HTMLSelectElement;
   const exportFpsInput = $('#export-fps-input') as HTMLInputElement;
   const exportFileBaseInput = $('#export-file-base-input') as HTMLInputElement;
+  const pathPromptInput = $('#path-prompt-input') as HTMLTextAreaElement;
+  const generatePathButton = $('#btn-generate-path') as HTMLButtonElement;
   const pathFileInput = $('#path-file-input') as HTMLInputElement;
   const timelineScrubber = $('#timeline-scrubber') as HTMLInputElement;
   const pathVisualsButton = $('#btn-toggle-path-visuals') as HTMLButtonElement;
@@ -177,6 +180,7 @@ async function main(): Promise<void> {
   }
 
   const keyframeManager = new KeyframeManager({ viewer, events });
+  const agenticPathGenerator = new AgenticPathGenerator({ viewer });
   const exportManager = new ExportManager({ viewer });
   const adaptiveRenderBudgetController = new AdaptiveRenderBudgetController();
   const pathOverlay = new CameraPathOverlay(pathOverlayElement);
@@ -190,7 +194,8 @@ async function main(): Promise<void> {
   let exportPlanSettings: ExportPlanSettings = { ...DEFAULT_EXPORT_PLAN_SETTINGS };
   let currentExportProgress: ExportProgress | null = null;
   const isSceneLoaded = () => !sceneLoadInProgress && viewer.isSceneLoaded();
-  const isInteractionLocked = () => keyframeManager.isPreviewActive() || exportManager.isExporting();
+  const isInteractionLocked = () =>
+    keyframeManager.isPreviewActive() || exportManager.isExporting() || agenticPathGenerator.isGenerating();
   targetFpsSlider.min = String(adaptiveRenderBudgetController.getState().minTargetFps);
   targetFpsSlider.max = String(adaptiveRenderBudgetController.getState().maxTargetFps);
   targetFpsSlider.step = String(adaptiveRenderBudgetController.getState().sliderStep);
@@ -453,23 +458,29 @@ async function main(): Promise<void> {
     const previewActive = keyframeManager.isPreviewActive();
     const exportActive = exportManager.isExporting();
     const exportCancelling = exportManager.isCancelling();
-    const interactionLocked = previewActive || exportActive;
+    const generationActive = agenticPathGenerator.isGenerating();
+    const interactionLocked = previewActive || exportActive || generationActive;
 
-    addKeyframeButton.disabled = !sceneLoaded || exportActive;
-    clearKeyframesButton.disabled = keyframeCount === 0 || exportActive;
-    previewButton.disabled = !sceneLoaded || keyframeCount < 2 || exportActive;
-    savePathButton.disabled = keyframeCount === 0 || exportActive;
-    saveExportPlanButton.disabled = keyframeCount === 0 || exportActive;
-    loadPathButton.disabled = !sceneLoaded || exportActive;
-    timelineScrubber.disabled = !sceneLoaded || keyframeCount < 2 || exportActive;
-    exportButton.disabled = !sceneLoaded || keyframeCount < 2 || exportActive;
+    addKeyframeButton.disabled = !sceneLoaded || exportActive || generationActive;
+    clearKeyframesButton.disabled = keyframeCount === 0 || exportActive || generationActive;
+    previewButton.disabled = !sceneLoaded || keyframeCount < 2 || exportActive || generationActive;
+    savePathButton.disabled = keyframeCount === 0 || exportActive || generationActive;
+    saveExportPlanButton.disabled = keyframeCount === 0 || exportActive || generationActive;
+    loadPathButton.disabled = !sceneLoaded || exportActive || generationActive;
+    timelineScrubber.disabled = !sceneLoaded || keyframeCount < 2 || exportActive || generationActive;
+    exportButton.disabled = !sceneLoaded || keyframeCount < 2 || exportActive || generationActive;
     cancelExportButton.disabled = !exportActive || exportCancelling;
-    exportProfileSelect.disabled = exportActive;
-    exportFpsInput.disabled = exportActive;
-    exportFileBaseInput.disabled = exportActive;
+    exportProfileSelect.disabled = exportActive || generationActive;
+    exportFpsInput.disabled = exportActive || generationActive;
+    exportFileBaseInput.disabled = exportActive || generationActive;
+    pathPromptInput.disabled = !sceneLoaded || exportActive || generationActive;
+    generatePathButton.disabled =
+      !sceneLoaded || exportActive || generationActive || pathPromptInput.value.trim().length === 0;
+    generatePathButton.classList.toggle('active', generationActive);
+    generatePathButton.textContent = generationActive ? 'Analyzing…' : '✨ Generate Path';
     setSceneButtonsEnabled(sceneLoaded, interactionLocked, walkState);
-    setSceneSourceEnabled(!exportActive);
-    setExportInteractionLock(exportActive);
+    setSceneSourceEnabled(!exportActive && !generationActive);
+    setExportInteractionLock(exportActive || generationActive);
     updatePreviewButton();
     updateExportButton(currentExportProgress);
     updatePerformanceControlsState();
@@ -627,7 +638,7 @@ async function main(): Promise<void> {
       updatePathControlsState();
       syncPathVisualsState();
       updateTimelineUI(0, 0);
-      setStatusNote('Scene loaded. Use Z/C to roll the camera, press K to capture keyframes, scrub the path, or preview a camera move.');
+      setStatusNote('Scene loaded. Use Z/C to roll the camera, press K to capture keyframes, generate an orbit prompt, scrub the path, or preview a camera move.');
     } catch (error) {
       sceneLoadInProgress = false;
       currentSceneObjectUrl = null;
@@ -762,6 +773,18 @@ async function main(): Promise<void> {
     }
   });
 
+  pathPromptInput.addEventListener('input', () => {
+    updatePathControlsState();
+  });
+
+  document.querySelectorAll<HTMLButtonElement>('[data-agentic-prompt]').forEach(button => {
+    button.addEventListener('click', () => {
+      pathPromptInput.value = button.dataset['agenticPrompt'] ?? '';
+      pathPromptInput.focus();
+      updatePathControlsState();
+    });
+  });
+
   document.addEventListener('keydown', event => {
     const action = resolveNavigationShortcutAction(event, {
       interactionLocked: isInteractionLocked(),
@@ -827,6 +850,39 @@ async function main(): Promise<void> {
 
   addKeyframeButton.addEventListener('click', () => {
     addAndRenderKeyframe();
+  });
+
+  generatePathButton.addEventListener('click', async () => {
+    const prompt = pathPromptInput.value.trim();
+    if (!prompt || !isSceneLoaded() || exportManager.isExporting()) {
+      return;
+    }
+
+    stopWalkMode({ silent: true });
+    keyframeManager.stopPreview();
+    updatePathControlsState();
+    syncPathVisualsState();
+    setStatusNote('Capturing scout views and analyzing the scene for an agentic camera path…');
+
+    try {
+      const generatedKeyframes = await agenticPathGenerator.generatePath({
+        existingKeyframes: keyframeManager.getKeyframes(),
+        prompt,
+      });
+      const appendedKeyframes = keyframeManager.appendKeyframes(generatedKeyframes);
+      selectedKeyframeId = appendedKeyframes[0]?.id ?? selectedKeyframeId;
+      renderKeyframeList();
+      updatePathControlsState();
+      syncPathVisualsState();
+      setStatusNote(
+        `Appended ${appendedKeyframes.length} generated keyframe${appendedKeyframes.length === 1 ? '' : 's'} from the prompt.`,
+      );
+    } catch (error) {
+      setStatusNote(error instanceof Error ? error.message : 'Could not generate an agentic camera path.');
+    } finally {
+      updatePathControlsState();
+      syncPathVisualsState();
+    }
   });
 
   clearKeyframesButton.addEventListener('click', () => {

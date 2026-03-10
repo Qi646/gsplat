@@ -5,6 +5,7 @@ import request from 'supertest';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { CROSS_ORIGIN_ISOLATION_HEADERS, createApp, type PresetService } from '../src/app.js';
 import { ExportServiceError, type ExportService } from '../src/exportService.js';
+import { PathGenerationError, type PathGenerationPlanner } from '../src/pathGeneration.js';
 
 describe('createApp', () => {
   let tempDir: string | null = null;
@@ -34,13 +35,31 @@ describe('createApp', () => {
     };
   }
 
+  function createPathPlanner(overrides: Partial<PathGenerationPlanner> = {}): PathGenerationPlanner {
+    return {
+      generatePathPlan: overrides.generatePathPlan ?? vi.fn(async () => ({
+        shotSpec: {
+          fullOrbit: false,
+          orientationMode: 'look-at-subject',
+          pathType: 'orbit',
+        },
+        subjectLocalizations: [
+          { captureId: 'capture-current', confidence: 0.96, pixelX: 320, pixelY: 240 },
+          { captureId: 'capture-scout-1', confidence: 0.92, pixelX: 300, pixelY: 220 },
+        ],
+      })),
+    };
+  }
+
   function createTestApp(options: {
     exportService?: ExportService;
+    pathPlanner?: PathGenerationPlanner;
     presetService?: PresetService;
     serveClientBuild?: boolean;
   } = {}) {
     return createApp({
       exportService: options.exportService ?? createExportService(),
+      pathPlanner: options.pathPlanner ?? createPathPlanner(),
       presetService: options.presetService ?? createPresetService(),
       serveClientBuild: options.serveClientBuild ?? false,
     });
@@ -225,6 +244,57 @@ describe('createApp', () => {
     expect(response.status).toBe(404);
     expect(response.body).toEqual({ error: 'Unknown export job: missing' });
   });
+
+  it('returns a generated path plan from the planner route', async () => {
+    const pathPlanner = createPathPlanner({
+      generatePathPlan: vi.fn(async requestBody => {
+        expect(requestBody).toMatchObject({
+          prompt: 'Orbit the truck and keep the camera on it.',
+        });
+
+        return {
+          shotSpec: {
+            fullOrbit: true,
+            orientationMode: 'look-at-subject',
+            pathType: 'orbit',
+          },
+          subjectLocalizations: [
+            { captureId: 'capture-current', confidence: 0.96, pixelX: 320, pixelY: 240 },
+            { captureId: 'capture-scout-1', confidence: 0.91, pixelX: 300, pixelY: 220 },
+          ],
+        };
+      }),
+    });
+    const app = createTestApp({ pathPlanner });
+
+    const response = await request(app)
+      .post('/api/path/generate')
+      .send(createPathGenerationRequest());
+
+    expect(response.status).toBe(200);
+    expect(response.body.shotSpec).toEqual({
+      fullOrbit: true,
+      orientationMode: 'look-at-subject',
+      pathType: 'orbit',
+    });
+  });
+
+  it('returns path-generation planner errors as route errors', async () => {
+    const app = createTestApp({
+      pathPlanner: createPathPlanner({
+        generatePathPlan: vi.fn(async () => {
+          throw new PathGenerationError(400, 'The planner could not localize the truck.');
+        }),
+      }),
+    });
+
+    const response = await request(app)
+      .post('/api/path/generate')
+      .send(createPathGenerationRequest());
+
+    expect(response.status).toBe(400);
+    expect(response.body).toEqual({ error: 'The planner could not localize the truck.' });
+  });
 });
 
 function binaryParser(
@@ -239,4 +309,49 @@ function binaryParser(
   response.on('end', () => {
     callback(null, Buffer.from(data, 'binary'));
   });
+}
+
+function createPathGenerationRequest() {
+  return {
+    captures: [
+      {
+        camera: {
+          aspect: 16 / 9,
+          fov: 60,
+          position: { x: 4, y: 1, z: 0 },
+          quaternion: { x: 0, y: 0, z: 0, w: 1 },
+        },
+        height: 360,
+        id: 'capture-current',
+        imageDataUrl: 'data:image/jpeg;base64,AA==',
+        role: 'current',
+        width: 640,
+      },
+      {
+        camera: {
+          aspect: 16 / 9,
+          fov: 60,
+          position: { x: 0, y: 1, z: 4 },
+          quaternion: { x: 0, y: 0, z: 0, w: 1 },
+        },
+        height: 360,
+        id: 'capture-scout-1',
+        imageDataUrl: 'data:image/jpeg;base64,AA==',
+        role: 'scout',
+        width: 640,
+      },
+    ],
+    currentCamera: {
+      aspect: 16 / 9,
+      fov: 60,
+      position: { x: 4, y: 1, z: 0 },
+      quaternion: { x: 0, y: 0, z: 0, w: 1 },
+    },
+    pathTail: null,
+    prompt: 'Orbit the truck and keep the camera on it.',
+    sceneBounds: {
+      max: { x: 2, y: 2, z: 2 },
+      min: { x: -2, y: -2, z: -2 },
+    },
+  };
 }

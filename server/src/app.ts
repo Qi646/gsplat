@@ -9,6 +9,11 @@ import {
   type ExportJobSettings,
   type ExportService,
 } from './exportService.js';
+import {
+  OpenAIVisionPathPlanner,
+  PathGenerationError,
+  type PathGenerationPlanner,
+} from './pathGeneration.js';
 import { PresetArchiveService, formatPresetRequestId } from './presetArchive.js';
 
 export interface AppOptions {
@@ -16,6 +21,7 @@ export interface AppOptions {
   clientIndexPath: string;
   corsOrigin: string;
   exportService: ExportService;
+  pathPlanner: PathGenerationPlanner;
   presetService: PresetService;
   serveClientBuild: boolean;
 }
@@ -45,12 +51,13 @@ export function createApp(options: Partial<AppOptions> = {}): express.Express {
   const clientIndexPath = options.clientIndexPath ?? path.join(clientBuildDir, 'index.html');
   const corsOrigin = options.corsOrigin ?? 'http://localhost:5173';
   const exportService = options.exportService ?? new FfmpegExportService();
+  const pathPlanner = options.pathPlanner ?? new OpenAIVisionPathPlanner();
   const presetService = options.presetService ?? new PresetArchiveService();
   const serveClientBuild = options.serveClientBuild ?? existsSync(clientIndexPath);
 
   app.use(applyCrossOriginIsolationHeaders);
   app.use(cors({ origin: corsOrigin }));
-  app.use(express.json({ limit: '1mb' }));
+  app.use(express.json({ limit: '8mb' }));
 
   app.get('/api/health', (_request, response) => {
     response.json({ ok: true });
@@ -76,6 +83,15 @@ export function createApp(options: Partial<AppOptions> = {}): express.Express {
     } catch (error) {
       console.error(`Failed to serve preset "${presetRequestId}"`, error);
       response.status(502).json({ error: `Could not load preset: ${presetRequestId}` });
+    }
+  });
+
+  app.post('/api/path/generate', async (request, response) => {
+    try {
+      const plan = await pathPlanner.generatePathPlan(request.body);
+      response.status(200).json(plan);
+    } catch (error) {
+      sendPathGenerationError(response, error, 'Could not generate camera path.');
     }
   });
 
@@ -159,6 +175,20 @@ function sendExportError(
   fallbackMessage: string,
 ): void {
   if (error instanceof ExportServiceError) {
+    response.status(error.statusCode).json({ error: error.message });
+    return;
+  }
+
+  console.error(fallbackMessage, error);
+  response.status(502).json({ error: fallbackMessage });
+}
+
+function sendPathGenerationError(
+  response: express.Response,
+  error: unknown,
+  fallbackMessage: string,
+): void {
+  if (error instanceof PathGenerationError) {
     response.status(error.statusCode).json({ error: error.message });
     return;
   }

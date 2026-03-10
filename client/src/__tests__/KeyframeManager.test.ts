@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
-import { AppEvents, type InterpolatedPose } from '../types';
+import { AppEvents, type InterpolatedPose, type Keyframe } from '../types';
 import { KeyframeManager, type CameraPathViewer } from '../path/KeyframeManager';
 
 class FakeViewer implements CameraPathViewer {
@@ -74,6 +74,39 @@ describe('KeyframeManager', () => {
     const keyframes = manager.getKeyframes();
     expect(keyframes.map(keyframe => keyframe.id)).toEqual([first?.id, third?.id, second?.id]);
     expect(keyframes.map(keyframe => keyframe.time)).toEqual([0, 3, 6]);
+  });
+
+  it('appends generated keyframes after the existing path', () => {
+    const viewer = new FakeViewer();
+    const manager = new KeyframeManager({ viewer, events: new AppEvents() });
+
+    setCameraPose(viewer.camera, new THREE.Vector3(0, 0, 0));
+    const original = manager.addKeyframe();
+
+    const appended: Keyframe[] = [
+      {
+        fov: 55,
+        id: 'generated-1',
+        position: { x: 1, y: 1, z: 0 },
+        quaternion: { x: 0, y: 0, z: 0, w: 1 },
+        time: 2,
+      },
+      {
+        fov: 55,
+        id: 'generated-2',
+        position: { x: 2, y: 1, z: 0 },
+        quaternion: { x: 0, y: 0, z: 0, w: 1 },
+        time: 5,
+      },
+    ];
+
+    const returnedKeyframes = manager.appendKeyframes(appended);
+    const keyframes = manager.getKeyframes();
+
+    expect(returnedKeyframes).toEqual(appended);
+    expect(keyframes.map(keyframe => keyframe.id)).toEqual([original?.id, 'generated-1', 'generated-2']);
+    expect(keyframes.map(keyframe => keyframe.time)).toEqual([0, 2, 5]);
+    expect(manager.getTotalDuration()).toBe(5);
   });
 
   it('round-trips path JSON content', () => {

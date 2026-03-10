@@ -747,6 +747,31 @@
 
       <div class="panel-section">
         <div class="section-label">Camera Path</div>
+        <div class="note" style="margin-bottom: 10px">
+          Prompt a cinematic orbit and append generated keyframes based on the current view plus four scout captures.
+        </div>
+        <textarea
+          id="path-prompt-input"
+          placeholder="Do a cinematic path around this truck, with the camera focused on the truck all the way around."
+          style="width: 100%; min-height: 84px; resize: vertical; border-radius: 14px; border: 1px solid rgba(255,255,255,0.12); background: rgba(10,12,18,0.9); color: #f5f7fb; padding: 12px; box-sizing: border-box; font: inherit; margin-bottom: 10px;"
+        ></textarea>
+        <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px;">
+          <button
+            class="btn"
+            type="button"
+            data-agentic-prompt="Do a cinematic path around this truck, with the camera focused on the truck all the way around."
+            style="flex: 1 1 180px;"
+          >Orbit + focus subject</button>
+          <button
+            class="btn"
+            type="button"
+            data-agentic-prompt="Do a cinematic path around this truck, with the camera facing forward along the path."
+            style="flex: 1 1 180px;"
+          >Orbit + face forward</button>
+        </div>
+        <div class="path-secondary-actions" style="margin-bottom: 10px;">
+          <button class="btn" id="btn-generate-path" disabled style="width: 100%;">✨ Generate Path</button>
+        </div>
         <div class="path-actions">
           <button class="btn" id="btn-add-kf" disabled aria-keyshortcuts="K">+ Add Keyframe</button>
           <button class="btn" id="btn-clear-kfs" disabled>✕ Clear</button>

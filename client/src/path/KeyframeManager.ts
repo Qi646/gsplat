@@ -73,6 +73,21 @@ export class KeyframeManager {
     return cloneKeyframe(keyframe);
   }
 
+  appendKeyframes(keyframes: Keyframe[]): Keyframe[] {
+    if (keyframes.length === 0) {
+      return [];
+    }
+
+    this.stopPreview();
+    const appendedKeyframes = keyframes.map(cloneKeyframe);
+    this.keyframes = [...this.keyframes, ...appendedKeyframes];
+    this.rebuild();
+    this.currentTime = Math.min(this.currentTime, this.getTotalDuration());
+    this.applyCurrentTimeIfPossible();
+    this.events.emit('keyframe:reordered', { keyframes: this.getKeyframes() });
+    return appendedKeyframes.map(cloneKeyframe);
+  }
+
   deleteKeyframe(id: string): boolean {
     const nextKeyframes = this.keyframes.filter(keyframe => keyframe.id !== id);
     if (nextKeyframes.length === this.keyframes.length) {
