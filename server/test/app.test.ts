@@ -42,6 +42,7 @@ describe('createApp', () => {
   function createPathPlanner(overrides: Partial<PathGenerationPlanner> = {}): PathGenerationPlanner {
     return {
       generatePathPlan: overrides.generatePathPlan ?? vi.fn(async () => ({
+        status: 'complete',
         shotSpec: {
           fullOrbit: false,
           orientationMode: 'look-at-subject',
@@ -262,6 +263,7 @@ describe('createApp', () => {
         });
 
         return {
+          status: 'complete',
           shotSpec: {
             fullOrbit: true,
             orientationMode: 'look-at-subject',
@@ -281,10 +283,60 @@ describe('createApp', () => {
       .send(createPathGenerationRequest());
 
     expect(response.status).toBe(200);
+    expect(response.body.status).toBe('complete');
     expect(response.body.shotSpec).toEqual({
       fullOrbit: true,
       orientationMode: 'look-at-subject',
       pathType: 'orbit',
+    });
+  });
+
+  it('returns planner-requested follow-up captures from the planner route', async () => {
+    const app = createTestApp({
+      pathPlanner: createPathPlanner({
+        generatePathPlan: vi.fn(async () => ({
+          message: 'Need two nearby parallax captures around the truck.',
+          requestedCaptures: [
+            {
+              captureId: 'capture-follow-up-1',
+              lateralOffsetScale: 0.12,
+              reason: 'Shift right to reveal the front quarter panel.',
+              referenceCaptureId: 'capture-current',
+            },
+            {
+              captureId: 'capture-follow-up-2',
+              lateralOffsetScale: -0.12,
+              reason: 'Shift left to build triangulation baseline.',
+              referenceCaptureId: 'capture-current',
+            },
+          ],
+          status: 'needs-captures',
+        })),
+      }),
+    });
+
+    const response = await request(app)
+      .post('/api/path/generate')
+      .send(createPathGenerationRequest());
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({
+      message: 'Need two nearby parallax captures around the truck.',
+      requestedCaptures: [
+        {
+          captureId: 'capture-follow-up-1',
+          lateralOffsetScale: 0.12,
+          reason: 'Shift right to reveal the front quarter panel.',
+          referenceCaptureId: 'capture-current',
+        },
+        {
+          captureId: 'capture-follow-up-2',
+          lateralOffsetScale: -0.12,
+          reason: 'Shift left to build triangulation baseline.',
+          referenceCaptureId: 'capture-current',
+        },
+      ],
+      status: 'needs-captures',
     });
   });
 

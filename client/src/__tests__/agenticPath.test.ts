@@ -2,10 +2,11 @@ import * as THREE from 'three';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   AgenticPathGenerator,
+  buildRequestedCapturePose,
   buildOrbitKeyframes,
-  buildScoutCameraPoses,
   triangulateSubjectAnchor,
   type AgenticPathCapture,
+  type AgenticPlannerCaptureRequest,
   type AgenticShotSpec,
   type AgenticSubjectLocalization,
 } from '../path/agenticPath';
@@ -42,7 +43,7 @@ function createCapture(id: string, camera: THREE.PerspectiveCamera): AgenticPath
     height: 900,
     id,
     imageDataUrl: 'data:image/jpeg;base64,AA==',
-    role: 'scout',
+    role: 'requested',
     width: 1600,
   };
 }
@@ -124,11 +125,31 @@ function createMockViewer(options: {
   return { camera, viewer };
 }
 
+type PlannerLoopRequest = {
+  captures: AgenticPathCapture[];
+  plannerHistory: Array<{ message: string; requestedCaptures: AgenticPlannerCaptureRequest[] }>;
+};
+
 function createPlannerResponse(captures: AgenticPathCapture[]): Response {
   const subject = new THREE.Vector3(0, 0.5, 0);
   return new Response(JSON.stringify({
+    status: 'complete',
     shotSpec: createShotSpec(),
     subjectLocalizations: captures.map(capture => projectPoint(subject, capture)),
+  }), {
+    headers: { 'Content-Type': 'application/json' },
+    status: 200,
+  });
+}
+
+function createCaptureRequestResponse(
+  requests: AgenticPlannerCaptureRequest[],
+  message = 'Need a nearby follow-up capture for triangulation.',
+): Response {
+  return new Response(JSON.stringify({
+    message,
+    requestedCaptures: requests,
+    status: 'needs-captures',
   }), {
     headers: { 'Content-Type': 'application/json' },
     status: 200,
@@ -184,70 +205,61 @@ describe('triangulateSubjectAnchor', () => {
   });
 });
 
-describe('buildScoutCameraPoses', () => {
-  it('creates four deterministic scout poses around the scene bounds', () => {
-    const bounds = new THREE.Box3(
-      new THREE.Vector3(-2, -1, -2),
-      new THREE.Vector3(2, 3, 2),
-    );
-    const camera = createCamera(new THREE.Vector3(5, 2, 0), bounds.getCenter(new THREE.Vector3()));
-
-    const poses = buildScoutCameraPoses(bounds, camera);
-
-    expect(poses).toHaveLength(4);
-    expect(poses[0]?.position.distanceTo(bounds.getCenter(new THREE.Vector3()))).toBeGreaterThan(2);
-  });
-
-  it('keeps scout captures close to the live camera pose', () => {
+describe('buildRequestedCapturePose', () => {
+  it('applies planner follow-up offsets in the reference camera basis', () => {
     const bounds = new THREE.Box3(
       new THREE.Vector3(-4, -4, -6),
       new THREE.Vector3(4, 4, 6),
     );
     const center = bounds.getCenter(new THREE.Vector3());
-    const camera = createCamera(new THREE.Vector3(5, 0, 3), center);
-    const currentDistance = camera.position.distanceTo(center);
+    const referenceCamera = createCamera(new THREE.Vector3(5, 1, 0), center);
+    const referenceCapture = createCapture('capture-current', referenceCamera);
+    const sceneDiagonal = bounds.getSize(new THREE.Vector3()).length();
+    const pose = buildRequestedCapturePose(referenceCapture, {
+      captureId: 'capture-follow-up-1',
+      forwardOffsetScale: -0.1,
+      lateralOffsetScale: 0.12,
+      reason: 'Shift right and pull back for more parallax.',
+      referenceCaptureId: 'capture-current',
+      verticalOffsetScale: 0.05,
+    }, bounds);
+    const delta = pose.position.clone().sub(referenceCamera.position);
+    const right = new THREE.Vector3(1, 0, 0).applyQuaternion(referenceCamera.quaternion).normalize();
+    const up = new THREE.Vector3(0, 1, 0).applyQuaternion(referenceCamera.quaternion).normalize();
+    const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(referenceCamera.quaternion).normalize();
 
-    const poses = buildScoutCameraPoses(bounds, camera);
-
-    expect(poses).toHaveLength(4);
-    poses.forEach(pose => {
-      expect(pose.position.distanceTo(camera.position)).toBeLessThan(currentDistance * 0.8);
-      expect(pose.position.distanceTo(center)).toBeLessThan(currentDistance * 1.2);
-    });
+    expect(delta.dot(right)).toBeCloseTo(sceneDiagonal * 0.12, 5);
+    expect(delta.dot(up)).toBeCloseTo(sceneDiagonal * 0.05, 5);
+    expect(delta.dot(forward)).toBeCloseTo(sceneDiagonal * -0.1, 5);
+    expect(pose.quaternion.angleTo(referenceCamera.quaternion)).toBeLessThan(1e-6);
   });
 
-  it('changes the nearby scout pattern across retry attempts', () => {
-    const bounds = new THREE.Box3(
-      new THREE.Vector3(-4, -4, -6),
-      new THREE.Vector3(4, 4, 6),
-    );
-    const center = bounds.getCenter(new THREE.Vector3());
-    const camera = createCamera(new THREE.Vector3(5, 0, 3), center);
-
-    const firstAttempt = buildScoutCameraPoses(bounds, camera, 0);
-    const secondAttempt = buildScoutCameraPoses(bounds, camera, 1);
-
-    expect(firstAttempt[0]!.position.distanceTo(secondAttempt[0]!.position)).toBeGreaterThan(0.25);
-  });
-
-  it('preserves the live camera orbit axis for non-Y-up views', () => {
+  it('preserves the rolled camera basis for non-Y-up follow-up captures', () => {
     const bounds = new THREE.Box3(
       new THREE.Vector3(-4, -4, -6),
       new THREE.Vector3(4, 4, 6),
     );
     const center = bounds.getCenter(new THREE.Vector3());
     const sceneUp = new THREE.Vector3(0, 0, 1);
-    const camera = createCamera(new THREE.Vector3(6, 0, 3), center, 16 / 9, sceneUp);
-    const baseCameraUp = new THREE.Vector3(0, 1, 0).applyQuaternion(camera.quaternion).normalize();
-    const baseHeight = camera.position.clone().sub(center).dot(baseCameraUp);
+    const referenceCamera = createCamera(new THREE.Vector3(6, 0, 3), center, 16 / 9, sceneUp);
+    const referenceCapture = createCapture('capture-current', referenceCamera);
+    const referenceUp = new THREE.Vector3(0, 1, 0).applyQuaternion(referenceCamera.quaternion).normalize();
+    const pose = buildRequestedCapturePose(referenceCapture, {
+      captureId: 'capture-follow-up-1',
+      pitchDegrees: -6,
+      reason: 'Lift slightly and look down the truck body.',
+      referenceCaptureId: 'capture-current',
+      verticalOffsetScale: 0.08,
+      yawDegrees: 12,
+    }, bounds);
+    const delta = pose.position.clone().sub(referenceCamera.position);
+    const poseUp = new THREE.Vector3(0, 1, 0).applyQuaternion(pose.quaternion).normalize();
+    const poseForward = new THREE.Vector3(0, 0, -1).applyQuaternion(pose.quaternion).normalize();
+    const referenceForward = new THREE.Vector3(0, 0, -1).applyQuaternion(referenceCamera.quaternion).normalize();
 
-    const poses = buildScoutCameraPoses(bounds, camera);
-    const firstPose = poses[0]!;
-    const firstOffset = firstPose.position.clone().sub(center);
-    const firstUp = new THREE.Vector3(0, 1, 0).applyQuaternion(firstPose.quaternion).normalize();
-
-    expect(firstOffset.dot(baseCameraUp)).toBeCloseTo(baseHeight, 5);
-    expect(firstUp.dot(baseCameraUp)).toBeGreaterThan(0.999);
+    expect(delta.dot(referenceUp)).toBeGreaterThan(0);
+    expect(poseUp.dot(referenceUp)).toBeGreaterThan(0.95);
+    expect(poseForward.dot(referenceForward)).toBeLessThan(0.995);
   });
 });
 
@@ -380,8 +392,33 @@ describe('AgenticPathGenerator', () => {
     const progressStages: string[] = [];
     const progressLabels: string[] = [];
     const { viewer } = createMockViewer();
+    let requestCount = 0;
     const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
-      const request = JSON.parse(String(init?.body ?? '{}')) as { captures: AgenticPathCapture[] };
+      requestCount += 1;
+      const request = JSON.parse(String(init?.body ?? '{}')) as {
+        captures: AgenticPathCapture[];
+        plannerHistory: Array<{ requestedCaptures: AgenticPlannerCaptureRequest[] }>;
+      };
+      if (requestCount === 1) {
+        expect(request.captures).toHaveLength(1);
+        return createCaptureRequestResponse([
+          {
+            captureId: 'capture-follow-up-1',
+            lateralOffsetScale: 0.12,
+            reason: 'Shift right for parallax.',
+            referenceCaptureId: 'capture-current',
+          },
+          {
+            captureId: 'capture-follow-up-2',
+            lateralOffsetScale: -0.12,
+            reason: 'Shift left for parallax.',
+            referenceCaptureId: 'capture-current',
+          },
+        ]);
+      }
+
+      expect(request.plannerHistory).toHaveLength(1);
+      expect(request.plannerHistory[0]?.requestedCaptures).toHaveLength(2);
       return createPlannerResponse(request.captures);
     }) as unknown as typeof fetch;
 
@@ -402,27 +439,25 @@ describe('AgenticPathGenerator', () => {
     expect(keyframes.length).toBeGreaterThan(0);
     expect(progressStages).toEqual([
       'capturing-current',
-      'capturing-scout',
-      'capturing-scout',
-      'capturing-scout',
-      'capturing-scout',
+      'planning',
+      'capturing-requested',
+      'capturing-requested',
       'planning',
       'triangulating',
       'building',
     ]);
     expect(progressLabels).toEqual([
-      'Capturing 1/5…',
-      'Capturing 2/5…',
-      'Capturing 3/5…',
-      'Capturing 4/5…',
-      'Capturing 5/5…',
+      'Capturing 1/1…',
       'Planning…',
+      'Capturing 1/2…',
+      'Capturing 2/2…',
+      'Planning 2/4…',
       'Triangulating…',
       'Building path…',
     ]);
   });
 
-  it('retries recoverable planner failures with a different scout batch', async () => {
+  it('feeds planner-requested follow-up captures back into the next planning step', async () => {
     installCapturePipelineStubs();
     vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
       callback(0);
@@ -431,19 +466,22 @@ describe('AgenticPathGenerator', () => {
 
     const progressMessages: string[] = [];
     const { viewer } = createMockViewer();
-    let requestCount = 0;
+    let secondRequest: PlannerLoopRequest | null = null;
     const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
-      requestCount += 1;
-      if (requestCount === 1) {
-        return new Response(JSON.stringify({
-          error: 'The planner could not localize the requested subject in enough captured views.',
-        }), {
-          headers: { 'Content-Type': 'application/json' },
-          status: 400,
-        });
+      const request = JSON.parse(String(init?.body ?? '{}')) as PlannerLoopRequest;
+      if (request.captures.length === 1) {
+        return createCaptureRequestResponse([
+          {
+            captureId: 'capture-follow-up-1',
+            forwardOffsetScale: -0.08,
+            lateralOffsetScale: 0.1,
+            reason: 'Back up slightly and shift right to uncover the truck nose.',
+            referenceCaptureId: 'capture-current',
+          },
+        ], 'The truck needs one targeted follow-up capture.');
       }
 
-      const request = JSON.parse(String(init?.body ?? '{}')) as { captures: AgenticPathCapture[] };
+      secondRequest = request;
       return createPlannerResponse(request.captures);
     }) as unknown as typeof fetch;
 
@@ -461,8 +499,26 @@ describe('AgenticPathGenerator', () => {
     });
 
     expect(keyframes.length).toBeGreaterThan(0);
-    expect(requestCount).toBe(2);
-    expect(progressMessages.some(message => /Trying a different nearby scout set/i.test(message))).toBe(true);
+    expect(secondRequest).not.toBeNull();
+    expect(secondRequest!.captures.map(capture => capture.id)).toEqual([
+      'capture-current',
+      'capture-follow-up-1',
+    ]);
+    expect(secondRequest!.plannerHistory).toEqual([
+      {
+        message: 'The truck needs one targeted follow-up capture.',
+        requestedCaptures: [
+          {
+            captureId: 'capture-follow-up-1',
+            forwardOffsetScale: -0.08,
+            lateralOffsetScale: 0.1,
+            reason: 'Back up slightly and shift right to uncover the truck nose.',
+            referenceCaptureId: 'capture-current',
+          },
+        ],
+      },
+    ]);
+    expect(progressMessages.some(message => /follow-up capture/i.test(message))).toBe(true);
   });
 
   it('times out stalled generation and restores the live camera pose', async () => {
@@ -490,7 +546,14 @@ describe('AgenticPathGenerator', () => {
     });
 
     const generator = new AgenticPathGenerator({
-      fetchImpl: vi.fn() as unknown as typeof fetch,
+      fetchImpl: vi.fn(async () => createCaptureRequestResponse([
+        {
+          captureId: 'capture-follow-up-1',
+          lateralOffsetScale: 0.1,
+          reason: 'Shift right for one more targeted view.',
+          referenceCaptureId: 'capture-current',
+        },
+      ])) as unknown as typeof fetch,
       timeoutMs: 25,
       viewer,
     });
@@ -534,7 +597,14 @@ describe('AgenticPathGenerator', () => {
     });
 
     const generator = new AgenticPathGenerator({
-      fetchImpl: vi.fn() as unknown as typeof fetch,
+      fetchImpl: vi.fn(async () => createCaptureRequestResponse([
+        {
+          captureId: 'capture-follow-up-1',
+          lateralOffsetScale: 0.1,
+          reason: 'Shift right for one more targeted view.',
+          referenceCaptureId: 'capture-current',
+        },
+      ])) as unknown as typeof fetch,
       onProgress: progress => {
         progressStages.push(progress.stage);
       },
