@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  OpenAIVisionPathPlanner,
   parseModelPathPlan,
   parsePathGenerationRequest,
 } from '../src/pathGeneration.js';
@@ -86,5 +87,27 @@ describe('pathGeneration model-plan parsing', () => {
         ],
       })
     ).toThrow(/orientationMode/);
+  });
+});
+
+describe('OpenAIVisionPathPlanner status', () => {
+  it('reports unavailable when no API key is configured', () => {
+    const planner = new OpenAIVisionPathPlanner({ model: 'gpt-4.1-mini' });
+    const originalApiKey = process.env['OPENAI_API_KEY'];
+    delete process.env['OPENAI_API_KEY'];
+
+    try {
+      expect(planner.getStatus()).toEqual({
+        available: false,
+        model: 'gpt-4.1-mini',
+        reason: 'Agentic path generation is disabled because OPENAI_API_KEY is not configured on the server.',
+      });
+    } finally {
+      if (originalApiKey === undefined) {
+        delete process.env['OPENAI_API_KEY'];
+      } else {
+        process.env['OPENAI_API_KEY'] = originalApiKey;
+      }
+    }
   });
 });

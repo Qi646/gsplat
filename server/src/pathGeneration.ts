@@ -62,6 +62,7 @@ export interface PathGenerationSubjectLocalization {
 
 export interface PathGenerationPlanner {
   generatePathPlan: (request: unknown) => Promise<PathGenerationResponse>;
+  getStatus: () => PathGenerationPlannerStatus;
 }
 
 export interface OpenAIVisionPathPlannerOptions {
@@ -82,6 +83,12 @@ export interface PathGenerationQuaternion {
   x: number;
   y: number;
   z: number;
+}
+
+export interface PathGenerationPlannerStatus {
+  available: boolean;
+  model: string | null;
+  reason: string | null;
 }
 
 interface ChatCompletionResponse {
@@ -127,15 +134,32 @@ export class OpenAIVisionPathPlanner implements PathGenerationPlanner {
     this.model = options.model;
   }
 
+  getStatus(): PathGenerationPlannerStatus {
+    const apiKey = this.apiKey ?? process.env['OPENAI_API_KEY'];
+    const model = this.model ?? process.env['OPENAI_MODEL'] ?? DEFAULT_OPENAI_MODEL;
+
+    if (!apiKey) {
+      return {
+        available: false,
+        model,
+        reason: 'Agentic path generation is disabled because OPENAI_API_KEY is not configured on the server.',
+      };
+    }
+
+    return {
+      available: true,
+      model,
+      reason: null,
+    };
+  }
+
   async generatePathPlan(request: unknown): Promise<PathGenerationResponse> {
     const parsedRequest = parsePathGenerationRequest(request);
-    const apiKey = this.apiKey ?? process.env['OPENAI_API_KEY'];
-    if (!apiKey) {
-      throw new PathGenerationError(
-        503,
-        'Agentic path generation is not configured. Set OPENAI_API_KEY on the server.',
-      );
+    const status = this.getStatus();
+    if (!status.available) {
+      throw new PathGenerationError(503, status.reason ?? 'Agentic path generation is not configured.');
     }
+    const apiKey = this.apiKey ?? process.env['OPENAI_API_KEY'];
 
     const response = await this.fetchImpl(
       `${(this.baseUrl ?? process.env['OPENAI_BASE_URL'] ?? DEFAULT_OPENAI_BASE_URL).replace(/\/$/, '')}/chat/completions`,

@@ -5,7 +5,11 @@ import request from 'supertest';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { CROSS_ORIGIN_ISOLATION_HEADERS, createApp, type PresetService } from '../src/app.js';
 import { ExportServiceError, type ExportService } from '../src/exportService.js';
-import { PathGenerationError, type PathGenerationPlanner } from '../src/pathGeneration.js';
+import {
+  PathGenerationError,
+  type PathGenerationPlanner,
+  type PathGenerationPlannerStatus,
+} from '../src/pathGeneration.js';
 
 describe('createApp', () => {
   let tempDir: string | null = null;
@@ -47,6 +51,11 @@ describe('createApp', () => {
           { captureId: 'capture-current', confidence: 0.96, pixelX: 320, pixelY: 240 },
           { captureId: 'capture-scout-1', confidence: 0.92, pixelX: 300, pixelY: 220 },
         ],
+      })),
+      getStatus: overrides.getStatus ?? vi.fn<PathGenerationPlannerStatus>(() => ({
+        available: true,
+        model: 'gpt-4.1-mini',
+        reason: null,
       })),
     };
   }
@@ -276,6 +285,27 @@ describe('createApp', () => {
       fullOrbit: true,
       orientationMode: 'look-at-subject',
       pathType: 'orbit',
+    });
+  });
+
+  it('returns planner availability from the path status route', async () => {
+    const app = createTestApp({
+      pathPlanner: createPathPlanner({
+        getStatus: vi.fn(() => ({
+          available: false,
+          model: 'gpt-4.1-mini',
+          reason: 'Agentic path generation is disabled because OPENAI_API_KEY is not configured on the server.',
+        })),
+      }),
+    });
+
+    const response = await request(app).get('/api/path/status');
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({
+      available: false,
+      model: 'gpt-4.1-mini',
+      reason: 'Agentic path generation is disabled because OPENAI_API_KEY is not configured on the server.',
     });
   });
 

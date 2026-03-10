@@ -63,6 +63,10 @@ export function createApp(options: Partial<AppOptions> = {}): express.Express {
     response.json({ ok: true });
   });
 
+  app.get('/api/path/status', (_request, response) => {
+    response.json(pathPlanner.getStatus());
+  });
+
   app.get('/api/presets/:presetId.:extension', async (request, response) => {
     const presetId = request.params['presetId'] ?? '';
     const extension = request.params['extension'] ?? '';
