@@ -244,13 +244,13 @@ describe('OpenAIVisionPathPlanner request compatibility', () => {
       status: 'needs-captures',
     });
     expect(requestBodies).toHaveLength(2);
-    expect(requestBodies[0]?.['max_completion_tokens']).toBe(700);
+    expect(requestBodies[0]?.['max_completion_tokens']).toBe(1600);
     expect(requestBodies[0]?.['max_tokens']).toBeUndefined();
-    expect(requestBodies[1]?.['max_tokens']).toBe(700);
+    expect(requestBodies[1]?.['max_tokens']).toBe(1600);
     expect(requestBodies[1]?.['max_completion_tokens']).toBeUndefined();
   });
 
-  it('omits custom temperature for GPT-5 family models before the first request', async () => {
+  it('omits custom temperature and adds minimal reasoning effort for GPT-5 family models', async () => {
     const requestBodies: Array<Record<string, unknown>> = [];
     const fetchImpl = vi.fn(async (_input: unknown, init?: RequestInit) => {
       requestBodies.push(JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>);
@@ -291,9 +291,77 @@ describe('OpenAIVisionPathPlanner request compatibility', () => {
       status: 'needs-captures',
     });
     expect(requestBodies).toHaveLength(1);
-    expect(requestBodies[0]?.['max_completion_tokens']).toBe(700);
+    expect(requestBodies[0]?.['max_completion_tokens']).toBe(1600);
+    expect(requestBodies[0]?.['reasoning_effort']).toBe('minimal');
     expect(requestBodies[0]?.['temperature']).toBeUndefined();
     expect(requestBodies[0]?.['response_format']).toEqual({ type: 'json_object' });
+  });
+
+  it('falls back from reasoning_effort and parses structured completion content', async () => {
+    const requestBodies: Array<Record<string, unknown>> = [];
+    const fetchImpl = vi.fn(async (_input: unknown, init?: RequestInit) => {
+      requestBodies.push(JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>);
+      if (requestBodies.length === 1) {
+        return new Response(JSON.stringify({
+          error: {
+            message: "Unsupported parameter: 'reasoning_effort' is not supported with this model.",
+            param: 'reasoning_effort',
+            type: 'invalid_request_error',
+          },
+        }), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 400,
+        });
+      }
+
+      return new Response(JSON.stringify({
+        choices: [
+          {
+            finish_reason: 'stop',
+            message: {
+              content: [
+                {
+                  text: {
+                    value: JSON.stringify({
+                      message: 'Need one more nearby view.',
+                      requestedCaptures: [
+                        {
+                          captureId: 'capture-follow-up-1',
+                          lateralOffsetScale: 0.1,
+                          reason: 'Shift right for parallax.',
+                          referenceCaptureId: 'capture-current',
+                        },
+                      ],
+                      status: 'needs-captures',
+                    }),
+                  },
+                  type: 'output_text',
+                },
+              ],
+            },
+          },
+        ],
+      }), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 200,
+      });
+    }) as unknown as typeof fetch;
+    const planner = new OpenAIVisionPathPlanner({
+      apiKey: 'test-key',
+      fetchImpl,
+      model: 'gpt-5-mini-2025-08-07',
+    });
+
+    const response = await planner.generatePathPlan(createPathGenerationRequest());
+
+    expect(response).toMatchObject({
+      message: 'Need one more nearby view.',
+      status: 'needs-captures',
+    });
+    expect(requestBodies).toHaveLength(2);
+    expect(requestBodies[0]?.['reasoning_effort']).toBe('minimal');
+    expect(requestBodies[1]?.['reasoning_effort']).toBeUndefined();
+    expect(requestBodies[1]?.['temperature']).toBeUndefined();
   });
 
   it('retries through temperature and response_format compatibility fallbacks', async () => {

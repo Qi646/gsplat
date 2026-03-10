@@ -7,6 +7,7 @@
 - 2026-03-10: Agentic generation failures now surface as a dedicated inline Camera Path error card with retry guidance instead of only the footer status text.
 - 2026-03-10: OpenAI-compatible path-planner requests now send `max_completion_tokens` by default and retry once with `max_tokens` when an endpoint rejects the newer token-budget field, which avoids model-specific 400 errors on the planner route.
 - 2026-03-10: The planner request builder now runs a small compatibility loop for overridden OpenAI/OpenAI-compatible models: GPT-5 family models skip explicit temperature up front, 400 responses can remove unsupported `temperature` / `response_format` fields, and token-budget fields still fall back between `max_completion_tokens` and `max_tokens`.
+- 2026-03-10: GPT-5 planner requests now also send `reasoning_effort: minimal`, use a larger completion-token budget so hidden reasoning still leaves room for final JSON, and the planner completion parser now accepts structured text payloads (nested text parts / `output_text`) instead of only plain string content.
 - The app now explicitly supports running without `OPENAI_API_KEY`: the server exposes `/api/path/status`, the client disables prompt-driven controls when the planner is unavailable, and the rest of the viewer/path/export workflow remains usable.
 - Repo root `/home/qi/proj/gsplat_1` now has an initial import commit for the `gsplat-viewer` project.
 - The imported project lives under `gsplat-viewer/`.

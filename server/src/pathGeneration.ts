@@ -120,9 +120,13 @@ export interface PathGenerationPlannerStatus {
 }
 
 interface ChatCompletionResponse {
+  output?: unknown;
+  output_text?: unknown;
   choices?: Array<{
+    finish_reason?: string | null;
     message?: {
       content?: unknown;
+      refusal?: unknown;
     };
   }>;
 }
@@ -138,6 +142,7 @@ interface ModelPathPlan {
 }
 
 interface ChatCompletionRequestCompatibility {
+  includeReasoningEffort: boolean;
   includeResponseFormat: boolean;
   includeTemperature: boolean;
   tokenBudgetParameter: TokenBudgetParameter;
@@ -154,13 +159,14 @@ type UnknownRecord = Record<string, unknown>;
 const DEFAULT_OPENAI_BASE_URL = 'https://api.openai.com/v1';
 const DEFAULT_OPENAI_MODEL = 'gpt-4.1-mini';
 const DEFAULT_CHAT_COMPLETION_REQUEST_COMPATIBILITY: ChatCompletionRequestCompatibility = {
+  includeReasoningEffort: false,
   includeResponseFormat: true,
   includeTemperature: true,
   tokenBudgetParameter: 'max_completion_tokens',
 };
 const MAX_CAPTURE_REQUESTS_PER_STEP = 3;
 const MAX_CHAT_COMPLETION_COMPATIBILITY_ATTEMPTS = 4;
-const PLANNER_COMPLETION_TOKEN_LIMIT = 700;
+const PLANNER_COMPLETION_TOKEN_LIMIT = 1600;
 
 export class PathGenerationError extends Error {
   readonly statusCode: number;
@@ -416,12 +422,17 @@ function buildChatCompletionRequestBody(
     body['temperature'] = 0.2;
   }
 
+  if (compatibility.includeReasoningEffort) {
+    body['reasoning_effort'] = 'minimal';
+  }
+
   return body;
 }
 
 function getInitialChatCompletionRequestCompatibility(model: string): ChatCompletionRequestCompatibility {
   return {
     ...DEFAULT_CHAT_COMPLETION_REQUEST_COMPATIBILITY,
+    includeReasoningEffort: usesDefaultOnlyTemperature(model),
     includeTemperature: !usesDefaultOnlyTemperature(model),
   };
 }
@@ -463,22 +474,121 @@ function buildUserContent(request: PathGenerationRequest): Array<Record<string, 
 }
 
 function extractCompletionText(payload: ChatCompletionResponse): string {
-  const content = payload.choices?.[0]?.message?.content;
-  if (typeof content === 'string' && content.trim().length > 0) {
+  const content = extractTextCandidate(payload.choices?.[0]?.message?.content);
+  if (content) {
     return content;
   }
 
-  if (Array.isArray(content)) {
-    const text = content
-      .map(entry => (isRecord(entry) && typeof entry['text'] === 'string') ? entry['text'] : '')
+  const responseOutputText = extractTextCandidate(payload.output_text);
+  if (responseOutputText) {
+    return responseOutputText;
+  }
+
+  const responseOutput = extractTextCandidate(payload.output);
+  if (responseOutput) {
+    return responseOutput;
+  }
+
+  const refusal = extractTextCandidate(payload.choices?.[0]?.message?.refusal);
+  if (refusal) {
+    throw new PathGenerationError(502, `Vision planner returned a refusal instead of JSON: ${refusal.slice(0, 200)}`);
+  }
+
+  const finishReason = payload.choices?.[0]?.finish_reason;
+  const payloadSummary = summarizeCompletionPayload(payload);
+  throw new PathGenerationError(
+    502,
+    `Vision planner returned an empty completion${finishReason ? ` (finish reason: ${finishReason})` : ''}. ${payloadSummary}`,
+  );
+}
+
+function extractTextCandidate(value: unknown): string | null {
+  if (typeof value === 'string' && value.trim().length > 0) {
+    return value.trim();
+  }
+
+  if (Array.isArray(value)) {
+    const text = value
+      .map(entry => extractTextCandidate(entry))
+      .filter((entry): entry is string => typeof entry === 'string' && entry.length > 0)
       .join('\n')
       .trim();
-    if (text.length > 0) {
-      return text;
+    return text.length > 0 ? text : null;
+  }
+
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const directText = extractTextCandidate(value['text']);
+  if (directText) {
+    return directText;
+  }
+
+  const directValue = extractTextCandidate(value['value']);
+  if (directValue) {
+    return directValue;
+  }
+
+  const directContent = extractTextCandidate(value['content']);
+  if (directContent) {
+    return directContent;
+  }
+
+  const directOutputText = extractTextCandidate(value['output_text']);
+  if (directOutputText) {
+    return directOutputText;
+  }
+
+  const directOutput = extractTextCandidate(value['output']);
+  if (directOutput) {
+    return directOutput;
+  }
+
+  return null;
+}
+
+function summarizeCompletionPayload(payload: ChatCompletionResponse): string {
+  const summary: string[] = [];
+  const firstChoice = payload.choices?.[0];
+  const firstMessage = firstChoice?.message;
+
+  if (typeof firstChoice?.finish_reason === 'string' && firstChoice.finish_reason.trim().length > 0) {
+    summary.push(`finish_reason=${firstChoice.finish_reason}`);
+  }
+
+  if (firstMessage) {
+    summary.push(`message.content=${describePayloadValue(firstMessage.content)}`);
+    if (firstMessage.refusal !== undefined) {
+      summary.push(`message.refusal=${describePayloadValue(firstMessage.refusal)}`);
     }
   }
 
-  throw new PathGenerationError(502, 'Vision planner returned an empty completion.');
+  if (payload.output_text !== undefined) {
+    summary.push(`output_text=${describePayloadValue(payload.output_text)}`);
+  }
+
+  if (payload.output !== undefined) {
+    summary.push(`output=${describePayloadValue(payload.output)}`);
+  }
+
+  return summary.length > 0 ? `Payload summary: ${summary.join(', ')}` : 'Payload summary: no text-bearing fields present.';
+}
+
+function describePayloadValue(value: unknown): string {
+  if (value === null) {
+    return 'null';
+  }
+
+  if (Array.isArray(value)) {
+    return `array(${value.length})`;
+  }
+
+  if (isRecord(value)) {
+    return `object(${Object.keys(value).slice(0, 4).join(',')})`;
+  }
+
+  return typeof value;
 }
 
 function isRecord(value: unknown): value is UnknownRecord {
@@ -834,6 +944,14 @@ function resolveChatCompletionRequestCompatibility(
     && fallbackTokenBudgetParameter !== attemptedCompatibility.tokenBudgetParameter
   ) {
     nextCompatibility.tokenBudgetParameter = fallbackTokenBudgetParameter;
+    changed = true;
+  }
+
+  if (
+    attemptedCompatibility.includeReasoningEffort
+    && shouldRemoveCompatibilityParameter(failureDetails, searchableFailureText, 'reasoning_effort')
+  ) {
+    nextCompatibility.includeReasoningEffort = false;
     changed = true;
   }
 
