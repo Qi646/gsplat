@@ -137,12 +137,29 @@ interface ModelPathPlan {
   warning?: string;
 }
 
+interface ChatCompletionRequestCompatibility {
+  includeResponseFormat: boolean;
+  includeTemperature: boolean;
+  tokenBudgetParameter: TokenBudgetParameter;
+}
+
+interface PlannerRequestFailureDetails {
+  message: string;
+  param: string | null;
+}
+
 type TokenBudgetParameter = 'max_completion_tokens' | 'max_tokens';
 type UnknownRecord = Record<string, unknown>;
 
 const DEFAULT_OPENAI_BASE_URL = 'https://api.openai.com/v1';
 const DEFAULT_OPENAI_MODEL = 'gpt-4.1-mini';
+const DEFAULT_CHAT_COMPLETION_REQUEST_COMPATIBILITY: ChatCompletionRequestCompatibility = {
+  includeResponseFormat: true,
+  includeTemperature: true,
+  tokenBudgetParameter: 'max_completion_tokens',
+};
 const MAX_CAPTURE_REQUESTS_PER_STEP = 3;
+const MAX_CHAT_COMPLETION_COMPATIBILITY_ATTEMPTS = 4;
 const PLANNER_COMPLETION_TOKEN_LIMIT = 700;
 
 export class PathGenerationError extends Error {
@@ -246,30 +263,30 @@ export class OpenAIVisionPathPlanner implements PathGenerationPlanner {
     apiKey: string,
   ): Promise<ChatCompletionResponse> {
     const model = this.model ?? process.env['OPENAI_MODEL'] ?? DEFAULT_OPENAI_MODEL;
-    const primaryParameter: TokenBudgetParameter = 'max_completion_tokens';
-    const primaryResponse = await this.fetchChatCompletion(
-      buildChatCompletionRequestBody(request, model, primaryParameter),
-      apiKey,
+    let compatibility = getInitialChatCompletionRequestCompatibility(model);
+
+    for (let attemptIndex = 0; attemptIndex < MAX_CHAT_COMPLETION_COMPATIBILITY_ATTEMPTS; attemptIndex += 1) {
+      const response = await this.fetchChatCompletion(
+        buildChatCompletionRequestBody(request, model, compatibility),
+        apiKey,
+      );
+      if (response.ok) {
+        return await response.json() as ChatCompletionResponse;
+      }
+
+      const failureText = await response.text();
+      const nextCompatibility = resolveChatCompletionRequestCompatibility(response.status, failureText, compatibility);
+      if (!nextCompatibility) {
+        throw buildPlanningRequestFailure(response.status, failureText);
+      }
+
+      compatibility = nextCompatibility;
+    }
+
+    throw new PathGenerationError(
+      502,
+      'Vision planning request failed after exhausting request compatibility fallbacks.',
     );
-    if (primaryResponse.ok) {
-      return await primaryResponse.json() as ChatCompletionResponse;
-    }
-
-    const primaryFailureText = await primaryResponse.text();
-    const fallbackParameter = resolveTokenBudgetFallback(primaryResponse.status, primaryFailureText, primaryParameter);
-    if (!fallbackParameter) {
-      throw buildPlanningRequestFailure(primaryResponse.status, primaryFailureText);
-    }
-
-    const fallbackResponse = await this.fetchChatCompletion(
-      buildChatCompletionRequestBody(request, model, fallbackParameter),
-      apiKey,
-    );
-    if (!fallbackResponse.ok) {
-      throw buildPlanningRequestFailure(fallbackResponse.status, await fallbackResponse.text());
-    }
-
-    return await fallbackResponse.json() as ChatCompletionResponse;
   }
 
   private async fetchChatCompletion(
@@ -374,10 +391,10 @@ function buildSystemPrompt(): string {
 function buildChatCompletionRequestBody(
   request: PathGenerationRequest,
   model: string,
-  tokenBudgetParameter: TokenBudgetParameter,
+  compatibility: ChatCompletionRequestCompatibility,
 ): UnknownRecord {
-  return {
-    [tokenBudgetParameter]: PLANNER_COMPLETION_TOKEN_LIMIT,
+  const body: UnknownRecord = {
+    [compatibility.tokenBudgetParameter]: PLANNER_COMPLETION_TOKEN_LIMIT,
     messages: [
       {
         content: buildSystemPrompt(),
@@ -389,8 +406,23 @@ function buildChatCompletionRequestBody(
       },
     ],
     model,
-    response_format: { type: 'json_object' },
-    temperature: 0.2,
+  };
+
+  if (compatibility.includeResponseFormat) {
+    body['response_format'] = { type: 'json_object' };
+  }
+
+  if (compatibility.includeTemperature) {
+    body['temperature'] = 0.2;
+  }
+
+  return body;
+}
+
+function getInitialChatCompletionRequestCompatibility(model: string): ChatCompletionRequestCompatibility {
+  return {
+    ...DEFAULT_CHAT_COMPLETION_REQUEST_COMPATIBILITY,
+    includeTemperature: !usesDefaultOnlyTemperature(model),
   };
 }
 
@@ -748,10 +780,85 @@ function stripJsonFences(value: string): string {
 }
 
 function buildPlanningRequestFailure(statusCode: number, failureText: string): PathGenerationError {
+  const failureDetails = parsePlannerRequestFailureDetails(failureText);
   return new PathGenerationError(
     502,
-    `Vision planning request failed (${statusCode}): ${failureText.slice(0, 200)}`.trim(),
+    `Vision planning request failed (${statusCode}): ${failureDetails.message.slice(0, 200)}`.trim(),
   );
+}
+
+function parsePlannerRequestFailureDetails(failureText: string): PlannerRequestFailureDetails {
+  try {
+    const parsed = JSON.parse(failureText) as unknown;
+    if (isRecord(parsed) && isRecord(parsed['error'])) {
+      const errorRecord = parsed['error'];
+      const message = typeof errorRecord['message'] === 'string' && errorRecord['message'].trim().length > 0
+        ? errorRecord['message']
+        : failureText;
+      return {
+        message,
+        param: typeof errorRecord['param'] === 'string' ? errorRecord['param'] : null,
+      };
+    }
+  } catch {
+    // Keep the raw response body when the error payload is not JSON.
+  }
+
+  return {
+    message: failureText,
+    param: null,
+  };
+}
+
+function resolveChatCompletionRequestCompatibility(
+  statusCode: number,
+  failureText: string,
+  attemptedCompatibility: ChatCompletionRequestCompatibility,
+): ChatCompletionRequestCompatibility | null {
+  if (statusCode !== 400) {
+    return null;
+  }
+
+  const failureDetails = parsePlannerRequestFailureDetails(failureText);
+  const searchableFailureText = `${failureDetails.param ?? ''}\n${failureDetails.message}\n${failureText}`;
+  const nextCompatibility: ChatCompletionRequestCompatibility = { ...attemptedCompatibility };
+  let changed = false;
+
+  const fallbackTokenBudgetParameter = resolveTokenBudgetFallback(
+    statusCode,
+    searchableFailureText,
+    attemptedCompatibility.tokenBudgetParameter,
+  );
+  if (
+    fallbackTokenBudgetParameter
+    && fallbackTokenBudgetParameter !== attemptedCompatibility.tokenBudgetParameter
+  ) {
+    nextCompatibility.tokenBudgetParameter = fallbackTokenBudgetParameter;
+    changed = true;
+  }
+
+  if (
+    attemptedCompatibility.includeTemperature
+    && shouldRemoveCompatibilityParameter(failureDetails, searchableFailureText, 'temperature')
+  ) {
+    nextCompatibility.includeTemperature = false;
+    changed = true;
+  }
+
+  if (
+    attemptedCompatibility.includeResponseFormat
+    && shouldRemoveCompatibilityParameter(
+      failureDetails,
+      searchableFailureText,
+      'response_format',
+      ['json mode', 'json_object'],
+    )
+  ) {
+    nextCompatibility.includeResponseFormat = false;
+    changed = true;
+  }
+
+  return changed ? nextCompatibility : null;
 }
 
 function resolveTokenBudgetFallback(
@@ -773,6 +880,34 @@ function resolveTokenBudgetFallback(
   }
 
   return null;
+}
+
+function usesDefaultOnlyTemperature(model: string): boolean {
+  return /^gpt-5(?:$|[-.])/i.test(model.trim());
+}
+
+function shouldRemoveCompatibilityParameter(
+  failureDetails: PlannerRequestFailureDetails,
+  searchableFailureText: string,
+  parameterName: string,
+  extraNeedles: string[] = [],
+): boolean {
+  const normalizedSearchableFailureText = searchableFailureText.toLowerCase();
+  const isUnsupportedCompatibilityError = /unsupported parameter|unsupported value/i.test(searchableFailureText);
+  if (!isUnsupportedCompatibilityError) {
+    return false;
+  }
+
+  if (failureDetails.param === parameterName) {
+    return true;
+  }
+
+  const quotedParameterPattern = new RegExp(`['"]?${parameterName}['"]?`, 'i');
+  if (quotedParameterPattern.test(searchableFailureText)) {
+    return true;
+  }
+
+  return extraNeedles.some(needle => normalizedSearchableFailureText.includes(needle.toLowerCase()));
 }
 
 function validateCaptureRequests(
