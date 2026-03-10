@@ -14,7 +14,7 @@ export interface PathGenerationCapture {
   height: number;
   id: string;
   imageDataUrl: string;
-  role: 'current' | 'requested' | 'scout';
+  role: 'current' | 'scout';
   width: number;
 }
 
@@ -22,9 +22,7 @@ export interface PathGenerationRequest {
   captures: PathGenerationCapture[];
   currentCamera: PathGenerationCamera;
   pathTail: PathGenerationPathTail | null;
-  plannerHistory: PathGenerationPlannerHistoryStep[];
   prompt: string;
-  remainingStepBudget: number;
   sceneBounds: PathGenerationBounds;
 }
 
@@ -41,36 +39,10 @@ export interface PathGenerationBounds {
 }
 
 export interface PathGenerationResponse {
-  status: 'complete';
   shotSpec: PathGenerationShotSpec;
   subjectLocalizations: PathGenerationSubjectLocalization[];
   warning?: string;
 }
-
-export interface PathGenerationNeedsCapturesResponse {
-  message: string;
-  requestedCaptures: PathGenerationCaptureRequest[];
-  status: 'needs-captures';
-  warning?: string;
-}
-
-export interface PathGenerationCaptureRequest {
-  captureId: string;
-  forwardOffsetScale?: number;
-  lateralOffsetScale?: number;
-  pitchDegrees?: number;
-  reason: string;
-  referenceCaptureId: string;
-  verticalOffsetScale?: number;
-  yawDegrees?: number;
-}
-
-export interface PathGenerationPlannerHistoryStep {
-  message: string;
-  requestedCaptures: PathGenerationCaptureRequest[];
-}
-
-export type PathGenerationPlannerResponse = PathGenerationResponse | PathGenerationNeedsCapturesResponse;
 
 export interface PathGenerationShotSpec {
   pathType: 'orbit';
@@ -89,7 +61,7 @@ export interface PathGenerationSubjectLocalization {
 }
 
 export interface PathGenerationPlanner {
-  generatePathPlan: (request: unknown) => Promise<PathGenerationPlannerResponse>;
+  generatePathPlan: (request: unknown) => Promise<PathGenerationResponse>;
   getStatus: () => PathGenerationPlannerStatus;
 }
 
@@ -132,10 +104,7 @@ interface ChatCompletionResponse {
 }
 
 interface ModelPathPlan {
-  message?: string;
-  requestedCaptures: PathGenerationCaptureRequest[];
   shotSpec: PathGenerationShotSpec | null;
-  status: 'complete' | 'needs-captures';
   subjectLocalizations: PathGenerationSubjectLocalization[];
   unsupportedReason?: string;
   warning?: string;
@@ -164,7 +133,6 @@ const DEFAULT_CHAT_COMPLETION_REQUEST_COMPATIBILITY: ChatCompletionRequestCompat
   includeTemperature: true,
   tokenBudgetParameter: 'max_completion_tokens',
 };
-const MAX_CAPTURE_REQUESTS_PER_STEP = 3;
 const MAX_CHAT_COMPLETION_COMPATIBILITY_ATTEMPTS = 4;
 const PLANNER_COMPLETION_TOKEN_LIMIT = 1600;
 
@@ -210,7 +178,7 @@ export class OpenAIVisionPathPlanner implements PathGenerationPlanner {
     };
   }
 
-  async generatePathPlan(request: unknown): Promise<PathGenerationPlannerResponse> {
+  async generatePathPlan(request: unknown): Promise<PathGenerationResponse> {
     const parsedRequest = parsePathGenerationRequest(request);
     const status = this.getStatus();
     if (!status.available) {
@@ -228,40 +196,11 @@ export class OpenAIVisionPathPlanner implements PathGenerationPlanner {
       throw new PathGenerationError(400, parsedPlan.unsupportedReason);
     }
 
-    if (parsedPlan.status === 'needs-captures') {
-      if (parsedRequest.remainingStepBudget <= 1) {
-        throw new PathGenerationError(
-          400,
-          'The planner still needs more context after the current capture budget. Reframe the subject and try again.',
-        );
-      }
-
-      validateCaptureRequests(parsedPlan.requestedCaptures, parsedRequest.captures);
-      return {
-        message: parsedPlan.message ?? 'The planner needs a few additional targeted captures before it can finish the orbit.',
-        requestedCaptures: parsedPlan.requestedCaptures,
-        status: 'needs-captures',
-        warning: parsedPlan.warning,
-      };
-    }
-
     if (!parsedPlan.shotSpec) {
       throw new PathGenerationError(502, 'Vision planner did not return a usable orbit shot specification.');
     }
 
     if (parsedPlan.subjectLocalizations.length < 2) {
-      // Safety net: if the budget allows, request lateral captures rather than failing.
-      if (parsedRequest.remainingStepBudget > 1 && parsedRequest.captures.length < 2) {
-        const refId = parsedRequest.captures[0].captureId;
-        return {
-          message: 'Only one view was analysed; requesting lateral captures for triangulation.',
-          requestedCaptures: [
-            { captureId: 'capture-follow-up-1', referenceCaptureId: refId, reason: 'lateral parallax', lateralOffsetScale: 0.4 },
-            { captureId: 'capture-follow-up-2', referenceCaptureId: refId, reason: 'opposite lateral parallax', lateralOffsetScale: -0.4 },
-          ],
-          status: 'needs-captures',
-        };
-      }
       throw new PathGenerationError(
         400,
         'The planner could not localize the requested subject in enough captured views.',
@@ -270,7 +209,6 @@ export class OpenAIVisionPathPlanner implements PathGenerationPlanner {
 
     return {
       shotSpec: parsedPlan.shotSpec,
-      status: 'complete',
       subjectLocalizations: parsedPlan.subjectLocalizations,
       warning: parsedPlan.warning,
     };
@@ -330,22 +268,15 @@ export function parseModelPathPlan(input: unknown): ModelPathPlan {
     throw new PathGenerationError(502, 'Vision planner returned a non-object response.');
   }
 
-  const status = parseModelPathPlanStatus(input);
   const rawLocalizations = input['subjectLocalizations'];
-  const rawRequestedCaptures = input['requestedCaptures'];
+  if (!Array.isArray(rawLocalizations)) {
+    throw new PathGenerationError(502, 'Vision planner response is missing subjectLocalizations.');
+  }
 
   return {
-    message: typeof input['message'] === 'string' && input['message'].trim().length > 0
-      ? input['message']
-      : undefined,
-    requestedCaptures: status === 'needs-captures'
-      ? parseRequestedCaptures(rawRequestedCaptures)
-      : [],
     shotSpec: input['shotSpec'] === null || input['shotSpec'] === undefined ? null : parseShotSpec(input['shotSpec']),
-    status,
-    subjectLocalizations: status === 'complete'
-      ? parseSubjectLocalizations(rawLocalizations)
-      : [],
+    subjectLocalizations: rawLocalizations.map((entry, index) =>
+      parseLocalization(entry, `subjectLocalizations[${index}]`)),
     unsupportedReason: typeof input['unsupportedReason'] === 'string' && input['unsupportedReason'].trim().length > 0
       ? input['unsupportedReason']
       : undefined,
@@ -361,8 +292,8 @@ export function parsePathGenerationRequest(input: unknown): PathGenerationReques
   }
 
   const rawCaptures = input['captures'];
-  if (!Array.isArray(rawCaptures) || rawCaptures.length < 1) {
-    throw new PathGenerationError(400, 'Path-generation requests must include at least one capture.');
+  if (!Array.isArray(rawCaptures) || rawCaptures.length < 2) {
+    throw new PathGenerationError(400, 'Path-generation requests must include at least two captures.');
   }
 
   return {
@@ -371,23 +302,16 @@ export function parsePathGenerationRequest(input: unknown): PathGenerationReques
     pathTail: input['pathTail'] === null || input['pathTail'] === undefined
       ? null
       : parsePathTail(input['pathTail'], 'pathTail'),
-    plannerHistory: parsePlannerHistory(input['plannerHistory']),
     prompt: readString(input, 'prompt', 'request'),
-    remainingStepBudget: input['remainingStepBudget'] === undefined
-      ? 1
-      : readPositiveInteger(input, 'remainingStepBudget', 'request'),
     sceneBounds: parseBounds(input['sceneBounds'], 'sceneBounds'),
   };
 }
 
 function buildSystemPrompt(): string {
   return [
-    'You are an iterative camera path planner for a 3D scene viewer.',
+    'You are a camera path planner for a 3D scene viewer.',
     'You only support orbit-style shots.',
-    'Return JSON only.',
-    'When you have enough evidence, return keys status, shotSpec, subjectLocalizations, warning, unsupportedReason.',
-    'When you need more evidence, return keys status, message, requestedCaptures, warning, unsupportedReason.',
-    'status must be "complete" or "needs-captures".',
+    'Return JSON only with keys shotSpec, subjectLocalizations, warning, unsupportedReason.',
     'shotSpec.pathType must be "orbit" when the prompt is supported.',
     'orientationMode must be "look-at-subject" when the user says the camera should stay focused on the subject.',
     'orientationMode must be "look-forward" when the user says the camera should face forward or along the path.',
@@ -395,13 +319,6 @@ function buildSystemPrompt(): string {
     'direction may be omitted when the user does not specify clockwise or counterclockwise.',
     'verticalBias must be exactly "low", "mid", or "high" when included; omit it unless the user clearly asks for a specific vertical angle.',
     'subjectLocalizations should contain one entry per image where the requested subject is visible, with captureId, pixelX, pixelY, confidence.',
-    'Use status "needs-captures" when the subject is occluded, ambiguous, not visible in enough views, or lacks enough parallax for reliable triangulation.',
-    'You must never return status "complete" when fewer than 2 captures are provided or when fewer than 2 of them show the subject. If you have only one capture, always return "needs-captures" and request 1–2 additional lateral views.',
-    `requestedCaptures may contain at most ${MAX_CAPTURE_REQUESTS_PER_STEP} entries.`,
-    'Each requested capture must include captureId, referenceCaptureId, and reason.',
-    'referenceCaptureId must refer to an existing capture from the input.',
-    'Requested offsets are camera-local controls: lateralOffsetScale moves right/left, verticalOffsetScale moves up/down, forwardOffsetScale moves forward/back, yawDegrees rotates around camera-local up, and pitchDegrees rotates around camera-local right.',
-    'Keep requested moves small, targeted, and close to the user-framed context. Prefer lateral or slight vertical parallax before wide moves.',
     'If the prompt requests a non-orbit motion, set unsupportedReason and leave shotSpec null.',
     'Do not invent captures that are not present in the input.',
   ].join(' ');
@@ -458,9 +375,6 @@ function buildUserContent(request: PathGenerationRequest): Array<Record<string, 
         `Scene bounds: ${JSON.stringify(request.sceneBounds)}`,
         `Current camera: ${JSON.stringify(request.currentCamera)}`,
         `Path tail: ${JSON.stringify(request.pathTail)}`,
-        `Planner history: ${JSON.stringify(request.plannerHistory)}`,
-        `Remaining step budget: ${request.remainingStepBudget}`,
-        `Available capture ids: ${request.captures.map(capture => capture.id).join(', ')}`,
       ].join('\n'),
       type: 'text',
     },
@@ -638,8 +552,8 @@ function parseCapture(value: unknown, context: string): PathGenerationCapture {
   }
 
   const role = readString(value, 'role', context);
-  if (role !== 'current' && role !== 'requested' && role !== 'scout') {
-    throw new PathGenerationError(400, `${context}.role must be "current", "requested", or "scout".`);
+  if (role !== 'current' && role !== 'scout') {
+    throw new PathGenerationError(400, `${context}.role must be "current" or "scout".`);
   }
 
   const imageDataUrl = readString(value, 'imageDataUrl', context);
@@ -663,23 +577,6 @@ function parseDirection(value: unknown, context: string): AgenticOrbitDirection 
   }
 
   return value;
-}
-
-function parseCaptureRequest(value: unknown, context: string): PathGenerationCaptureRequest {
-  if (!isRecord(value)) {
-    throw new PathGenerationError(502, `${context} must be an object.`);
-  }
-
-  return {
-    captureId: readString(value, 'captureId', context),
-    forwardOffsetScale: readOptionalFiniteNumber(value, 'forwardOffsetScale', context),
-    lateralOffsetScale: readOptionalFiniteNumber(value, 'lateralOffsetScale', context),
-    pitchDegrees: readOptionalFiniteNumber(value, 'pitchDegrees', context),
-    reason: readString(value, 'reason', context),
-    referenceCaptureId: readString(value, 'referenceCaptureId', context),
-    verticalOffsetScale: readOptionalFiniteNumber(value, 'verticalOffsetScale', context),
-    yawDegrees: readOptionalFiniteNumber(value, 'yawDegrees', context),
-  };
 }
 
 function parseLocalization(value: unknown, context: string): PathGenerationSubjectLocalization {
@@ -721,57 +618,6 @@ function parseQuaternion(value: unknown, context: string): PathGenerationQuatern
   };
 }
 
-function parseModelPathPlanStatus(value: UnknownRecord): 'complete' | 'needs-captures' {
-  const rawStatus = value['status'];
-  if (rawStatus === 'complete' || rawStatus === 'needs-captures') {
-    return rawStatus;
-  }
-
-  if (value['shotSpec'] !== undefined || value['subjectLocalizations'] !== undefined) {
-    return 'complete';
-  }
-
-  if (value['requestedCaptures'] !== undefined) {
-    return 'needs-captures';
-  }
-
-  throw new PathGenerationError(502, 'Vision planner response is missing status.');
-}
-
-function parsePlannerHistory(value: unknown): PathGenerationPlannerHistoryStep[] {
-  if (value === undefined || value === null) {
-    return [];
-  }
-
-  if (!Array.isArray(value)) {
-    throw new PathGenerationError(400, 'request.plannerHistory must be an array.');
-  }
-
-  return value.map((entry, index) => parsePlannerHistoryStep(entry, `plannerHistory[${index}]`));
-}
-
-function parsePlannerHistoryStep(value: unknown, context: string): PathGenerationPlannerHistoryStep {
-  if (!isRecord(value)) {
-    throw new PathGenerationError(400, `${context} must be an object.`);
-  }
-
-  return {
-    message: readString(value, 'message', context),
-    requestedCaptures: parseRequestedCaptures(value['requestedCaptures'], `${context}.requestedCaptures`),
-  };
-}
-
-function parseRequestedCaptures(
-  value: unknown,
-  context = 'requestedCaptures',
-): PathGenerationCaptureRequest[] {
-  if (!Array.isArray(value)) {
-    throw new PathGenerationError(502, `Vision planner response is missing ${context}.`);
-  }
-
-  return value.map((entry, index) => parseCaptureRequest(entry, `${context}[${index}]`));
-}
-
 function parseShotSpec(value: unknown): PathGenerationShotSpec {
   if (!isRecord(value)) {
     throw new PathGenerationError(502, 'shotSpec must be an object.');
@@ -806,14 +652,6 @@ function parseShotSpec(value: unknown): PathGenerationShotSpec {
       ? undefined
       : parseVerticalBias(verticalBiasValue, 'shotSpec.verticalBias'),
   };
-}
-
-function parseSubjectLocalizations(value: unknown): PathGenerationSubjectLocalization[] {
-  if (!Array.isArray(value)) {
-    throw new PathGenerationError(502, 'Vision planner response is missing subjectLocalizations.');
-  }
-
-  return value.map((entry, index) => parseLocalization(entry, `subjectLocalizations[${index}]`));
 }
 
 function parseVector3(value: unknown, context: string): PathGenerationVector3 {
@@ -854,28 +692,6 @@ function readFiniteNumber(record: UnknownRecord, key: string, context: string): 
   const value = record[key];
   if (typeof value !== 'number' || !Number.isFinite(value)) {
     throw new PathGenerationError(400, `${context}.${key} must be a finite number.`);
-  }
-
-  return value;
-}
-
-function readOptionalFiniteNumber(record: UnknownRecord, key: string, context: string): number | undefined {
-  const value = record[key];
-  if (value === undefined || value === null) {
-    return undefined;
-  }
-
-  if (typeof value !== 'number' || !Number.isFinite(value)) {
-    throw new PathGenerationError(502, `${context}.${key} must be a finite number when present.`);
-  }
-
-  return value;
-}
-
-function readPositiveInteger(record: UnknownRecord, key: string, context: string): number {
-  const value = readFiniteNumber(record, key, context);
-  if (!Number.isInteger(value) || value <= 0) {
-    throw new PathGenerationError(400, `${context}.${key} must be a positive integer.`);
   }
 
   return value;
@@ -1044,53 +860,4 @@ function shouldRemoveCompatibilityParameter(
   }
 
   return extraNeedles.some(needle => normalizedSearchableFailureText.includes(needle.toLowerCase()));
-}
-
-function validateCaptureRequests(
-  requestedCaptures: PathGenerationCaptureRequest[],
-  captures: PathGenerationCapture[],
-): void {
-  if (requestedCaptures.length === 0) {
-    throw new PathGenerationError(502, 'Vision planner requested additional captures but did not describe any.');
-  }
-
-  if (requestedCaptures.length > MAX_CAPTURE_REQUESTS_PER_STEP) {
-    throw new PathGenerationError(
-      502,
-      `Vision planner requested too many additional captures (${requestedCaptures.length}).`,
-    );
-  }
-
-  const knownCaptureIds = new Set(captures.map(capture => capture.id));
-  const requestedIds = new Set<string>();
-  for (const request of requestedCaptures) {
-    if (!knownCaptureIds.has(request.referenceCaptureId)) {
-      throw new PathGenerationError(
-        502,
-        `Vision planner referenced an unknown capture for follow-up context: ${request.referenceCaptureId}`,
-      );
-    }
-
-    if (knownCaptureIds.has(request.captureId) || requestedIds.has(request.captureId)) {
-      throw new PathGenerationError(
-        502,
-        `Vision planner reused a capture id for a follow-up request: ${request.captureId}`,
-      );
-    }
-
-    if (
-      request.forwardOffsetScale === undefined
-      && request.lateralOffsetScale === undefined
-      && request.verticalOffsetScale === undefined
-      && request.yawDegrees === undefined
-      && request.pitchDegrees === undefined
-    ) {
-      throw new PathGenerationError(
-        502,
-        `Vision planner returned a follow-up capture without any camera adjustment: ${request.captureId}`,
-      );
-    }
-
-    requestedIds.add(request.captureId);
-  }
 }

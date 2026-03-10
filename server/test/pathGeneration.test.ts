@@ -77,21 +77,7 @@ describe('pathGeneration request parsing', () => {
         quaternion: { x: 0, y: 0, z: 0, w: 1 },
       },
       pathTail: null,
-      plannerHistory: [
-        {
-          message: 'Need a slight rightward parallax from the current view.',
-          requestedCaptures: [
-            {
-              captureId: 'capture-follow-up-1',
-              lateralOffsetScale: 0.12,
-              reason: 'Reveal more of the truck front-right corner.',
-              referenceCaptureId: 'capture-current',
-            },
-          ],
-        },
-      ],
       prompt: 'Orbit the truck with the camera facing forward.',
-      remainingStepBudget: 3,
       sceneBounds: {
         max: { x: 2, y: 2, z: 2 },
         min: { x: -2, y: -2, z: -2 },
@@ -100,8 +86,6 @@ describe('pathGeneration request parsing', () => {
 
     expect(parsed.prompt).toContain('Orbit the truck');
     expect(parsed.captures).toHaveLength(2);
-    expect(parsed.plannerHistory).toHaveLength(1);
-    expect(parsed.remainingStepBudget).toBe(3);
   });
 });
 
@@ -121,33 +105,6 @@ describe('pathGeneration model-plan parsing', () => {
 
     expect(parsed.shotSpec?.orientationMode).toBe('look-forward');
     expect(parsed.subjectLocalizations).toHaveLength(2);
-    expect(parsed.status).toBe('complete');
-  });
-
-  it('accepts iterative capture requests from the planner', () => {
-    const parsed = parseModelPathPlan({
-      message: 'The truck is partially occluded. Capture two nearby parallax views.',
-      requestedCaptures: [
-        {
-          captureId: 'capture-follow-up-1',
-          lateralOffsetScale: 0.1,
-          reason: 'Slide right to uncover the front quarter panel.',
-          referenceCaptureId: 'capture-current',
-          yawDegrees: -8,
-        },
-        {
-          captureId: 'capture-follow-up-2',
-          lateralOffsetScale: -0.1,
-          reason: 'Slide left for triangulation baseline.',
-          referenceCaptureId: 'capture-current',
-        },
-      ],
-      status: 'needs-captures',
-    });
-
-    expect(parsed.status).toBe('needs-captures');
-    expect(parsed.requestedCaptures).toHaveLength(2);
-    expect(parsed.requestedCaptures[0]?.referenceCaptureId).toBe('capture-current');
   });
 
   it('rejects invalid orbit orientation modes', () => {

@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import type { InterpolatedPose, Keyframe, SerializableQuaternion, SerializableVector3 } from '../types';
+import { computeFramedSceneView } from '../viewer/sceneFraming';
 import type { ViewerAdapter } from '../viewer/ViewerAdapter';
 
 export type AgenticOrientationMode = 'look-at-subject' | 'look-forward';
@@ -20,7 +21,7 @@ export interface AgenticPathCapture {
   height: number;
   id: string;
   imageDataUrl: string;
-  role: 'current' | 'requested';
+  role: 'current' | 'scout';
   width: number;
 }
 
@@ -31,43 +32,17 @@ export interface AgenticSubjectLocalization {
   pixelY: number;
 }
 
-export interface AgenticPlannerCaptureRequest {
-  captureId: string;
-  forwardOffsetScale?: number;
-  lateralOffsetScale?: number;
-  pitchDegrees?: number;
-  reason: string;
-  referenceCaptureId: string;
-  verticalOffsetScale?: number;
-  yawDegrees?: number;
-}
-
-export interface AgenticPlannerCaptureStep {
-  message: string;
-  requestedCaptures: AgenticPlannerCaptureRequest[];
-}
-
-export interface AgenticPathCompleteResponse {
+export interface AgenticPathResponse {
   shotSpec: AgenticShotSpec;
-  status: 'complete';
   subjectLocalizations: AgenticSubjectLocalization[];
   warning?: string;
 }
-
-export interface AgenticPathNeedsCapturesResponse {
-  message: string;
-  requestedCaptures: AgenticPlannerCaptureRequest[];
-  status: 'needs-captures';
-  warning?: string;
-}
-
-export type AgenticPathPlannerResponse = AgenticPathCompleteResponse | AgenticPathNeedsCapturesResponse;
 
 export interface AgenticPathProgress {
   buttonLabel: string;
   captureIndex?: number;
   message: string;
-  stage: 'capturing-current' | 'capturing-requested' | 'planning' | 'triangulating' | 'building' | 'cancelling';
+  stage: 'capturing-current' | 'capturing-scout' | 'planning' | 'triangulating' | 'building' | 'cancelling';
   totalCaptures?: number;
 }
 
@@ -87,9 +62,7 @@ interface AgenticPathRequest {
   captures: AgenticPathCapture[];
   currentCamera: SerializedCaptureCamera;
   pathTail: SerializedPathTail | null;
-  plannerHistory: AgenticPlannerCaptureStep[];
   prompt: string;
-  remainingStepBudget: number;
   sceneBounds: SerializedBounds;
 }
 
@@ -106,6 +79,12 @@ interface OrbitFrame {
   height: number;
   radialDirection: THREE.Vector3;
   radius: number;
+}
+
+interface ScoutPoseSpec {
+  angleRadians: number;
+  heightOffsetScale: number;
+  radiusScale: number;
 }
 
 interface RayObservation {
@@ -142,18 +121,30 @@ const DEFAULT_PARTIAL_ORBIT_KEYFRAME_COUNT = 8;
 const DEFAULT_FULL_ORBIT_KEYFRAME_COUNT = 9;
 const DEFAULT_GENERATION_TIMEOUT_MS = 45_000;
 const DEFAULT_LOOK_UP = new THREE.Vector3(0, 1, 0);
-const LOCAL_CAMERA_RIGHT = new THREE.Vector3(1, 0, 0);
-const LOCAL_CAMERA_UP = new THREE.Vector3(0, 1, 0);
-const LOCAL_CAMERA_FORWARD = new THREE.Vector3(0, 0, -1);
 const MAX_CAPTURE_LONG_SIDE = 640;
-const MAX_CAPTURE_REQUESTS_PER_STEP = 3;
-const MAX_FORWARD_OFFSET_SCALE = 0.35;
-const MAX_LATERAL_OFFSET_SCALE = 0.35;
-const MAX_PLANNER_STEPS = 4;
-const MAX_PITCH_DEGREES = 20;
-const MAX_VERTICAL_OFFSET_SCALE = 0.25;
-const MAX_YAW_DEGREES = 30;
+const MAX_PLANNING_ATTEMPTS = 3;
 const MIN_VECTOR_LENGTH_SQUARED = 1e-8;
+const TOTAL_CAPTURE_COUNT = 5;
+const SCOUT_POSE_VARIANTS: ScoutPoseSpec[][] = [
+  [
+    { angleRadians: THREE.MathUtils.degToRad(-18), heightOffsetScale: 0, radiusScale: 0.96 },
+    { angleRadians: THREE.MathUtils.degToRad(18), heightOffsetScale: 0, radiusScale: 1.04 },
+    { angleRadians: THREE.MathUtils.degToRad(-34), heightOffsetScale: 0.12, radiusScale: 1.02 },
+    { angleRadians: THREE.MathUtils.degToRad(34), heightOffsetScale: -0.1, radiusScale: 1.08 },
+  ],
+  [
+    { angleRadians: THREE.MathUtils.degToRad(-26), heightOffsetScale: 0.08, radiusScale: 0.92 },
+    { angleRadians: THREE.MathUtils.degToRad(26), heightOffsetScale: -0.08, radiusScale: 1.08 },
+    { angleRadians: THREE.MathUtils.degToRad(-46), heightOffsetScale: 0.2, radiusScale: 0.98 },
+    { angleRadians: THREE.MathUtils.degToRad(46), heightOffsetScale: -0.18, radiusScale: 1.12 },
+  ],
+  [
+    { angleRadians: THREE.MathUtils.degToRad(-12), heightOffsetScale: 0.18, radiusScale: 0.88 },
+    { angleRadians: THREE.MathUtils.degToRad(12), heightOffsetScale: -0.18, radiusScale: 1.12 },
+    { angleRadians: THREE.MathUtils.degToRad(-58), heightOffsetScale: 0.04, radiusScale: 1.02 },
+    { angleRadians: THREE.MathUtils.degToRad(58), heightOffsetScale: 0.04, radiusScale: 1.16 },
+  ],
+];
 
 export class AgenticPathGenerationError extends Error {
   constructor(message: string) {
@@ -252,91 +243,52 @@ export class AgenticPathGenerator {
     }
   }
 
-  private async captureCurrentContext(
+  private async captureScoutSet(
+    bounds: THREE.Box3,
     livePose: InterpolatedPose,
     camera: THREE.PerspectiveCamera,
     timeout: AgenticGenerationTimeout,
+    attemptIndex: number,
   ): Promise<AgenticPathCapture[]> {
+    const captures: AgenticPathCapture[] = [];
+
     try {
-      this.reportCaptureProgress({
-        captureIndex: 1,
-        role: 'current',
-        totalCaptures: 1,
-      });
+      this.reportCaptureProgress(1, 'current', attemptIndex);
       await this.renderFrame(timeout, 'capturing the current view');
-      return [
+      captures.push(
         await this.captureCurrentView('capture-current', 'current', camera, timeout, 'capturing the current view'),
-      ];
-    } finally {
-      this.viewer.applyCameraPose(livePose);
-      this.viewer.renderNow();
-    }
-  }
+      );
 
-  private async captureRequestedSet(
-    requestedCaptures: AgenticPlannerCaptureRequest[],
-    existingCaptures: AgenticPathCapture[],
-    livePose: InterpolatedPose,
-    sceneBounds: THREE.Box3,
-    timeout: AgenticGenerationTimeout,
-    plannerStepIndex: number,
-  ): Promise<{ captures: AgenticPathCapture[]; executedRequests: AgenticPlannerCaptureRequest[] }> {
-    if (requestedCaptures.length < 1 || requestedCaptures.length > MAX_CAPTURE_REQUESTS_PER_STEP) {
-      throw new AgenticPathGenerationError('The planner requested an invalid number of follow-up captures.');
-    }
-
-    const captureById = new Map(existingCaptures.map(capture => [capture.id, capture]));
-    const capturedViews: AgenticPathCapture[] = [];
-    const executedRequests: AgenticPlannerCaptureRequest[] = [];
-
-    try {
-      for (const [index, requestedCapture] of requestedCaptures.entries()) {
-        timeout.throwIfAborted('capturing planner-requested follow-up views');
-        const referenceCapture = captureById.get(requestedCapture.referenceCaptureId);
-        if (!referenceCapture) {
-          throw new AgenticPathGenerationError(
-            `The planner referenced an unknown capture for follow-up context: ${requestedCapture.referenceCaptureId}`,
-          );
-        }
-
-        const capturePose = buildRequestedCapturePose(referenceCapture, requestedCapture, sceneBounds);
-        this.reportCaptureProgress({
-          captureIndex: index + 1,
-          plannerStepIndex,
-          reason: requestedCapture.reason,
-          role: 'requested',
-          totalCaptures: requestedCaptures.length,
-        });
-        this.viewer.applyCameraPose(capturePose);
-        await this.renderFrame(timeout, 'capturing planner-requested follow-up views');
+      const scoutPoses = buildScoutCameraPoses(bounds, camera, attemptIndex);
+      for (const [index, scoutPose] of scoutPoses.entries()) {
+        timeout.throwIfAborted('capturing scout views');
+        this.reportCaptureProgress(index + 2, 'scout', attemptIndex);
+        this.viewer.applyCameraPose(scoutPose);
+        await this.renderFrame(timeout, 'capturing scout views');
         const activeCamera = this.viewer.getCamera();
         if (!activeCamera) {
-          throw new AgenticPathGenerationError('Viewer camera became unavailable during follow-up capture.');
+          throw new AgenticPathGenerationError('Viewer camera became unavailable during scout capture.');
         }
 
-        capturedViews.push(await this.captureCurrentView(
-          requestedCapture.captureId,
-          'requested',
+        captures.push(await this.captureCurrentView(
+          `capture-scout-${index + 1}`,
+          'scout',
           activeCamera,
           timeout,
-          'capturing planner-requested follow-up views',
+          'capturing scout views',
         ));
-        executedRequests.push({ ...requestedCapture });
       }
     } finally {
       this.viewer.applyCameraPose(livePose);
       this.viewer.renderNow();
     }
 
-    return {
-      captures: capturedViews,
-      executedRequests,
-    };
+    return captures;
   }
 
   private async captureCurrentView(
     id: string,
-    role: 'current' | 'requested',
+    role: 'current' | 'scout',
     camera: THREE.PerspectiveCamera,
     timeout: AgenticGenerationTimeout,
     context: string,
@@ -361,69 +313,61 @@ export class AgenticPathGenerator {
   }
 
   private async resolvePathPlan(
-    request: Omit<AgenticPathRequest, 'captures' | 'plannerHistory' | 'remainingStepBudget'> & {
+    request: Omit<AgenticPathRequest, 'captures'> & {
       livePose: InterpolatedPose;
       sceneBoundsBox: THREE.Box3;
       viewerCamera: THREE.PerspectiveCamera;
     },
     timeout: AgenticGenerationTimeout,
   ): Promise<{ anchor: THREE.Vector3; shotSpec: AgenticShotSpec }> {
-    const captures = await this.captureCurrentContext(
-      request.livePose,
-      request.viewerCamera,
-      timeout,
-    );
-    const plannerHistory: AgenticPlannerCaptureStep[] = [];
+    let lastRetryableError: AgenticPathGenerationError | null = null;
 
-    for (let stepIndex = 0; stepIndex < MAX_PLANNER_STEPS; stepIndex += 1) {
-      const response = await this.requestPathPlan({
-        captures,
-        currentCamera: request.currentCamera,
-        pathTail: request.pathTail,
-        plannerHistory,
-        prompt: request.prompt,
-        remainingStepBudget: MAX_PLANNER_STEPS - stepIndex,
-        sceneBounds: request.sceneBounds,
-      }, timeout, stepIndex);
+    for (let attemptIndex = 0; attemptIndex < MAX_PLANNING_ATTEMPTS; attemptIndex += 1) {
+      const captures = await this.captureScoutSet(
+        request.sceneBoundsBox,
+        request.livePose,
+        request.viewerCamera,
+        timeout,
+        attemptIndex,
+      );
 
-      if (response.status === 'complete') {
-        this.reportTriangulationProgress(stepIndex);
+      try {
+        const response = await this.requestPathPlan({
+          captures,
+          currentCamera: request.currentCamera,
+          pathTail: request.pathTail,
+          prompt: request.prompt,
+          sceneBounds: request.sceneBounds,
+        }, timeout, attemptIndex);
+        this.reportTriangulationProgress(attemptIndex);
         return {
           anchor: triangulateSubjectAnchor(response.subjectLocalizations, captures, request.sceneBoundsBox),
           shotSpec: response.shotSpec,
         };
-      }
+      } catch (error) {
+        const normalizedError = normalizeAgenticPathGenerationError(error);
+        if (!isRetryablePathGenerationError(normalizedError) || attemptIndex >= MAX_PLANNING_ATTEMPTS - 1) {
+          throw normalizedError;
+        }
 
-      const followUp = await this.captureRequestedSet(
-        response.requestedCaptures,
-        captures,
-        request.livePose,
-        request.sceneBoundsBox,
-        timeout,
-        stepIndex,
-      );
-      captures.push(...followUp.captures);
-      plannerHistory.push({
-        message: response.message,
-        requestedCaptures: followUp.executedRequests,
-      });
+        lastRetryableError = normalizedError;
+        this.reportRetryProgress(attemptIndex, normalizedError);
+      }
     }
 
-    throw new AgenticPathGenerationError(
-      'The planner needed more follow-up captures than the current step budget allows. Reframe the subject and try again.',
-    );
+    throw lastRetryableError ?? new AgenticPathGenerationError('Could not generate an agentic camera path from that prompt.');
   }
 
   private async requestPathPlan(
     request: AgenticPathRequest,
     timeout: AgenticGenerationTimeout,
-    stepIndex: number,
-  ): Promise<AgenticPathPlannerResponse> {
+    attemptIndex: number,
+  ): Promise<AgenticPathResponse> {
     this.reportProgress({
-      buttonLabel: stepIndex > 0 ? `Planning ${stepIndex + 1}/${MAX_PLANNER_STEPS}…` : 'Planning…',
-      message: stepIndex > 0
-        ? `Sending the requested follow-up captures back to the planner (step ${stepIndex + 1}/${MAX_PLANNER_STEPS})…`
-        : 'Sending the current view to the planner…',
+      buttonLabel: attemptIndex > 0 ? `Planning Retry ${attemptIndex + 1}/${MAX_PLANNING_ATTEMPTS}…` : 'Planning…',
+      message: attemptIndex > 0
+        ? `Sending a different nearby scout set to the planner (retry ${attemptIndex + 1}/${MAX_PLANNING_ATTEMPTS})…`
+        : 'Sending the captured views to the planner…',
       stage: 'planning',
     });
     const response = await timeout.runStep(() => this.fetchImpl('/api/path/generate', {
@@ -446,34 +390,34 @@ export class AgenticPathGenerator {
     );
   }
 
-  private reportCaptureProgress(options: {
-    captureIndex: number;
-    plannerStepIndex?: number;
-    reason?: string;
-    role: 'current' | 'requested';
-    totalCaptures: number;
-  }): void {
-    const isCurrentCapture = options.role === 'current';
-    const stepLabel = options.plannerStepIndex === undefined
-      ? ''
-      : ` Planner step ${options.plannerStepIndex + 2}/${MAX_PLANNER_STEPS}.`;
-    const reasonLabel = options.reason ? ` ${options.reason}` : '';
+  private reportCaptureProgress(captureIndex: number, role: 'current' | 'scout', attemptIndex: number): void {
+    const isCurrentCapture = role === 'current';
+    const retryLabel = attemptIndex > 0 ? ` Retry ${attemptIndex + 1}/${MAX_PLANNING_ATTEMPTS}.` : '';
     this.reportProgress({
-      buttonLabel: `Capturing ${options.captureIndex}/${options.totalCaptures}…`,
-      captureIndex: options.captureIndex,
+      buttonLabel: `Capturing ${captureIndex}/${TOTAL_CAPTURE_COUNT}…`,
+      captureIndex,
       message: isCurrentCapture
-        ? 'Capturing the current view. Viewer controls are temporarily locked.'
-        : `Capturing planner-requested follow-up view ${options.captureIndex}/${options.totalCaptures}.${stepLabel}${reasonLabel} Viewer controls are temporarily locked.`,
-      stage: isCurrentCapture ? 'capturing-current' : 'capturing-requested',
-      totalCaptures: options.totalCaptures,
+        ? `Capturing the current view (1/5). Viewer controls are temporarily locked.${retryLabel}`
+        : `Capturing nearby scout view ${captureIndex - 1}/4 (${captureIndex}/${TOTAL_CAPTURE_COUNT}). Viewer controls are temporarily locked.${retryLabel}`,
+      stage: isCurrentCapture ? 'capturing-current' : 'capturing-scout',
+      totalCaptures: TOTAL_CAPTURE_COUNT,
     });
   }
 
-  private reportTriangulationProgress(stepIndex: number): void {
+  private reportRetryProgress(attemptIndex: number, error: AgenticPathGenerationError): void {
+    this.reportProgress({
+      buttonLabel: `Retrying ${attemptIndex + 2}/${MAX_PLANNING_ATTEMPTS}…`,
+      message:
+        `${error.message} Trying a different nearby scout set (${attemptIndex + 2}/${MAX_PLANNING_ATTEMPTS}) before giving up.`,
+      stage: 'planning',
+    });
+  }
+
+  private reportTriangulationProgress(attemptIndex: number): void {
     this.reportProgress({
       buttonLabel: 'Triangulating…',
-      message: stepIndex > 0
-        ? `Triangulating the subject anchor from the targeted follow-up captures (${stepIndex + 1}/${MAX_PLANNER_STEPS})…`
+      message: attemptIndex > 0
+        ? `Triangulating the subject anchor from the retry captures (${attemptIndex + 1}/${MAX_PLANNING_ATTEMPTS})…`
         : 'Triangulating the subject anchor from the captured views…',
       stage: 'triangulating',
     });
@@ -484,50 +428,45 @@ export class AgenticPathGenerator {
   }
 }
 
-export function buildRequestedCapturePose(
-  referenceCapture: AgenticPathCapture,
-  request: AgenticPlannerCaptureRequest,
-  sceneBounds: THREE.Box3,
-): InterpolatedPose {
-  const referencePose = poseFromSerializedCamera(referenceCapture.camera);
-  const sceneDiagonal = Math.max(sceneBounds.getSize(new THREE.Vector3()).length(), 1);
-  const lateralOffset = sceneDiagonal * THREE.MathUtils.clamp(
-    request.lateralOffsetScale ?? 0,
-    -MAX_LATERAL_OFFSET_SCALE,
-    MAX_LATERAL_OFFSET_SCALE,
+export function buildScoutCameraPoses(
+  bounds: THREE.Box3,
+  camera: THREE.PerspectiveCamera,
+  attemptIndex = 0,
+): InterpolatedPose[] {
+  const center = bounds.getCenter(new THREE.Vector3());
+  const sceneSize = bounds.getSize(new THREE.Vector3());
+  const sceneDiagonal = Math.max(sceneSize.length(), 1);
+  const framedView = computeFramedSceneView(bounds, camera);
+  const orbitFrame = deriveOrbitFrame(center, camera.position, camera.quaternion);
+  const framedDistance = framedView ? framedView.position.distanceTo(center) : camera.position.distanceTo(center);
+  const framedRadius = Math.sqrt(Math.max(framedDistance * framedDistance - orbitFrame.height * orbitFrame.height, 0));
+  const currentRadius = Math.max(orbitFrame.radius, 1);
+  const minRadius = Math.max(Math.min(currentRadius * 0.9, sceneDiagonal * 0.16), 0.75);
+  const maxRadius = Math.max(
+    currentRadius * 1.12,
+    Math.min(framedRadius, currentRadius + sceneDiagonal * 0.18),
+    minRadius + 0.25,
   );
-  const verticalOffset = sceneDiagonal * THREE.MathUtils.clamp(
-    request.verticalOffsetScale ?? 0,
-    -MAX_VERTICAL_OFFSET_SCALE,
-    MAX_VERTICAL_OFFSET_SCALE,
-  );
-  const forwardOffset = sceneDiagonal * THREE.MathUtils.clamp(
-    request.forwardOffsetScale ?? 0,
-    -MAX_FORWARD_OFFSET_SCALE,
-    MAX_FORWARD_OFFSET_SCALE,
-  );
-  const yawRadians = THREE.MathUtils.degToRad(
-    THREE.MathUtils.clamp(request.yawDegrees ?? 0, -MAX_YAW_DEGREES, MAX_YAW_DEGREES),
-  );
-  const pitchRadians = THREE.MathUtils.degToRad(
-    THREE.MathUtils.clamp(request.pitchDegrees ?? 0, -MAX_PITCH_DEGREES, MAX_PITCH_DEGREES),
-  );
-  const quaternion = referencePose.quaternion.clone();
-  if (Math.abs(yawRadians) > 0) {
-    quaternion.multiply(new THREE.Quaternion().setFromAxisAngle(LOCAL_CAMERA_UP, yawRadians));
-  }
-  if (Math.abs(pitchRadians) > 0) {
-    quaternion.multiply(new THREE.Quaternion().setFromAxisAngle(LOCAL_CAMERA_RIGHT, pitchRadians));
-  }
+  const sceneHeight = Math.max(computeBoundsExtentAlongAxis(bounds, orbitFrame.axis), sceneDiagonal * 0.25, 1);
+  const maxHeightOffset = Math.max(sceneHeight * 0.3, sceneDiagonal * 0.12, 0.5);
+  const scoutHeightStep = Math.min(sceneHeight * 0.12, maxHeightOffset * 0.45);
+  const scoutSpecs = SCOUT_POSE_VARIANTS[Math.min(attemptIndex, SCOUT_POSE_VARIANTS.length - 1)] ?? SCOUT_POSE_VARIANTS[0];
 
-  return {
-    fov: referencePose.fov,
-    position: referencePose.position.clone()
-      .addScaledVector(getRightVector(referencePose.quaternion), lateralOffset)
-      .addScaledVector(getUpVector(referencePose.quaternion), verticalOffset)
-      .addScaledVector(getForwardVector(referencePose.quaternion), forwardOffset),
-    quaternion,
-  };
+  return scoutSpecs.map(spec => {
+    const radius = THREE.MathUtils.clamp(currentRadius * spec.radiusScale, minRadius, maxRadius);
+    const height = THREE.MathUtils.clamp(
+      orbitFrame.height + scoutHeightStep * spec.heightOffsetScale,
+      -maxHeightOffset,
+      maxHeightOffset,
+    );
+    const position = createOrbitPosition(center, orbitFrame, radius, height, spec.angleRadians);
+
+    return {
+      fov: camera.fov,
+      position,
+      quaternion: buildLookQuaternion(position, center, orbitFrame.axis),
+    };
+  });
 }
 
 export function triangulateSubjectAnchor(
@@ -558,7 +497,7 @@ export function triangulateSubjectAnchor(
   ) / observations.length;
 
   if (!Number.isFinite(meanResidual) || meanResidual > Math.max(0.35, sceneDiagonal * 0.12)) {
-    throw new AgenticPathGenerationError('The planner could not resolve a stable 3D subject anchor from the captured views.');
+    throw new AgenticPathGenerationError('The planner could not resolve a stable 3D subject anchor from the scout views.');
   }
 
   const inflatedBounds = sceneBounds.clone().expandByScalar(Math.max(sceneDiagonal * 0.1, 0.25));
@@ -683,19 +622,6 @@ function clonePoseFromCamera(camera: THREE.PerspectiveCamera): InterpolatedPose 
   };
 }
 
-function poseFromSerializedCamera(camera: SerializedCaptureCamera): InterpolatedPose {
-  return {
-    fov: camera.fov,
-    position: new THREE.Vector3(camera.position.x, camera.position.y, camera.position.z),
-    quaternion: new THREE.Quaternion(
-      camera.quaternion.x,
-      camera.quaternion.y,
-      camera.quaternion.z,
-      camera.quaternion.w,
-    ),
-  };
-}
-
 function createCameraFromSerialized(camera: SerializedCaptureCamera): THREE.PerspectiveCamera {
   const perspectiveCamera = new THREE.PerspectiveCamera(
     camera.fov,
@@ -727,15 +653,11 @@ function distancePointToRay(
 }
 
 function getForwardVector(quaternion: THREE.Quaternion): THREE.Vector3 {
-  return LOCAL_CAMERA_FORWARD.clone().applyQuaternion(quaternion).normalize();
-}
-
-function getRightVector(quaternion: THREE.Quaternion): THREE.Vector3 {
-  return LOCAL_CAMERA_RIGHT.clone().applyQuaternion(quaternion).normalize();
+  return new THREE.Vector3(0, 0, -1).applyQuaternion(quaternion).normalize();
 }
 
 function getUpVector(quaternion: THREE.Quaternion): THREE.Vector3 {
-  return LOCAL_CAMERA_UP.clone().applyQuaternion(quaternion).normalize();
+  return DEFAULT_LOOK_UP.clone().applyQuaternion(quaternion).normalize();
 }
 
 function deriveOrbitFrame(
@@ -888,22 +810,9 @@ function multiplyMatrixVector(matrix: number[], vector: THREE.Vector3): THREE.Ve
   );
 }
 
-function parseAgenticPathResponse(input: unknown): AgenticPathPlannerResponse {
+function parseAgenticPathResponse(input: unknown): AgenticPathResponse {
   if (!isRecord(input)) {
     throw new AgenticPathGenerationError('Planner response was not a JSON object.');
-  }
-
-  const warning = typeof input['warning'] === 'string' && input['warning'].trim().length > 0
-    ? input['warning']
-    : undefined;
-  const status = parsePlannerResponseStatus(input);
-  if (status === 'needs-captures') {
-    return {
-      message: readString(input, 'message', 'planner response'),
-      requestedCaptures: parseRequestedCaptures(input['requestedCaptures']),
-      status,
-      warning,
-    };
   }
 
   const shotSpec = parseShotSpec(input['shotSpec']);
@@ -914,32 +823,17 @@ function parseAgenticPathResponse(input: unknown): AgenticPathPlannerResponse {
 
   const subjectLocalizations = rawLocalizations.map((localization, index) =>
     parseLocalization(localization, `subjectLocalizations[${index}]`));
+
   if (subjectLocalizations.length < 2) {
     throw new AgenticPathGenerationError('The planner could not localize the subject in enough captures.');
   }
 
   return {
     shotSpec,
-    status,
     subjectLocalizations,
-    warning,
-  };
-}
-
-function parseCaptureRequest(value: unknown, context: string): AgenticPlannerCaptureRequest {
-  if (!isRecord(value)) {
-    throw new AgenticPathGenerationError(`Planner response field ${context} must be an object.`);
-  }
-
-  return {
-    captureId: readString(value, 'captureId', context),
-    forwardOffsetScale: readOptionalFiniteNumber(value, 'forwardOffsetScale', context),
-    lateralOffsetScale: readOptionalFiniteNumber(value, 'lateralOffsetScale', context),
-    pitchDegrees: readOptionalFiniteNumber(value, 'pitchDegrees', context),
-    reason: readString(value, 'reason', context),
-    referenceCaptureId: readString(value, 'referenceCaptureId', context),
-    verticalOffsetScale: readOptionalFiniteNumber(value, 'verticalOffsetScale', context),
-    yawDegrees: readOptionalFiniteNumber(value, 'yawDegrees', context),
+    warning: typeof input['warning'] === 'string' && input['warning'].trim().length > 0
+      ? input['warning']
+      : undefined,
   };
 }
 
@@ -954,35 +848,6 @@ function parseLocalization(value: unknown, context: string): AgenticSubjectLocal
     pixelX: readFiniteNumber(value, 'pixelX', context),
     pixelY: readFiniteNumber(value, 'pixelY', context),
   };
-}
-
-function parsePlannerResponseStatus(input: UnknownRecord): 'complete' | 'needs-captures' {
-  const status = input['status'];
-  if (status === 'complete' || status === 'needs-captures') {
-    return status;
-  }
-
-  if (input['requestedCaptures'] !== undefined) {
-    return 'needs-captures';
-  }
-
-  if (input['shotSpec'] !== undefined || input['subjectLocalizations'] !== undefined) {
-    return 'complete';
-  }
-
-  throw new AgenticPathGenerationError('Planner response was missing status.');
-}
-
-function parseRequestedCaptures(value: unknown): AgenticPlannerCaptureRequest[] {
-  if (!Array.isArray(value)) {
-    throw new AgenticPathGenerationError('Planner response was missing requestedCaptures.');
-  }
-
-  if (value.length < 1 || value.length > MAX_CAPTURE_REQUESTS_PER_STEP) {
-    throw new AgenticPathGenerationError('Planner response requested an invalid number of follow-up captures.');
-  }
-
-  return value.map((entry, index) => parseCaptureRequest(entry, `requestedCaptures[${index}]`));
 }
 
 function parseShotSpec(value: unknown): AgenticShotSpec {
@@ -1059,19 +924,6 @@ function readFiniteNumber(record: UnknownRecord, key: string, context: string): 
   const value = record[key];
   if (typeof value !== 'number' || !Number.isFinite(value)) {
     throw new AgenticPathGenerationError(`Planner response field ${context}.${key} must be a finite number.`);
-  }
-
-  return value;
-}
-
-function readOptionalFiniteNumber(record: UnknownRecord, key: string, context: string): number | undefined {
-  const value = record[key];
-  if (value === undefined || value === null) {
-    return undefined;
-  }
-
-  if (typeof value !== 'number' || !Number.isFinite(value)) {
-    throw new AgenticPathGenerationError(`Planner response field ${context}.${key} must be a finite number when present.`);
   }
 
   return value;
@@ -1344,4 +1196,26 @@ function formatTimeoutDuration(timeoutMs: number): string {
 
 function isAbortError(error: unknown): boolean {
   return error instanceof DOMException && error.name === 'AbortError';
+}
+
+function isRetryablePathGenerationError(error: AgenticPathGenerationError): boolean {
+  return [
+    /could not localize/i,
+    /not enough (captured )?views/i,
+    /stable 3d subject anchor/i,
+    /outside the loaded scene bounds/i,
+    /could not be triangulated/i,
+  ].some(pattern => pattern.test(error.message));
+}
+
+function normalizeAgenticPathGenerationError(error: unknown): AgenticPathGenerationError {
+  if (error instanceof AgenticPathGenerationError) {
+    return error;
+  }
+
+  if (error instanceof Error) {
+    return new AgenticPathGenerationError(error.message);
+  }
+
+  return new AgenticPathGenerationError('Could not generate an agentic camera path from that prompt.');
 }
