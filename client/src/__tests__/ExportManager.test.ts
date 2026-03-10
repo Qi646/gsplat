@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { describe, expect, it, vi } from 'vitest';
 import { ExportManager, buildExportFrameTimes } from '../export/ExportManager';
+import type { SceneLoadInput } from '../lib/sceneSource';
 import type { Keyframe, ViewerDebugSnapshot } from '../types';
 import type { ViewerAdapter } from '../viewer/ViewerAdapter';
 
@@ -118,7 +119,7 @@ class FakeViewer implements ViewerAdapter {
     return this.sceneLoaded;
   }
 
-  loadScene(): Promise<void> {
+  loadScene(_source: SceneLoadInput): Promise<void> {
     return Promise.resolve();
   }
 

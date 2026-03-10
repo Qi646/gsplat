@@ -5,7 +5,8 @@ import {
   DEFAULT_ROBUST_SCENE_BOUNDS_OPTIONS,
   type RobustSceneBoundsOptions,
 } from '../lib/robustSceneBounds';
-import { detectSceneFormat } from '../lib/sceneFormat';
+import type { SceneFormatId } from '../lib/sceneFormat';
+import { resolveSceneLoadSource, type SceneLoadInput } from '../lib/sceneSource';
 import type { InterpolatedPose, ViewerDebugSnapshot } from '../types';
 import { applyAdaptiveCameraFrustum } from './adaptiveCameraFrustum';
 import {
@@ -86,11 +87,12 @@ export class SparkSceneViewer implements ViewerAdapter {
     this.startRenderLoop();
   }
 
-  async loadScene(url: string): Promise<void> {
+  async loadScene(source: SceneLoadInput): Promise<void> {
     if (!this.scene) {
       throw new Error('Viewer not initialized');
     }
 
+    const resolvedSource = resolveSceneLoadSource(source);
     this.resetSceneState();
     this.events.emit('scene:progress', { percent: 0, message: 'Starting download…' });
 
@@ -98,9 +100,9 @@ export class SparkSceneViewer implements ViewerAdapter {
       this.removeExistingScene();
 
       const loader = new Spark.SplatLoader();
-      loader.fileType = this.toSparkFileType(detectSceneFormat(url));
+      loader.fileType = this.toSparkFileType(resolvedSource.format);
 
-      const packedSplats = await loader.loadAsync(url, event => {
+      const packedSplats = await loader.loadAsync(resolvedSource.url, event => {
         this.events.emit('scene:progress', formatSparkLoadProgress(event));
       });
 
@@ -340,7 +342,7 @@ export class SparkSceneViewer implements ViewerAdapter {
     this.renderer?.dispose();
   }
 
-  private toSparkFileType(formatId: ReturnType<typeof detectSceneFormat>): Spark.SplatFileType {
+  private toSparkFileType(formatId: SceneFormatId): Spark.SplatFileType {
     if (formatId === 'splat') {
       return Spark.SplatFileType.SPLAT;
     }

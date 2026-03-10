@@ -535,6 +535,25 @@ describe('SparkSceneViewer', () => {
     expect(mockModule.__mockState.fileType).toBe('ply');
   });
 
+  it('uses explicit scene formats for local blob-backed loads', async () => {
+    const events = new AppEvents();
+    const hostElement = {
+      clientHeight: 600,
+      clientWidth: 800,
+      replaceChildren: vi.fn(),
+    } as unknown as HTMLDivElement;
+    const viewer = new SparkSceneViewer({ hostElement, events });
+
+    await viewer.init();
+    await viewer.loadScene({
+      url: 'blob:https://example.com/local-scene',
+      format: 'ksplat',
+    });
+
+    expect(mockModule.__mockState.loadCalls).toEqual(['blob:https://example.com/local-scene']);
+    expect(mockModule.__mockState.fileType).toBe('ksplat');
+  });
+
   it('applies inverted camera poses without snapping them upright', async () => {
     const events = new AppEvents();
     const hostElement = {

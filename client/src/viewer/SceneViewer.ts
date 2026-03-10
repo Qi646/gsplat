@@ -2,8 +2,9 @@ import * as GaussianSplats3D from '@mkkellogg/gaussian-splats-3d';
 import * as THREE from 'three';
 import { formatLoadProgress } from '../lib/loadProgress';
 import { computeRobustSceneBounds } from '../lib/robustSceneBounds';
+import type { SceneFormatId } from '../lib/sceneFormat';
+import { resolveSceneLoadSource, type SceneLoadInput } from '../lib/sceneSource';
 import type { AppEvents, InterpolatedPose, ViewerDebugSnapshot } from '../types';
-import { detectSceneFormat } from '../lib/sceneFormat';
 import { applyAdaptiveCameraFrustum } from './adaptiveCameraFrustum';
 import {
   createViewerOrbitControls,
@@ -90,19 +91,20 @@ export class SceneViewer implements ViewerAdapter {
     this.startRenderLoop();
   }
 
-  async loadScene(url: string): Promise<void> {
+  async loadScene(source: SceneLoadInput): Promise<void> {
     if (!this.viewer) {
       throw new Error('Viewer not initialized');
     }
 
+    const resolvedSource = resolveSceneLoadSource(source);
     this.resetSceneState();
     this.events.emit('scene:progress', { percent: 0, message: 'Starting download…' });
 
     try {
       await this.removeExistingScenes();
 
-      await this.viewer.addSplatScene(url, {
-        format: this.toSceneFormat(detectSceneFormat(url)),
+      await this.viewer.addSplatScene(resolvedSource.url, {
+        format: this.toSceneFormat(resolvedSource.format),
         showLoadingUI: false,
         onProgress: (percent: number, progressLabel: string, stage: number) => {
           this.events.emit('scene:progress', formatLoadProgress(percent, progressLabel, stage));
@@ -336,7 +338,7 @@ export class SceneViewer implements ViewerAdapter {
     this.viewer?.dispose?.();
   }
 
-  private toSceneFormat(formatId: ReturnType<typeof detectSceneFormat>): GaussianSplats3D.SceneFormat {
+  private toSceneFormat(formatId: SceneFormatId): GaussianSplats3D.SceneFormat {
     if (formatId === 'splat') {
       return GaussianSplats3D.SceneFormat.Splat;
     }

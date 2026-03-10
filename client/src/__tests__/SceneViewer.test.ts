@@ -527,6 +527,23 @@ describe('SceneViewer', () => {
     );
   });
 
+  it('uses explicit scene formats for local blob-backed loads', async () => {
+    const events = new AppEvents();
+    const hostElement = {} as HTMLDivElement;
+    const viewer = new SceneViewer({ hostElement, events });
+
+    await viewer.init();
+    await viewer.loadScene({
+      url: 'blob:https://example.com/local-scene',
+      format: 'ksplat',
+    });
+
+    expect(mockModule.__mockState.addSceneCalls[0]?.url).toBe('blob:https://example.com/local-scene');
+    expect(mockModule.__mockState.addSceneCalls[0]?.options['format']).toBe(
+      GaussianSplats3D.SceneFormat.KSplat,
+    );
+  });
+
   it('applies inverted camera poses without snapping them upright', async () => {
     const events = new AppEvents();
     const hostElement = {} as HTMLDivElement;

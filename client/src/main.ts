@@ -5,6 +5,8 @@ import {
 } from './controls/navigationMode';
 import { DEFAULT_EXPORT_SETTINGS, ExportManager, type ExportProgress } from './export/ExportManager';
 import { parseAppRuntimeQuery } from './lib/runtimeQuery';
+import { detectSceneFormat } from './lib/sceneFormat';
+import { resolveSceneLoadSource, type SceneLoadInput, type SceneLoadSource } from './lib/sceneSource';
 import { SCENE_PRESETS } from './lib/scenePresets';
 import { CameraPathOverlay } from './path/CameraPathOverlay';
 import { KeyframeManager } from './path/KeyframeManager';
@@ -18,6 +20,7 @@ import { rollOrbitCamera } from './viewer/orbitControls';
 import type { ViewerAdapter } from './viewer/ViewerAdapter';
 
 const CAMERA_ROLL_STEP_RADIANS = Math.PI / 36;
+const SUPPORTED_LOCAL_SCENE_FILE_PATTERN = /\.(ply|splat|ksplat)$/i;
 
 function $(selector: string): HTMLElement {
   const element = document.querySelector<HTMLElement>(selector);
@@ -61,6 +64,12 @@ function downloadBlob(blob: Blob, fileName: string): void {
   URL.revokeObjectURL(url);
 }
 
+function formatFileSize(sizeBytes: number): string {
+  const megabytes = sizeBytes / (1024 * 1024);
+  const decimals = megabytes >= 10 ? 0 : 1;
+  return `${megabytes.toFixed(decimals)} MB`;
+}
+
 async function main(): Promise<void> {
   const runtimeQuery = parseAppRuntimeQuery(window.location.search);
   let viewer: ViewerAdapter | null = null;
@@ -69,6 +78,9 @@ async function main(): Promise<void> {
   let currentStatusNote: string | null = null;
   const viewerHost = $('#viewer-host') as HTMLDivElement;
   const sceneUrlInput = $('#scene-url-input') as HTMLInputElement;
+  const sceneFileInput = $('#scene-file-input') as HTMLInputElement;
+  const selectSceneFileButton = $('#btn-select-scene-file') as HTMLButtonElement;
+  const sceneFileNote = $('#scene-file-note');
   const loadButton = $('#btn-load-scene') as HTMLButtonElement;
   const addKeyframeButton = $('#btn-add-kf') as HTMLButtonElement;
   const clearKeyframesButton = $('#btn-clear-kfs') as HTMLButtonElement;
@@ -155,6 +167,7 @@ async function main(): Promise<void> {
   let walkState: WalkControlState = 'inactive';
   let pathVisualsEnabled = true;
   let sceneLoadInProgress = false;
+  let currentSceneObjectUrl: string | null = null;
   let selectedKeyframeId: string | null = null;
   let queuedWalkStatusMessage: string | null = null;
   let suppressWalkExitStatus = false;
@@ -315,6 +328,8 @@ async function main(): Promise<void> {
 
   const setSceneSourceEnabled = (enabled: boolean) => {
     sceneUrlInput.disabled = !enabled;
+    sceneFileInput.disabled = !enabled;
+    selectSceneFileButton.disabled = !enabled;
     loadButton.disabled = !enabled;
 
     document.querySelectorAll<HTMLButtonElement>('.source-tab').forEach(button => {
@@ -324,6 +339,22 @@ async function main(): Promise<void> {
     document.querySelectorAll<HTMLButtonElement>('.preset-btn').forEach(button => {
       button.disabled = !enabled;
     });
+  };
+
+  const revokeSceneObjectUrl = (url: string | null) => {
+    if (url) {
+      URL.revokeObjectURL(url);
+    }
+  };
+
+  const selectSceneSourceTab = (selectedTab: 'url' | 'file' | 'presets') => {
+    document.querySelectorAll<HTMLButtonElement>('.source-tab').forEach(button => {
+      button.classList.toggle('active', button.dataset['tab'] === selectedTab);
+    });
+
+    $('#tab-url').style.display = selectedTab === 'url' ? 'block' : 'none';
+    $('#tab-file').style.display = selectedTab === 'file' ? 'block' : 'none';
+    $('#tab-presets').style.display = selectedTab === 'presets' ? 'block' : 'none';
   };
 
   const setExportInteractionLock = (active: boolean) => {
@@ -490,10 +521,15 @@ async function main(): Promise<void> {
   window.addEventListener('beforeunload', () => {
     stopWalkMode({ silent: true });
     pathOverlay.dispose();
+    revokeSceneObjectUrl(currentSceneObjectUrl);
     viewer.dispose();
   });
 
-  const loadScene = async (url: string) => {
+  const loadScene = async (sourceInput: SceneLoadInput) => {
+    const source = resolveSceneLoadSource(sourceInput);
+    const previousSceneObjectUrl = currentSceneObjectUrl;
+    const nextSceneObjectUrl = source.url.startsWith('blob:') ? source.url : null;
+
     stopWalkMode({ silent: true });
     keyframeManager.stopPreview();
     adaptiveRenderBudgetController.resetScene();
@@ -515,10 +551,14 @@ async function main(): Promise<void> {
     syncPathVisualsState();
 
     try {
-      await viewer.loadScene(url);
+      await viewer.loadScene(source);
       keyframeManager.clear();
       selectedKeyframeId = null;
       sceneLoadInProgress = false;
+      currentSceneObjectUrl = nextSceneObjectUrl;
+      if (previousSceneObjectUrl !== nextSceneObjectUrl) {
+        revokeSceneObjectUrl(previousSceneObjectUrl);
+      }
       viewer.setRenderBudget(adaptiveRenderBudgetController.getState().budgetCount);
       renderKeyframeList();
       updatePathControlsState();
@@ -527,9 +567,16 @@ async function main(): Promise<void> {
       setStatusNote('Scene loaded. Use Z/C to roll the camera, press K to capture keyframes, scrub the path, or preview a camera move.');
     } catch (error) {
       sceneLoadInProgress = false;
+      currentSceneObjectUrl = null;
+      if (previousSceneObjectUrl !== nextSceneObjectUrl) {
+        revokeSceneObjectUrl(previousSceneObjectUrl);
+      }
+      if (nextSceneObjectUrl) {
+        revokeSceneObjectUrl(nextSceneObjectUrl);
+      }
       const message = error instanceof Error ? error.message : 'Unknown load error';
       progressLabel.textContent = `Error: ${message}`;
-      setStatusNote('Scene load failed. Try another public URL or preset.');
+      setStatusNote('Scene load failed. Try another URL, preset, or local file.');
       updatePathControlsState();
       syncPathVisualsState();
     }
@@ -537,14 +584,10 @@ async function main(): Promise<void> {
 
   document.querySelectorAll<HTMLButtonElement>('.source-tab').forEach(tab => {
     tab.addEventListener('click', () => {
-      document.querySelectorAll<HTMLButtonElement>('.source-tab').forEach(button => {
-        button.classList.remove('active');
-      });
-      tab.classList.add('active');
-
       const selectedTab = tab.dataset['tab'];
-      $('#tab-url').style.display = selectedTab === 'url' ? 'block' : 'none';
-      $('#tab-presets').style.display = selectedTab === 'presets' ? 'block' : 'none';
+      if (selectedTab === 'url' || selectedTab === 'file' || selectedTab === 'presets') {
+        selectSceneSourceTab(selectedTab);
+      }
     });
   });
 
@@ -558,7 +601,7 @@ async function main(): Promise<void> {
     `;
     button.addEventListener('click', () => {
       sceneUrlInput.value = preset.url;
-      document.querySelector<HTMLButtonElement>('[data-tab="url"]')?.click();
+      selectSceneSourceTab('url');
       void loadScene(preset.url);
     });
     $('#preset-grid').appendChild(button);
@@ -569,6 +612,33 @@ async function main(): Promise<void> {
     if (url) {
       void loadScene(url);
     }
+  });
+
+  selectSceneFileButton.addEventListener('click', () => {
+    sceneFileInput.click();
+  });
+
+  sceneFileInput.addEventListener('change', () => {
+    const file = sceneFileInput.files?.[0];
+    sceneFileInput.value = '';
+
+    if (!file) {
+      return;
+    }
+
+    if (!SUPPORTED_LOCAL_SCENE_FILE_PATTERN.test(file.name)) {
+      sceneFileNote.textContent = 'Unsupported local file. Choose a `.ply`, `.splat`, or `.ksplat` scene.';
+      setStatusNote('Local scene selection failed. Choose a `.ply`, `.splat`, or `.ksplat` file.');
+      return;
+    }
+
+    const localSceneSource: SceneLoadSource = {
+      url: URL.createObjectURL(file),
+      format: detectSceneFormat(file.name),
+    };
+
+    sceneFileNote.textContent = `${file.name} · ${formatFileSize(file.size)}`;
+    void loadScene(localSceneSource);
   });
 
   targetFpsSlider.addEventListener('input', () => {
@@ -830,7 +900,8 @@ async function main(): Promise<void> {
   });
 
   renderKeyframeList();
-  setStatusNote('Ready to load a scene.');
+  setStatusNote('Ready to load a scene URL, preset, or local file.');
+  selectSceneSourceTab('url');
   setNavigationModeUI(walkState);
   updateExportButton();
   updatePathControlsState();

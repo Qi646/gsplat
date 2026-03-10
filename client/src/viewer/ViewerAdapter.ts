@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import type { SceneLoadInput } from '../lib/sceneSource';
 import type { AppEvents, InterpolatedPose, ViewerDebugSnapshot, ViewerRendererId } from '../types';
 import type { ViewerRuntimeOverrides } from './viewerRuntime';
 
@@ -10,7 +11,7 @@ export interface ViewerAdapterOptions {
 
 export interface ViewerAdapter {
   init(): Promise<void>;
-  loadScene(url: string): Promise<void>;
+  loadScene(source: SceneLoadInput): Promise<void>;
   resize(width: number, height: number): void;
   setFrameHook(frameHook: (() => void) | null): void;
   setRenderBudget(maxRenderCount: number | null): void;

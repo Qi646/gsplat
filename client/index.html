@@ -631,7 +631,7 @@
         <div class="progress-track">
           <div class="progress-fill" id="progress-fill"></div>
         </div>
-        <div class="progress-label" id="progress-label">Load a public scene to begin.</div>
+        <div class="progress-label" id="progress-label">Load a scene URL, preset, or local file to begin.</div>
       </div>
 
       <div id="walkmode-hud">WALK MODE · 1 Inspect · WASD fly · Mouse look · Q/E vertical · Z/C roll · Shift sprint · ESC exit</div>
@@ -641,13 +641,22 @@
       <div class="panel-section">
         <div class="section-label">Scene Source</div>
         <div class="source-toggle">
-          <button class="source-tab active" data-tab="url">URL / Path</button>
+          <button class="source-tab active" data-tab="url">URL</button>
+          <button class="source-tab" data-tab="file">Local File</button>
           <button class="source-tab" data-tab="presets">Presets</button>
         </div>
 
         <div id="tab-url">
-          <input class="url-input" id="scene-url-input" type="text" placeholder="https://… or /path/to/scene.ply" />
+          <input class="url-input" id="scene-url-input" type="text" placeholder="https://… or /api/presets/truck.ksplat" />
           <button class="btn" id="btn-load-scene" style="width: 100%">▶ Load Scene</button>
+        </div>
+
+        <div id="tab-file" style="display: none">
+          <button class="btn" id="btn-select-scene-file" style="width: 100%">⬆ Choose Local Scene</button>
+          <div class="note" id="scene-file-note" style="margin-top: 8px">
+            Choose a local <code>.ply</code>, <code>.splat</code>, or <code>.ksplat</code> scene file.
+          </div>
+          <input type="file" id="scene-file-input" accept=".ply,.splat,.ksplat" hidden />
         </div>
 
         <div id="tab-presets" style="display: none">
@@ -716,7 +725,7 @@
       <div class="panel-section" style="border-bottom: none">
         <div class="section-label">Status</div>
         <div class="note" id="status-note">
-          Ready to load one of the preset scenes or any public `.ply`, `.splat`, or `.ksplat` URL.
+          Ready to load one of the preset scenes, a scene URL, or a local `.ply`, `.splat`, or `.ksplat` file.
         </div>
       </div>
     </aside>
