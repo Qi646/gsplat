@@ -95,11 +95,92 @@ describe('resolveNavigationShortcutAction', () => {
     ).toBeNull();
   });
 
+  it('maps Z/C to camera roll when inspect or walk mode is active', () => {
+    expect(
+      resolveNavigationShortcutAction(
+        {
+          code: 'KeyZ',
+        },
+        {
+          interactionLocked: false,
+          sceneLoaded: true,
+          walkState: 'inactive',
+        },
+      ),
+    ).toBe('roll-left');
+    expect(
+      resolveNavigationShortcutAction(
+        {
+          code: 'KeyC',
+        },
+        {
+          interactionLocked: false,
+          sceneLoaded: true,
+          walkState: 'active',
+        },
+      ),
+    ).toBe('roll-right');
+  });
+
+  it('blocks Z/C roll shortcuts while the scene is unavailable, interaction is locked, or walk mode is arming', () => {
+    expect(
+      resolveNavigationShortcutAction(
+        {
+          code: 'KeyZ',
+        },
+        {
+          interactionLocked: false,
+          sceneLoaded: false,
+          walkState: 'inactive',
+        },
+      ),
+    ).toBeNull();
+    expect(
+      resolveNavigationShortcutAction(
+        {
+          code: 'KeyZ',
+        },
+        {
+          interactionLocked: true,
+          sceneLoaded: true,
+          walkState: 'inactive',
+        },
+      ),
+    ).toBeNull();
+    expect(
+      resolveNavigationShortcutAction(
+        {
+          code: 'KeyC',
+        },
+        {
+          interactionLocked: false,
+          sceneLoaded: true,
+          walkState: 'armed',
+        },
+      ),
+    ).toBeNull();
+  });
+
   it('ignores navigation shortcuts while typing in editable fields', () => {
     expect(
       resolveNavigationShortcutAction(
         {
           code: 'Digit2',
+          target: {
+            closest: () => ({ tagName: 'INPUT' }),
+          } as unknown as EventTarget,
+        },
+        {
+          interactionLocked: false,
+          sceneLoaded: true,
+          walkState: 'inactive',
+        },
+      ),
+    ).toBeNull();
+    expect(
+      resolveNavigationShortcutAction(
+        {
+          code: 'KeyZ',
           target: {
             closest: () => ({ tagName: 'INPUT' }),
           } as unknown as EventTarget,

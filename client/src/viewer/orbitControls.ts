@@ -57,6 +57,25 @@ export function updateOrbitControls(
   controls.update();
 }
 
+export function rollOrbitCamera(
+  camera: THREE.PerspectiveCamera | null,
+  radians: number,
+): boolean {
+  if (!camera || !Number.isFinite(radians) || Math.abs(radians) <= Number.EPSILON) {
+    return false;
+  }
+
+  const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
+  if (forward.lengthSq() <= Number.EPSILON) {
+    return false;
+  }
+
+  forward.normalize();
+  camera.up.applyAxisAngle(forward, radians).normalize();
+  camera.lookAt(new THREE.Vector3().copy(camera.position).add(forward));
+  return true;
+}
+
 export function syncOrbitControlsTargetFromCamera(
   camera: THREE.PerspectiveCamera,
   controls: ViewerCameraControls | null,

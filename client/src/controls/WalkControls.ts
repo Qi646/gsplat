@@ -26,6 +26,7 @@ export class WalkControls {
   private readonly up = new THREE.Vector3();
   private readonly pitchRotation = new THREE.Quaternion();
   private readonly yawRotation = new THREE.Quaternion();
+  private readonly rollRotation = new THREE.Quaternion();
   private lastTime = 0;
   private state: WalkControlState = 'inactive';
 
@@ -101,6 +102,22 @@ export class WalkControls {
 
   isActive(): boolean {
     return this.state === 'active';
+  }
+
+  roll(radians: number): boolean {
+    if (this.state !== 'active' || !Number.isFinite(radians) || Math.abs(radians) <= Number.EPSILON) {
+      return false;
+    }
+
+    this.forward.set(0, 0, -1).applyQuaternion(this.camera.quaternion);
+    if (this.forward.lengthSq() <= Number.EPSILON) {
+      return false;
+    }
+
+    this.forward.normalize();
+    this.rollRotation.setFromAxisAngle(this.forward, radians);
+    this.camera.quaternion.premultiply(this.rollRotation).normalize();
+    return true;
   }
 
   update(): void {

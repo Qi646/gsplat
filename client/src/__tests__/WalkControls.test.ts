@@ -306,6 +306,31 @@ describe('WalkControls', () => {
     expect(nextUp.dot(initialUp)).toBeCloseTo(1, 6);
   });
 
+  it('rolls around the current view axis without translating the camera', () => {
+    camera.quaternion.setFromEuler(new THREE.Euler(Math.PI / 6, -Math.PI / 5, Math.PI / 8, 'YXZ'));
+    const controls = new WalkControls({
+      camera,
+      canvas: canvas as unknown as HTMLCanvasElement,
+    });
+
+    activateControls(controls);
+    const beforePosition = camera.position.clone();
+    const beforeForward = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion).normalize();
+    const beforeUp = new THREE.Vector3(0, 1, 0).applyQuaternion(camera.quaternion).normalize();
+    const radians = Math.PI / 36;
+    const expectedUp = beforeUp.clone().applyAxisAngle(beforeForward, radians).normalize();
+
+    expect(controls.roll(radians)).toBe(true);
+
+    const afterForward = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion).normalize();
+    const afterUp = new THREE.Vector3(0, 1, 0).applyQuaternion(camera.quaternion).normalize();
+    expect(camera.position.toArray()).toEqual(beforePosition.toArray());
+    expect(afterForward.dot(beforeForward)).toBeCloseTo(1, 6);
+    expect(afterUp.x).toBeCloseTo(expectedUp.x, 6);
+    expect(afterUp.y).toBeCloseTo(expectedUp.y, 6);
+    expect(afterUp.z).toBeCloseTo(expectedUp.z, 6);
+  });
+
   it('keeps vertical motion on Q and E', () => {
     const controls = new WalkControls({
       camera,

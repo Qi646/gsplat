@@ -1,6 +1,10 @@
 import type { WalkControlState } from './WalkControls';
 
-export type NavigationShortcutAction = 'enter-walk' | 'exit-walk';
+export type NavigationShortcutAction =
+  | 'enter-walk'
+  | 'exit-walk'
+  | 'roll-left'
+  | 'roll-right';
 
 export interface NavigationModePresentation {
   engaged: boolean;
@@ -40,7 +44,7 @@ export function getNavigationModePresentation(
   if (state === 'active') {
     return {
       engaged: true,
-      hudMessage: 'WALK MODE · 1 Inspect · WASD fly · Mouse look · Q/E vertical · Shift sprint · ESC exit',
+      hudMessage: 'WALK MODE · 1 Inspect · WASD fly · Mouse look · Q/E vertical · Z/C roll · Shift sprint · ESC exit',
       indicatorLabel: 'Walk',
       indicatorState: 'active',
     };
@@ -64,6 +68,14 @@ export function resolveNavigationShortcutAction(
 
   if (event.code === 'Digit1' || event.code === 'Numpad1') {
     return context.walkState === 'inactive' ? null : 'exit-walk';
+  }
+
+  if (event.code === 'KeyZ' || event.code === 'KeyC') {
+    if (!context.sceneLoaded || context.interactionLocked || context.walkState === 'armed') {
+      return null;
+    }
+
+    return event.code === 'KeyZ' ? 'roll-left' : 'roll-right';
   }
 
   if (event.code !== 'Digit2' && event.code !== 'Numpad2') {

@@ -10,7 +10,10 @@ import { CameraPathOverlay } from './path/CameraPathOverlay';
 import { KeyframeManager } from './path/KeyframeManager';
 import { AppEvents, type AppBootPhase, type Keyframe, type ViewerRendererId } from './types';
 import { createViewerAdapter } from './viewer/createViewerAdapter';
+import { rollOrbitCamera } from './viewer/orbitControls';
 import type { ViewerAdapter } from './viewer/ViewerAdapter';
+
+const CAMERA_ROLL_STEP_RADIANS = Math.PI / 36;
 
 function $(selector: string): HTMLElement {
   const element = document.querySelector<HTMLElement>(selector);
@@ -468,7 +471,7 @@ async function main(): Promise<void> {
       updatePathControlsState();
       syncPathVisualsState();
       updateTimelineUI(0, 0);
-      setStatusNote('Scene loaded. Capture keyframes, scrub the path, or preview a camera move.');
+      setStatusNote('Scene loaded. Use Z/C to roll the camera, capture keyframes, scrub the path, or preview a camera move.');
     } catch (error) {
       sceneLoadInProgress = false;
       const message = error instanceof Error ? error.message : 'Unknown load error';
@@ -538,6 +541,19 @@ async function main(): Promise<void> {
     if (action === 'exit-walk') {
       stopWalkMode({ statusMessage: 'Inspect mode active. Camera controls restored.' });
       event.preventDefault();
+      return;
+    }
+
+    if (action === 'roll-left' || action === 'roll-right') {
+      const rollRadians = action === 'roll-left' ? -CAMERA_ROLL_STEP_RADIANS : CAMERA_ROLL_STEP_RADIANS;
+      const handled =
+        walkState === 'active'
+          ? walkControls.roll(rollRadians)
+          : rollOrbitCamera(camera, rollRadians);
+
+      if (handled) {
+        event.preventDefault();
+      }
     }
   });
 
