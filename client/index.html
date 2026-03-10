@@ -82,6 +82,48 @@
     .stats-pill .fps-val.warn { color: var(--accent2); }
     .stats-pill .fps-val.bad { color: var(--danger); }
 
+    .mode-indicator {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 4px 12px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      font-size: 11px;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+
+    .mode-indicator-label {
+      font-size: 10px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .mode-indicator-value {
+      color: var(--text);
+      font-weight: 500;
+    }
+
+    .mode-indicator[data-mode-state="armed"] {
+      border-color: rgba(255, 107, 53, 0.55);
+      background: rgba(255, 107, 53, 0.08);
+    }
+
+    .mode-indicator[data-mode-state="armed"] .mode-indicator-value {
+      color: var(--accent2);
+    }
+
+    .mode-indicator[data-mode-state="active"] {
+      border-color: rgba(0, 229, 255, 0.55);
+      background: rgba(0, 229, 255, 0.08);
+    }
+
+    .mode-indicator[data-mode-state="active"] .mode-indicator-value {
+      color: var(--accent);
+    }
+
     .btn {
       display: inline-flex;
       align-items: center;
@@ -539,7 +581,11 @@
       <button class="btn" id="btn-frame-scene" disabled>⊡ Frame Scene</button>
       <button class="btn" id="btn-reset-view" disabled>↺ Reset View</button>
       <div class="topbar-sep"></div>
-      <button class="btn" id="btn-walk-mode" disabled>⬡ Walk Mode</button>
+      <div class="mode-indicator" id="navigation-mode-indicator" data-mode-state="inspect" aria-live="polite">
+        <span class="mode-indicator-label">Mode</span>
+        <span class="mode-indicator-value" id="navigation-mode-value">Inspect</span>
+      </div>
+      <button class="btn" id="btn-walk-mode" disabled aria-keyshortcuts="2">⬡ Walk Mode [2]</button>
     </header>
 
     <div id="canvas-container">
@@ -554,7 +600,7 @@
         <div class="progress-label" id="progress-label">Load a public scene to begin.</div>
       </div>
 
-      <div id="walkmode-hud">WALK MODE · Click in the viewer to enter · WASD fly · Mouse look · Q/E vertical · ESC exit</div>
+      <div id="walkmode-hud">WALK MODE · 1 Inspect · WASD fly · Mouse look · Q/E vertical · Shift sprint · ESC exit</div>
     </div>
 
     <aside id="panel">
@@ -578,8 +624,8 @@
       <div class="panel-section">
         <div class="section-label">Navigation</div>
         <div class="controls-list">
-          <div><strong>Inspect:</strong> left drag rotate freely, right drag pan, scroll zoom</div>
-          <div><strong>Walk:</strong> click Walk Mode, click in the viewer to enter, then use WASD fly-through + mouse look + Q/E</div>
+          <div><strong>Inspect:</strong> press 1, or left drag rotate freely, right drag pan, scroll zoom</div>
+          <div><strong>Walk:</strong> press 2 or click Walk Mode for instant WASD fly-through + mouse look + Q/E</div>
           <div><strong>Scene:</strong> Frame Scene fits bounds, Reset View returns to the default framing</div>
         </div>
       </div>

@@ -46,6 +46,7 @@ class FakeWindow extends FakeEventTarget {}
 
 class FakeCanvas extends FakeEventTarget {
   requestPointerLockCalls = 0;
+  shouldRejectPointerLock = false;
 
   constructor(private readonly documentRef: FakeDocument) {
     super();
@@ -53,6 +54,10 @@ class FakeCanvas extends FakeEventTarget {
 
   requestPointerLock(): void {
     this.requestPointerLockCalls += 1;
+    if (this.shouldRejectPointerLock) {
+      this.documentRef.dispatchEvent({ type: 'pointerlockerror' });
+      return;
+    }
     this.documentRef.pointerLockElement = this;
     this.documentRef.dispatchEvent({ type: 'pointerlockchange' });
   }
@@ -75,15 +80,8 @@ describe('WalkControls', () => {
     return preventDefault;
   };
 
-  const dispatchClick = () => {
-    const preventDefault = vi.fn();
-    canvas.dispatchEvent({ preventDefault, type: 'click' });
-    return preventDefault;
-  };
-
   const activateControls = (controls: WalkControls) => {
     controls.enable();
-    dispatchClick();
   };
 
   beforeEach(() => {
@@ -122,7 +120,7 @@ describe('WalkControls', () => {
     });
   });
 
-  it('arms first and only becomes active after a canvas click requests pointer lock', () => {
+  it('requests pointer lock immediately and becomes active without a canvas click', () => {
     const controls = new WalkControls({
       camera,
       canvas: canvas as unknown as HTMLCanvasElement,
@@ -130,15 +128,29 @@ describe('WalkControls', () => {
     });
 
     controls.enable();
-    expect(controls.getState()).toBe('armed');
-    expect(canvas.requestPointerLockCalls).toBe(0);
-
-    const preventDefault = dispatchClick();
-
-    expect(preventDefault).toHaveBeenCalledTimes(1);
     expect(canvas.requestPointerLockCalls).toBe(1);
     expect(controls.getState()).toBe('active');
     expect(states).toEqual(['armed', 'active']);
+  });
+
+  it('falls back to inactive and reports lock errors when pointer lock is rejected', () => {
+    canvas.shouldRejectPointerLock = true;
+    let lockErrors = 0;
+    const controls = new WalkControls({
+      camera,
+      canvas: canvas as unknown as HTMLCanvasElement,
+      onLockError: () => {
+        lockErrors += 1;
+      },
+      onStateChange: state => states.push(state),
+    });
+
+    controls.enable();
+
+    expect(canvas.requestPointerLockCalls).toBe(1);
+    expect(lockErrors).toBe(1);
+    expect(controls.getState()).toBe('inactive');
+    expect(states).toEqual(['armed', 'inactive']);
   });
 
   it('exits on Escape and clears any held movement keys', () => {

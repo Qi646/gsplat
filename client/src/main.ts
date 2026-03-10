@@ -1,4 +1,8 @@
 import { WalkControls, type WalkControlState } from './controls/WalkControls';
+import {
+  getNavigationModePresentation,
+  resolveNavigationShortcutAction,
+} from './controls/navigationMode';
 import { DEFAULT_EXPORT_SETTINGS, ExportManager, type ExportProgress } from './export/ExportManager';
 import { parseAppRuntimeQuery } from './lib/runtimeQuery';
 import { SCENE_PRESETS } from './lib/scenePresets';
@@ -16,16 +20,13 @@ function $(selector: string): HTMLElement {
   return element;
 }
 
-function setWalkModeUI(state: WalkControlState): void {
-  const engaged = state !== 'inactive';
-  const hudMessage =
-    state === 'armed'
-      ? 'WALK MODE · Click in the viewer to enter · WASD fly · Mouse look · Q/E vertical · ESC exit'
-      : 'WALK MODE · WASD fly · Mouse look · Q/E vertical · Shift sprint · ESC exit';
-
-  $('#btn-walk-mode').classList.toggle('active', engaged);
-  $('#walkmode-hud').classList.toggle('visible', engaged);
-  $('#walkmode-hud').textContent = hudMessage;
+function setNavigationModeUI(state: WalkControlState): void {
+  const presentation = getNavigationModePresentation(state);
+  $('#btn-walk-mode').classList.toggle('active', presentation.engaged);
+  $('#walkmode-hud').classList.toggle('visible', presentation.engaged);
+  $('#walkmode-hud').textContent = presentation.hudMessage;
+  $('#navigation-mode-indicator').setAttribute('data-mode-state', presentation.indicatorState);
+  $('#navigation-mode-value').textContent = presentation.indicatorLabel;
 }
 
 function setSceneButtonsEnabled(sceneLoaded: boolean, previewActive: boolean, walkState: WalkControlState): void {
@@ -143,7 +144,11 @@ async function main(): Promise<void> {
   let pathVisualsEnabled = true;
   let sceneLoadInProgress = false;
   let selectedKeyframeId: string | null = null;
+  let queuedWalkStatusMessage: string | null = null;
+  let suppressWalkExitStatus = false;
   const defaultExportNote = `${DEFAULT_EXPORT_SETTINGS.width}x${DEFAULT_EXPORT_SETTINGS.height} · ${DEFAULT_EXPORT_SETTINGS.fps} FPS via FFmpeg`;
+  const isSceneLoaded = () => !sceneLoadInProgress && viewer.isSceneLoaded();
+  const isInteractionLocked = () => keyframeManager.isPreviewActive() || exportManager.isExporting();
 
   const getPathVisualsState = () => {
     const keyframes = keyframeManager.getKeyframes();
@@ -184,25 +189,69 @@ async function main(): Promise<void> {
     updatePathVisualsButton();
   };
 
+  const consumeQueuedWalkStatusMessage = (previousState: WalkControlState) => {
+    if (!suppressWalkExitStatus) {
+      if (queuedWalkStatusMessage) {
+        setStatusNote(queuedWalkStatusMessage);
+      } else if (previousState === 'active') {
+        setStatusNote('Walk mode exited. Camera controls restored.');
+      }
+    }
+
+    queuedWalkStatusMessage = null;
+    suppressWalkExitStatus = false;
+  };
+
+  const stopWalkMode = (
+    options: {
+      silent?: boolean;
+      statusMessage?: string;
+    } = {},
+  ) => {
+    if (walkState === 'inactive') {
+      return;
+    }
+
+    queuedWalkStatusMessage = options.statusMessage ?? null;
+    suppressWalkExitStatus = Boolean(options.silent);
+    walkControls.disable();
+  };
+
+  const enterWalkMode = (): boolean => {
+    if (walkState !== 'inactive' || !isSceneLoaded() || isInteractionLocked()) {
+      return false;
+    }
+
+    walkControls.enable();
+    return true;
+  };
+
   const walkControls = new WalkControls({
     camera,
     canvas: interactionSurface,
+    onLockError: () => {
+      queuedWalkStatusMessage = 'Walk mode could not capture the cursor. Press 2 to try again.';
+      suppressWalkExitStatus = false;
+    },
     onStateChange: nextState => {
       const previousState = walkState;
       walkState = nextState;
-      setWalkModeUI(walkState);
+      setNavigationModeUI(walkState);
       if (walkState === 'inactive') {
         if (previousState === 'active') {
           viewer.resumeOrbitFromCamera();
         } else {
           viewer.setNavigationMode('orbit');
         }
+        consumeQueuedWalkStatusMessage(previousState);
       } else {
         viewer.setNavigationMode('walk');
-      }
-
-      if (walkState === 'active') {
-        setStatusNote('Walk mode active. Press Esc to return to camera controls.');
+        if (walkState === 'armed') {
+          setStatusNote('Capturing cursor for walk mode...');
+        }
+        if (walkState === 'active') {
+          setStatusNote('Walk mode active. Press 1 or Esc to return to Inspect.');
+        }
       }
 
       updatePathControlsState();
@@ -260,7 +309,7 @@ async function main(): Promise<void> {
 
   const updatePathControlsState = () => {
     const keyframeCount = keyframeManager.getKeyframes().length;
-    const sceneLoaded = !sceneLoadInProgress && viewer.isSceneLoaded();
+    const sceneLoaded = isSceneLoaded();
     const previewActive = keyframeManager.isPreviewActive();
     const exportActive = exportManager.isExporting();
     const interactionLocked = previewActive || exportActive;
@@ -278,12 +327,6 @@ async function main(): Promise<void> {
     updatePreviewButton();
     updateExportButton();
     updatePathVisualsButton();
-  };
-
-  const stopWalkMode = () => {
-    if (walkState !== 'inactive') {
-      walkControls.disable();
-    }
   };
 
   const renderKeyframeList = () => {
@@ -392,13 +435,13 @@ async function main(): Promise<void> {
   resizeViewer();
   window.addEventListener('resize', resizeViewer);
   window.addEventListener('beforeunload', () => {
-    stopWalkMode();
+    stopWalkMode({ silent: true });
     pathOverlay.dispose();
     viewer.dispose();
   });
 
   const loadScene = async (url: string) => {
-    stopWalkMode();
+    stopWalkMode({ silent: true });
     keyframeManager.stopPreview();
     sceneLoadInProgress = true;
     loadingOverlay.classList.remove('hidden');
@@ -478,6 +521,26 @@ async function main(): Promise<void> {
     }
   });
 
+  document.addEventListener('keydown', event => {
+    const action = resolveNavigationShortcutAction(event, {
+      interactionLocked: isInteractionLocked(),
+      sceneLoaded: isSceneLoaded(),
+      walkState,
+    });
+
+    if (action === 'enter-walk') {
+      if (enterWalkMode()) {
+        event.preventDefault();
+      }
+      return;
+    }
+
+    if (action === 'exit-walk') {
+      stopWalkMode({ statusMessage: 'Inspect mode active. Camera controls restored.' });
+      event.preventDefault();
+    }
+  });
+
   ($('#btn-frame-scene') as HTMLButtonElement).addEventListener('click', () => {
     viewer.frameScene();
   });
@@ -494,13 +557,11 @@ async function main(): Promise<void> {
 
   ($('#btn-walk-mode') as HTMLButtonElement).addEventListener('click', () => {
     if (walkState !== 'inactive') {
-      stopWalkMode();
-      setStatusNote('Walk mode exited. Camera controls restored.');
+      stopWalkMode({ statusMessage: 'Inspect mode active. Camera controls restored.' });
       return;
     }
 
-    walkControls.enable();
-    setStatusNote('Walk mode armed. Click in the viewer to capture mouse look.');
+    enterWalkMode();
   });
 
   addKeyframeButton.addEventListener('click', () => {
@@ -536,7 +597,7 @@ async function main(): Promise<void> {
       return;
     }
 
-    stopWalkMode();
+    stopWalkMode({ silent: true });
 
     if (keyframeManager.startPreview()) {
       selectedKeyframeId = null;
@@ -588,7 +649,7 @@ async function main(): Promise<void> {
   });
 
   exportButton.addEventListener('click', async () => {
-    stopWalkMode();
+    stopWalkMode({ silent: true });
     keyframeManager.stopPreview();
 
     const exportPromise = exportManager.exportPath(keyframeManager.getKeyframes(), {
@@ -681,7 +742,7 @@ async function main(): Promise<void> {
 
   renderKeyframeList();
   setStatusNote('Ready to load a scene.');
-  setWalkModeUI(walkState);
+  setNavigationModeUI(walkState);
   updateExportButton();
   updatePathControlsState();
   syncPathVisualsState();

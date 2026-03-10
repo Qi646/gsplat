@@ -8,6 +8,7 @@ export interface WalkControlsOptions {
   moveSpeed?: number;
   lookSpeed?: number;
   sprintMult?: number;
+  onLockError?: () => void;
   onStateChange?: (state: WalkControlState) => void;
 }
 
@@ -17,6 +18,7 @@ export class WalkControls {
   private readonly moveSpeed: number;
   private readonly lookSpeed: number;
   private readonly sprintMult: number;
+  private readonly onLockError?: () => void;
   private readonly onStateChange?: (state: WalkControlState) => void;
   private keys: Record<string, boolean> = {};
   private readonly forward = new THREE.Vector3();
@@ -30,8 +32,8 @@ export class WalkControls {
   private onKeyDownBound: (event: KeyboardEvent) => void;
   private onKeyUpBound: (event: KeyboardEvent) => void;
   private onMouseMoveBound: (event: MouseEvent) => void;
-  private onClickBound: (event: MouseEvent) => void;
   private onPointerLockChangeBound: () => void;
+  private onPointerLockErrorBound: () => void;
   private onWindowBlurBound: () => void;
   private onVisibilityChangeBound: () => void;
 
@@ -41,13 +43,14 @@ export class WalkControls {
     this.moveSpeed = options.moveSpeed ?? 2.0;
     this.lookSpeed = options.lookSpeed ?? 0.002;
     this.sprintMult = options.sprintMult ?? 3.0;
+    this.onLockError = options.onLockError;
     this.onStateChange = options.onStateChange;
 
     this.onKeyDownBound = this.onKeyDown.bind(this);
     this.onKeyUpBound = this.onKeyUp.bind(this);
     this.onMouseMoveBound = this.onMouseMove.bind(this);
-    this.onClickBound = this.onCanvasClick.bind(this);
     this.onPointerLockChangeBound = this.onPointerLockChange.bind(this);
+    this.onPointerLockErrorBound = this.onPointerLockError.bind(this);
     this.onWindowBlurBound = this.onWindowBlur.bind(this);
     this.onVisibilityChangeBound = this.onVisibilityChange.bind(this);
   }
@@ -64,9 +67,10 @@ export class WalkControls {
     document.addEventListener('keyup', this.onKeyUpBound);
     document.addEventListener('mousemove', this.onMouseMoveBound);
     document.addEventListener('pointerlockchange', this.onPointerLockChangeBound);
+    document.addEventListener('pointerlockerror', this.onPointerLockErrorBound);
     window.addEventListener('blur', this.onWindowBlurBound);
     document.addEventListener('visibilitychange', this.onVisibilityChangeBound);
-    this.canvas.addEventListener('click', this.onClickBound);
+    this.requestLock();
   }
 
   disable(): void {
@@ -82,9 +86,9 @@ export class WalkControls {
     document.removeEventListener('keyup', this.onKeyUpBound);
     document.removeEventListener('mousemove', this.onMouseMoveBound);
     document.removeEventListener('pointerlockchange', this.onPointerLockChangeBound);
+    document.removeEventListener('pointerlockerror', this.onPointerLockErrorBound);
     window.removeEventListener('blur', this.onWindowBlurBound);
     document.removeEventListener('visibilitychange', this.onVisibilityChangeBound);
-    this.canvas.removeEventListener('click', this.onClickBound);
 
     if (document.pointerLockElement === this.canvas) {
       document.exitPointerLock?.();
@@ -137,7 +141,16 @@ export class WalkControls {
 
   private requestLock(): void {
     if (this.state !== 'inactive' && document.pointerLockElement !== this.canvas) {
-      this.canvas.requestPointerLock();
+      try {
+        const requestResult = this.canvas.requestPointerLock();
+        if (requestResult && typeof (requestResult as Promise<void>).catch === 'function') {
+          void (requestResult as Promise<void>).catch(() => {
+            this.handleLockFailure();
+          });
+        }
+      } catch {
+        this.handleLockFailure();
+      }
     }
   }
 
@@ -151,6 +164,10 @@ export class WalkControls {
     if (this.state === 'active') {
       this.disable();
     }
+  }
+
+  private onPointerLockError(): void {
+    this.handleLockFailure();
   }
 
   private onKeyDown(event: KeyboardEvent): void {
@@ -197,15 +214,6 @@ export class WalkControls {
     this.camera.quaternion.premultiply(this.pitchRotation).normalize();
   }
 
-  private onCanvasClick(event: MouseEvent): void {
-    if (this.state !== 'armed') {
-      return;
-    }
-
-    event.preventDefault();
-    this.requestLock();
-  }
-
   private onWindowBlur(): void {
     this.clearKeys();
 
@@ -224,6 +232,15 @@ export class WalkControls {
 
   private clearKeys(): void {
     this.keys = {};
+  }
+
+  private handleLockFailure(): void {
+    if (this.state !== 'armed') {
+      return;
+    }
+
+    this.onLockError?.();
+    this.disable();
   }
 
   private setState(nextState: WalkControlState): void {
