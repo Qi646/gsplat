@@ -388,12 +388,35 @@ export class SceneViewer implements ViewerAdapter {
     const renderCount = this.renderBudget === null ? availableCount : Math.min(availableCount, this.renderBudget);
     const splatMesh = this.viewer?.getSplatMesh() as (GaussianSplats3D.SplatMesh & {
       geometry?: {
+        attributes?: {
+          splatIndex?: {
+            array?: ArrayLike<number> & { copyWithin?: (target: number, start: number, end?: number) => void };
+            needsUpdate?: boolean;
+            updateRange?: { count: number; offset: number };
+          };
+        };
         instanceCount?: number;
         setDrawRange?: (start: number, count: number) => void;
       };
     }) | null;
 
     if (splatMesh?.geometry) {
+      const splatIndexAttribute = splatMesh.geometry.attributes?.splatIndex;
+      const splatIndexes = splatIndexAttribute?.array;
+      if (
+        renderCount > 0 &&
+        renderCount < availableCount &&
+        typeof splatIndexes?.copyWithin === 'function'
+      ) {
+        splatIndexes.copyWithin(0, availableCount - renderCount, availableCount);
+        if (splatIndexAttribute) {
+          splatIndexAttribute.needsUpdate = true;
+          if (splatIndexAttribute.updateRange) {
+            splatIndexAttribute.updateRange.offset = 0;
+            splatIndexAttribute.updateRange.count = renderCount;
+          }
+        }
+      }
       if (typeof splatMesh.geometry.instanceCount === 'number') {
         splatMesh.geometry.instanceCount = renderCount;
       }

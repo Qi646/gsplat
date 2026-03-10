@@ -44,6 +44,10 @@ vi.mock('@mkkellogg/gaussian-splats-3d', async () => {
     availableRenderCount: 0,
     geometryInstanceCount: 0,
     lastDrawRange: null as { count: number; start: number } | null,
+    renderIndexes: new Uint32Array(0),
+    sortedRenderIndexes: new Uint32Array(0),
+    splatIndexNeedsUpdate: false,
+    splatIndexUpdateRange: { count: 0, offset: 0 },
     boundsMin: [-1, -1, -1] as [number, number, number],
     boundsMax: [1, 1, 1] as [number, number, number],
     sampleCenters: [] as Array<[number, number, number]>,
@@ -52,6 +56,18 @@ vi.mock('@mkkellogg/gaussian-splats-3d', async () => {
 
   class MockSplatMesh {
     geometry = {
+      attributes: {
+        splatIndex: {
+          array: state.renderIndexes,
+          get needsUpdate(): boolean {
+            return state.splatIndexNeedsUpdate;
+          },
+          set needsUpdate(value: boolean) {
+            state.splatIndexNeedsUpdate = value;
+          },
+          updateRange: state.splatIndexUpdateRange,
+        },
+      },
       get instanceCount(): number {
         return state.geometryInstanceCount;
       },
@@ -134,6 +150,7 @@ vi.mock('@mkkellogg/gaussian-splats-3d', async () => {
 
     update(): void {
       this.splatRenderCount = state.availableRenderCount;
+      state.renderIndexes.set(state.sortedRenderIndexes);
     }
 
     render(): void {
@@ -169,6 +186,10 @@ type MockModule = typeof GaussianSplats3D & {
     availableRenderCount: number;
     geometryInstanceCount: number;
     lastDrawRange: { count: number; start: number } | null;
+    renderIndexes: Uint32Array;
+    sortedRenderIndexes: Uint32Array;
+    splatIndexNeedsUpdate: boolean;
+    splatIndexUpdateRange: { count: number; offset: number };
     boundsMin: [number, number, number];
     boundsMax: [number, number, number];
     sampleCenters: Array<[number, number, number]>;
@@ -194,6 +215,10 @@ describe('SceneViewer', () => {
     mockModule.__mockState.availableRenderCount = 1024;
     mockModule.__mockState.geometryInstanceCount = 1024;
     mockModule.__mockState.lastDrawRange = null;
+    mockModule.__mockState.renderIndexes = Uint32Array.from({ length: 1024 }, (_, index) => index);
+    mockModule.__mockState.sortedRenderIndexes = Uint32Array.from({ length: 1024 }, (_, index) => index);
+    mockModule.__mockState.splatIndexNeedsUpdate = false;
+    mockModule.__mockState.splatIndexUpdateRange = { count: 0, offset: 0 };
     mockModule.__mockState.boundsMin = [-2, -1, -3];
     mockModule.__mockState.boundsMax = [4, 5, 6];
     mockModule.__mockState.sampleCenters = [];
@@ -284,12 +309,20 @@ describe('SceneViewer', () => {
     await viewer.loadScene('/api/presets/truck.ksplat');
 
     mockModule.__mockState.availableRenderCount = 900;
+    mockModule.__mockState.sortedRenderIndexes = Uint32Array.from(
+      { length: 1024 },
+      (_, index) => 10_000 + index,
+    );
     viewer.setRenderBudget(400);
     viewer.renderNow();
 
     expect(viewer.getRenderedSplatCount()).toBe(400);
     expect(mockModule.__mockState.geometryInstanceCount).toBe(400);
     expect(mockModule.__mockState.lastDrawRange).toEqual({ count: 400, start: 0 });
+    expect(Array.from(mockModule.__mockState.renderIndexes.slice(0, 3))).toEqual([10_500, 10_501, 10_502]);
+    expect(Array.from(mockModule.__mockState.renderIndexes.slice(397, 400))).toEqual([10_897, 10_898, 10_899]);
+    expect(mockModule.__mockState.splatIndexNeedsUpdate).toBe(true);
+    expect(mockModule.__mockState.splatIndexUpdateRange).toEqual({ count: 400, offset: 0 });
     expect(viewer.getDebugSnapshot().splatRenderCount).toBe(400);
 
     viewer.setRenderBudget(null);
@@ -298,6 +331,7 @@ describe('SceneViewer', () => {
     expect(viewer.getRenderedSplatCount()).toBe(900);
     expect(mockModule.__mockState.geometryInstanceCount).toBe(900);
     expect(mockModule.__mockState.lastDrawRange).toEqual({ count: 900, start: 0 });
+    expect(Array.from(mockModule.__mockState.renderIndexes.slice(0, 3))).toEqual([10_000, 10_001, 10_002]);
     expect(viewer.getDebugSnapshot().splatRenderCount).toBe(900);
   });
 

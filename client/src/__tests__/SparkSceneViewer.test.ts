@@ -102,13 +102,29 @@ vi.mock('@sparkjsdev/spark', async () => {
     loadCalls: [] as string[],
     samples: [] as Array<{ center: [number, number, number]; opacity: number }>,
     lastSparkRenderer: null as MockSparkRenderer | null,
+    ordering: new Uint32Array(0),
+    sortedOrdering: new Uint32Array(0),
+    attributeNeedsUpdate: false,
+    attributeUpdateRange: { count: 0, start: 0 },
     sparkRendererOptions: null as Record<string, unknown> | null,
     splatCount: 0,
   };
 
   class MockSparkRenderer extends THREE.Object3D {
     geometry = {
+      attribute: {
+        addUpdateRange(start: number, count: number): void {
+          state.attributeUpdateRange = { count, start };
+        },
+        get needsUpdate(): boolean {
+          return state.attributeNeedsUpdate;
+        },
+        set needsUpdate(value: boolean) {
+          state.attributeNeedsUpdate = value;
+        },
+      },
       instanceCount: state.availableRenderCount,
+      ordering: state.ordering,
     };
 
     constructor(options: Record<string, unknown>) {
@@ -119,6 +135,8 @@ vi.mock('@sparkjsdev/spark', async () => {
 
     update(): void {
       this.geometry.instanceCount = state.availableRenderCount;
+      state.ordering.set(state.sortedOrdering);
+      this.geometry.ordering = state.ordering;
     }
   }
 
@@ -197,11 +215,15 @@ type MockSparkModule = typeof Spark & {
     boundsMax: [number, number, number];
     boundsMin: [number, number, number];
     availableRenderCount: number;
+    attributeNeedsUpdate: boolean;
+    attributeUpdateRange: { count: number; start: number };
     fileType: string | null;
     lastParsedMesh: THREE.Object3D | null;
     lastSparkRenderer: THREE.Object3D | null;
     loadCalls: string[];
+    ordering: Uint32Array;
     samples: Array<{ center: [number, number, number]; opacity: number }>;
+    sortedOrdering: Uint32Array;
     sparkRendererOptions: Record<string, unknown> | null;
     splatCount: number;
   };
@@ -218,12 +240,16 @@ describe('SparkSceneViewer', () => {
     mockModule.__mockState.boundsMin = [-2, -1, -3];
     mockModule.__mockState.boundsMax = [4, 5, 6];
     mockModule.__mockState.availableRenderCount = 128;
+    mockModule.__mockState.attributeNeedsUpdate = false;
+    mockModule.__mockState.attributeUpdateRange = { count: 0, start: 0 };
     mockModule.__mockState.fileType = null;
     mockModule.__mockState.lastParsedMesh = null;
     mockModule.__mockState.lastSparkRenderer = null;
     mockModule.__mockState.loadCalls = [];
+    mockModule.__mockState.ordering = Uint32Array.from({ length: 128 }, (_, index) => index);
     mockModule.__mockState.sparkRendererOptions = null;
     mockModule.__mockState.splatCount = 128;
+    mockModule.__mockState.sortedOrdering = Uint32Array.from({ length: 128 }, (_, index) => index);
     mockModule.__mockState.samples = Array.from({ length: 128 }, (_, index) => ({
       center: [index / 20, index % 4, -2 + (index % 6)] as [number, number, number],
       opacity: 1,
@@ -320,6 +346,10 @@ describe('SparkSceneViewer', () => {
     await viewer.loadScene('/api/presets/truck.ksplat');
 
     mockModule.__mockState.availableRenderCount = 96;
+    mockModule.__mockState.sortedOrdering = Uint32Array.from(
+      { length: 128 },
+      (_, index) => 20_000 + index,
+    );
     viewer.setRenderBudget(40);
     viewer.renderNow();
 
@@ -331,6 +361,10 @@ describe('SparkSceneViewer', () => {
         }
       ).sparkRenderer.geometry.instanceCount,
     ).toBe(40);
+    expect(Array.from(mockModule.__mockState.ordering.slice(0, 3))).toEqual([20_056, 20_057, 20_058]);
+    expect(Array.from(mockModule.__mockState.ordering.slice(37, 40))).toEqual([20_093, 20_094, 20_095]);
+    expect(mockModule.__mockState.attributeNeedsUpdate).toBe(true);
+    expect(mockModule.__mockState.attributeUpdateRange).toEqual({ count: 40, start: 0 });
     expect(viewer.getDebugSnapshot().splatRenderCount).toBe(40);
 
     viewer.setRenderBudget(null);
@@ -344,6 +378,7 @@ describe('SparkSceneViewer', () => {
         }
       ).sparkRenderer.geometry.instanceCount,
     ).toBe(96);
+    expect(Array.from(mockModule.__mockState.ordering.slice(0, 3))).toEqual([20_000, 20_001, 20_002]);
     expect(viewer.getDebugSnapshot().splatRenderCount).toBe(96);
   });
 

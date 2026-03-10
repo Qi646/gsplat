@@ -415,14 +415,29 @@ export class SparkSceneViewer implements ViewerAdapter {
   private applyRenderBudgetToFrame(): void {
     const sparkRenderer = this.sparkRenderer as (Spark.SparkRenderer & {
       geometry?: {
+        attribute?: {
+          addUpdateRange?: (start: number, count: number) => void;
+          needsUpdate?: boolean;
+        };
         instanceCount?: number;
+        ordering?: Uint32Array;
       };
     }) | null;
     const availableCount = this.readAvailableRenderedSplatCount();
     const renderCount = this.renderBudget === null ? availableCount : Math.min(availableCount, this.renderBudget);
 
-    if (sparkRenderer?.geometry && typeof sparkRenderer.geometry.instanceCount === 'number') {
-      sparkRenderer.geometry.instanceCount = renderCount;
+    if (sparkRenderer?.geometry) {
+      if (renderCount > 0 && renderCount < availableCount && sparkRenderer.geometry.ordering) {
+        sparkRenderer.geometry.ordering.copyWithin(0, availableCount - renderCount, availableCount);
+        sparkRenderer.geometry.attribute?.addUpdateRange?.(0, renderCount);
+        if (sparkRenderer.geometry.attribute) {
+          sparkRenderer.geometry.attribute.needsUpdate = true;
+        }
+      }
+
+      if (typeof sparkRenderer.geometry.instanceCount === 'number') {
+        sparkRenderer.geometry.instanceCount = renderCount;
+      }
     }
 
     this.renderedSplatCount = renderCount;
