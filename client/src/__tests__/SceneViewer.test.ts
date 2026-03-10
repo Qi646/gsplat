@@ -45,7 +45,6 @@ vi.mock('@mkkellogg/gaussian-splats-3d', async () => {
     boundsMax: [1, 1, 1] as [number, number, number],
     sampleCenters: [] as Array<[number, number, number]>,
     sampleColors: [] as Array<[number, number, number, number]>,
-    sceneQuaternion: new THREE.Quaternion(),
   };
 
   class MockSplatMesh {
@@ -108,13 +107,6 @@ vi.mock('@mkkellogg/gaussian-splats-3d', async () => {
       return new MockSplatMesh();
     }
 
-    getSplatScene(): { quaternion: THREE.Quaternion; updateMatrixWorld: () => void } {
-      return {
-        quaternion: state.sceneQuaternion,
-        updateMatrixWorld() {},
-      };
-    }
-
     getSceneCount(): number {
       return state.sceneCount;
     }
@@ -160,7 +152,6 @@ type MockModule = typeof GaussianSplats3D & {
     boundsMax: [number, number, number];
     sampleCenters: Array<[number, number, number]>;
     sampleColors: Array<[number, number, number, number]>;
-    sceneQuaternion: THREE.Quaternion;
   };
 };
 
@@ -183,7 +174,6 @@ describe('SceneViewer', () => {
     mockModule.__mockState.boundsMax = [4, 5, 6];
     mockModule.__mockState.sampleCenters = [];
     mockModule.__mockState.sampleColors = [];
-    mockModule.__mockState.sceneQuaternion.identity();
 
     Object.defineProperty(globalThis, 'window', {
       value: {
@@ -451,26 +441,6 @@ describe('SceneViewer', () => {
     expect(mockModule.__mockState.addSceneCalls[0]?.options['format']).toBe(
       GaussianSplats3D.SceneFormat.Ply,
     );
-  });
-
-  it('updates scene rotation live and refreshes reset view from the new framing', async () => {
-    const events = new AppEvents();
-    const hostElement = {} as HTMLDivElement;
-    const viewer = new SceneViewer({ hostElement, events });
-
-    await viewer.init();
-    await viewer.loadScene('/api/presets/luigi.ply');
-
-    const rotation = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), Math.PI / 2);
-    viewer.setSceneRotation(rotation);
-    const refreshedResetPosition = viewer.getCamera()?.position.clone();
-
-    viewer.getCamera()?.position.set(99, 99, 99);
-    viewer.resetView();
-
-    expect(mockModule.__mockState.sceneQuaternion.toArray()).toEqual(rotation.toArray());
-    expect(viewer.getSceneRotation()?.toArray()).toEqual(rotation.toArray());
-    expect(viewer.getCamera()?.position.toArray()).toEqual(refreshedResetPosition?.toArray());
   });
 
   it('applies inverted camera poses without snapping them upright', async () => {

@@ -36,11 +36,6 @@ declare module '@mkkellogg/gaussian-splats-3d' {
     computeBoundingBox(applySceneTransforms?: boolean, sceneIndex?: number): THREE.Box3;
   }
 
-  export interface SplatScene {
-    quaternion: THREE.Quaternion;
-    updateMatrixWorld(force?: boolean): void;
-  }
-
   export interface ParsedSplatArray {
     splatCount: number;
     splats: number[][];
@@ -62,7 +57,6 @@ declare module '@mkkellogg/gaussian-splats-3d' {
     init(): Promise<void>;
     addSplatScene(url: string, options: AddSplatSceneOptions): Promise<void>;
     getSplatMesh(): SplatMesh;
-    getSplatScene(sceneIndex: number): SplatScene;
     getSceneCount(): number;
     removeSplatScene(index: number, showLoadingUI?: boolean): Promise<void>;
     removeSplatScenes(indexes: number[], showLoadingUI?: boolean): Promise<void>;

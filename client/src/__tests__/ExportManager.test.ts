@@ -40,10 +40,6 @@ class FakeViewer implements ViewerAdapter {
     return this.camera;
   }
 
-  getSceneRotation(): THREE.Quaternion {
-    return new THREE.Quaternion();
-  }
-
   getSceneBounds(): THREE.Box3 | null {
     return new THREE.Box3(
       new THREE.Vector3(-1, -1, -1),
@@ -130,8 +126,6 @@ class FakeViewer implements ViewerAdapter {
   setNavigationMode(): void {}
 
   resumeOrbitFromCamera(): void {}
-
-  setSceneRotation(): void {}
 
   applyCameraPose(pose: { position: THREE.Vector3; quaternion: THREE.Quaternion; fov: number }): void {
     this.camera.position.copy(pose.position);

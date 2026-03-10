@@ -6,8 +6,6 @@ import { PathInterpolator } from './PathInterpolator';
 export interface CameraPathViewer {
   applyCameraPose(pose: InterpolatedPose): void;
   getCamera(): THREE.PerspectiveCamera | null;
-  getSceneRotation(): THREE.Quaternion | null;
-  setSceneRotation(rotation: THREE.Quaternion): void;
 }
 
 export interface KeyframeManagerOptions {
@@ -182,23 +180,13 @@ export class KeyframeManager {
   }
 
   toJSON(): CameraPath {
-    return buildCameraPath(this.keyframes, undefined, quaternionToSerializable(this.viewer.getSceneRotation()));
+    return buildCameraPath(this.keyframes);
   }
 
   fromJSON(input: unknown): CameraPath {
     this.stopPreview();
 
     const parsedPath = parseCameraPath(input);
-    if (parsedPath.sceneRotation) {
-      this.viewer.setSceneRotation(
-        new THREE.Quaternion(
-          parsedPath.sceneRotation.x,
-          parsedPath.sceneRotation.y,
-          parsedPath.sceneRotation.z,
-          parsedPath.sceneRotation.w,
-        ),
-      );
-    }
     this.keyframes = parsedPath.keyframes.map(cloneKeyframe);
     this.rebuild();
     this.currentTime = 0;
@@ -264,19 +252,4 @@ export class KeyframeManager {
       duration: this.getTotalDuration(),
     });
   }
-}
-
-function quaternionToSerializable(
-  quaternion: THREE.Quaternion | null,
-): { x: number; y: number; z: number; w: number } | undefined {
-  if (!quaternion) {
-    return undefined;
-  }
-
-  return {
-    x: quaternion.x,
-    y: quaternion.y,
-    z: quaternion.z,
-    w: quaternion.w,
-  };
 }

@@ -358,18 +358,6 @@
 
     .controls-list strong { color: var(--text); font-weight: 500; }
 
-    .orientation-grid {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 6px;
-      margin-bottom: 10px;
-    }
-
-    .orientation-reset {
-      width: 100%;
-      margin-bottom: 8px;
-    }
-
     .path-actions {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -594,20 +582,6 @@
           <div><strong>Walk:</strong> click Walk Mode, click in the viewer to enter, then use WASD fly-through + mouse look + Q/E</div>
           <div><strong>Scene:</strong> Frame Scene fits bounds, Reset View returns to the default framing</div>
         </div>
-      </div>
-
-      <div class="panel-section">
-        <div class="section-label">Orientation</div>
-        <div class="orientation-grid">
-          <button class="btn" data-scene-rotation="pitch:-90" disabled>Pitch -90</button>
-          <button class="btn" data-scene-rotation="pitch:90" disabled>Pitch +90</button>
-          <button class="btn" data-scene-rotation="yaw:-90" disabled>Yaw -90</button>
-          <button class="btn" data-scene-rotation="yaw:90" disabled>Yaw +90</button>
-          <button class="btn" data-scene-rotation="roll:-90" disabled>Roll -90</button>
-          <button class="btn" data-scene-rotation="roll:90" disabled>Roll +90</button>
-        </div>
-        <button class="btn orientation-reset" id="btn-reset-orientation" disabled>Reset Orientation</button>
-        <div class="note">Presets use calibrated upright rotation. For custom scenes, these controls rotate the scene and clear any saved path.</div>
       </div>
 
       <div class="panel-section">

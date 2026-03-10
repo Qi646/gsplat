@@ -6,14 +6,9 @@ import { KeyframeManager, type CameraPathViewer } from '../path/KeyframeManager'
 class FakeViewer implements CameraPathViewer {
   readonly camera = new THREE.PerspectiveCamera(60, 1, 0.1, 1000);
   readonly appliedPoses: InterpolatedPose[] = [];
-  sceneRotation = new THREE.Quaternion();
 
   getCamera(): THREE.PerspectiveCamera {
     return this.camera;
-  }
-
-  getSceneRotation(): THREE.Quaternion {
-    return this.sceneRotation.clone();
   }
 
   applyCameraPose(pose: InterpolatedPose): void {
@@ -26,10 +21,6 @@ class FakeViewer implements CameraPathViewer {
       quaternion: pose.quaternion.clone(),
       fov: pose.fov,
     });
-  }
-
-  setSceneRotation(rotation: THREE.Quaternion): void {
-    this.sceneRotation.copy(rotation);
   }
 }
 
@@ -88,7 +79,6 @@ describe('KeyframeManager', () => {
   it('round-trips path JSON content', () => {
     const viewer = new FakeViewer();
     const manager = new KeyframeManager({ viewer, events: new AppEvents() });
-    viewer.setSceneRotation(new THREE.Quaternion(1, 0, 0, 0));
 
     setCameraPose(viewer.camera, new THREE.Vector3(-1, 1, 2), new THREE.Quaternion(), 50);
     manager.addKeyframe();
@@ -103,12 +93,32 @@ describe('KeyframeManager', () => {
     const restoredManager = new KeyframeManager({ viewer: restoredViewer, events: new AppEvents() });
     const restoredPath = restoredManager.fromJSON(savedPath);
 
-    expect(savedPath.version).toBe(2);
-    expect(savedPath.sceneRotation).toEqual({ x: 1, y: 0, z: 0, w: 0 });
+    expect(savedPath.version).toBe(1);
     expect(restoredPath).toEqual(savedPath);
     expect(restoredManager.getKeyframes()).toEqual(manager.getKeyframes());
     expect(restoredManager.getTotalDuration()).toBe(manager.getTotalDuration());
-    expect(restoredViewer.sceneRotation.toArray()).toEqual([1, 0, 0, 0]);
+  });
+
+  it('accepts older v2 camera-path files while ignoring sceneRotation', () => {
+    const manager = new KeyframeManager({ viewer: new FakeViewer(), events: new AppEvents() });
+
+    const restoredPath = manager.fromJSON({
+      version: 2,
+      createdAt: '2026-03-10T00:00:00.000Z',
+      sceneRotation: { x: 1, y: 0, z: 0, w: 0 },
+      keyframes: [
+        {
+          id: 'kf-1',
+          time: 0,
+          position: { x: 1, y: 2, z: 3 },
+          quaternion: { x: 0, y: 0, z: 0, w: 1 },
+          fov: 60,
+        },
+      ],
+    });
+
+    expect(restoredPath.version).toBe(1);
+    expect(manager.getKeyframes()).toEqual(restoredPath.keyframes);
   });
 
   it('rejects invalid imported JSON', () => {

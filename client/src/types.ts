@@ -5,8 +5,6 @@ export interface ScenePreset {
   url: string;
   sizeMB: number;
   description: string;
-  sceneRotation?: SerializableQuaternion;
-  defaultView?: SceneView;
 }
 
 export type ViewerRendererId = 'mkkellogg' | 'spark';
@@ -32,19 +30,11 @@ export interface Keyframe {
   fov: number;
 }
 
-export interface SceneView {
-  position: SerializableVector3;
-  target: SerializableVector3;
-  fov: number;
-  up?: SerializableVector3;
-}
-
 export interface CameraPath {
-  version: 1 | 2;
+  version: 1;
   keyframes: Keyframe[];
   totalDuration: number;
   createdAt: string;
-  sceneRotation?: SerializableQuaternion;
 }
 
 export interface InterpolatedPose {

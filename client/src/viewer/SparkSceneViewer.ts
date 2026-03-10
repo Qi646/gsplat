@@ -5,9 +5,8 @@ import {
   DEFAULT_ROBUST_SCENE_BOUNDS_OPTIONS,
   type RobustSceneBoundsOptions,
 } from '../lib/robustSceneBounds';
-import { findScenePresetByUrl } from '../lib/scenePresets';
 import { detectSceneFormat } from '../lib/sceneFormat';
-import type { InterpolatedPose, SceneView, ViewerDebugSnapshot } from '../types';
+import type { InterpolatedPose, ViewerDebugSnapshot } from '../types';
 import { applyAdaptiveCameraFrustum } from './adaptiveCameraFrustum';
 import {
   createViewerOrbitControls,
@@ -19,6 +18,7 @@ import {
   type NavigationMode,
   type ViewerCameraControls,
 } from './orbitControls';
+import { computeFramedSceneView } from './sceneFraming';
 import type { ViewerAdapter, ViewerAdapterOptions } from './ViewerAdapter';
 
 const SPARK_VIEW_OPTIONS = {
@@ -116,24 +116,12 @@ export class SparkSceneViewer implements ViewerAdapter {
         throw new Error('Loaded scene contains no splats.');
       }
 
-      const preset = findScenePresetByUrl(url);
-      if (preset?.sceneRotation) {
-        this.applySceneRotation(
-          new THREE.Quaternion(
-            preset.sceneRotation.x,
-            preset.sceneRotation.y,
-            preset.sceneRotation.z,
-            preset.sceneRotation.w,
-          ),
-        );
-      }
-
       this.computeSceneBounds();
       if (!this.hasUsableSceneBounds()) {
         throw new Error('Loaded scene bounds are invalid.');
       }
 
-      if (!(preset?.defaultView ? this.applySceneView(preset.defaultView) : this.frameScene())) {
+      if (!this.frameScene()) {
         throw new Error('Loaded scene could not be framed.');
       }
 
@@ -207,19 +195,14 @@ export class SparkSceneViewer implements ViewerAdapter {
       return false;
     }
 
-    const center = new THREE.Vector3();
-    const sphere = new THREE.Sphere();
-    this.sceneBounds.getBoundingSphere(sphere);
-    this.sceneBounds.getCenter(center);
+    const framedView = computeFramedSceneView(this.sceneBounds, this.camera);
+    if (!framedView) {
+      return false;
+    }
 
-    const fovRadians = THREE.MathUtils.degToRad(this.camera.fov);
-    const radius = Math.max(sphere.radius, 0.5);
-    const distance = (radius / Math.tan(fovRadians / 2)) * 1.3;
-    const targetPosition = center.clone().add(new THREE.Vector3(0, radius * 0.3, distance));
-
-    this.camera.position.copy(targetPosition);
-    this.camera.up.set(0, 1, 0);
-    this.controls.target.copy(center);
+    this.camera.position.copy(framedView.position);
+    this.camera.up.copy(framedView.up);
+    this.controls.target.copy(framedView.target);
     this.syncCameraProjection(true);
     this.controls.update();
     return true;
@@ -258,10 +241,6 @@ export class SparkSceneViewer implements ViewerAdapter {
     return this.camera;
   }
 
-  getSceneRotation(): THREE.Quaternion | null {
-    return this.splatMesh?.quaternion.clone() ?? null;
-  }
-
   getSceneBounds(): THREE.Box3 | null {
     if (!this.sceneLoaded || !this.hasUsableSceneBounds()) {
       return null;
@@ -289,19 +268,6 @@ export class SparkSceneViewer implements ViewerAdapter {
 
   isSceneLoaded(): boolean {
     return this.sceneLoaded;
-  }
-
-  setSceneRotation(rotation: THREE.Quaternion): void {
-    if (!this.applySceneRotation(rotation)) {
-      return;
-    }
-
-    this.computeSceneBounds();
-    if (this.hasUsableSceneBounds() && this.frameScene()) {
-      this.saveInitialCamera();
-    } else {
-      this.syncCameraProjection(true);
-    }
   }
 
   getCompatibilityStatusMessage(): string | null {
@@ -419,31 +385,6 @@ export class SparkSceneViewer implements ViewerAdapter {
     }
 
     this.sceneBounds.makeEmpty();
-  }
-
-  private applySceneRotation(rotation: THREE.Quaternion): boolean {
-    if (!this.splatMesh) {
-      return false;
-    }
-
-    this.splatMesh.quaternion.copy(rotation).normalize();
-    this.splatMesh.updateMatrixWorld(true);
-    return true;
-  }
-
-  private applySceneView(view: SceneView): boolean {
-    if (!this.camera || !this.controls) {
-      return false;
-    }
-
-    this.camera.position.set(view.position.x, view.position.y, view.position.z);
-    this.camera.up.set(view.up?.x ?? 0, view.up?.y ?? 1, view.up?.z ?? 0);
-    this.controls.target.set(view.target.x, view.target.y, view.target.z);
-    this.camera.fov = view.fov;
-    this.camera.lookAt(this.controls.target);
-    this.syncCameraProjection(true);
-    this.controls.update();
-    return true;
   }
 
   private resetSceneState(): void {
