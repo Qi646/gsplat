@@ -186,6 +186,60 @@
       height: 100%;
     }
 
+    #agentic-path-blocker {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: flex-start;
+      justify-content: center;
+      padding: 22px;
+      background: rgba(8,10,14,0.34);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.15s ease;
+      z-index: 12;
+    }
+
+    #agentic-path-blocker.active {
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    .agentic-path-blocker-card {
+      width: min(100%, 360px);
+      display: grid;
+      gap: 6px;
+      padding: 14px 16px;
+      border-radius: 14px;
+      border: 1px solid rgba(0,229,255,0.24);
+      background: rgba(8,10,14,0.88);
+      box-shadow: 0 18px 40px rgba(0,0,0,0.32);
+    }
+
+    .agentic-path-blocker-title {
+      font-family: var(--sans);
+      font-size: 15px;
+      font-weight: 600;
+      color: var(--accent);
+      letter-spacing: -0.02em;
+    }
+
+    .agentic-path-blocker-message {
+      font-size: 11px;
+      line-height: 1.45;
+      color: var(--text);
+    }
+
+    .agentic-path-blocker-actions {
+      display: flex;
+      justify-content: flex-end;
+      margin-top: 4px;
+    }
+
+    .agentic-path-blocker-actions .btn {
+      min-width: 108px;
+    }
+
     #loading-overlay {
       position: absolute;
       inset: 0;
@@ -404,6 +458,20 @@
       grid-template-columns: repeat(3, minmax(0, 1fr));
       gap: 6px;
       margin-bottom: 10px;
+    }
+
+    .path-primary-action {
+      margin-bottom: 10px;
+    }
+
+    .path-generate-btn {
+      width: 100%;
+      min-width: 0;
+      min-height: 36px;
+      padding: 8px 14px;
+      white-space: normal;
+      line-height: 1.35;
+      text-align: center;
     }
 
     .export-settings {
@@ -636,6 +704,15 @@
     <div id="canvas-container">
       <div id="viewer-host"></div>
       <svg id="camera-path-overlay"></svg>
+      <div id="agentic-path-blocker" aria-hidden="true">
+        <div class="agentic-path-blocker-card">
+          <div class="agentic-path-blocker-title">Generating camera path</div>
+          <div class="agentic-path-blocker-message" id="agentic-path-blocker-message"></div>
+          <div class="agentic-path-blocker-actions">
+            <button class="btn" id="btn-cancel-generate-path-blocker" type="button">Cancel</button>
+          </div>
+        </div>
+      </div>
 
       <div id="loading-overlay">
         <div class="loading-title">Gaussian Splat Viewer</div>
@@ -724,8 +801,8 @@
             style="flex: 1 1 180px;"
           >Orbit + face forward</button>
         </div>
-        <div class="path-secondary-actions" style="margin-bottom: 10px;">
-          <button class="btn" id="btn-generate-path" disabled style="width: 100%;">✨ Generate Path</button>
+        <div class="path-primary-action">
+          <button class="btn path-generate-btn" id="btn-generate-path" disabled>✨ Generate Path</button>
         </div>
         <div class="path-actions">
           <button class="btn" id="btn-add-kf" disabled aria-keyshortcuts="K">+ Add Keyframe</button>

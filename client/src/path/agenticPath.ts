@@ -38,8 +38,18 @@ export interface AgenticPathResponse {
   warning?: string;
 }
 
+export interface AgenticPathProgress {
+  buttonLabel: string;
+  captureIndex?: number;
+  message: string;
+  stage: 'capturing-current' | 'capturing-scout' | 'planning' | 'triangulating' | 'building' | 'cancelling';
+  totalCaptures?: number;
+}
+
 export interface AgenticPathGeneratorOptions {
   fetchImpl?: typeof fetch;
+  onProgress?: (progress: AgenticPathProgress) => void;
+  timeoutMs?: number;
   viewer: ViewerAdapter;
 }
 
@@ -96,7 +106,9 @@ const DEFAULT_ORBIT_DURATION_SECONDS = 6;
 const DEFAULT_ORBIT_SWEEP_DEGREES = 300;
 const DEFAULT_PARTIAL_ORBIT_KEYFRAME_COUNT = 8;
 const DEFAULT_FULL_ORBIT_KEYFRAME_COUNT = 9;
+const DEFAULT_GENERATION_TIMEOUT_MS = 45_000;
 const MAX_CAPTURE_LONG_SIDE = 640;
+const TOTAL_CAPTURE_COUNT = 5;
 
 export class AgenticPathGenerationError extends Error {
   constructor(message: string) {
@@ -108,15 +120,34 @@ export class AgenticPathGenerationError extends Error {
 export class AgenticPathGenerator {
   private readonly fetchImpl: typeof fetch;
   private generating = false;
+  private generationTimeout: AgenticGenerationTimeout | null = null;
+  private readonly onProgress?: (progress: AgenticPathProgress) => void;
+  private readonly timeoutMs: number;
   private readonly viewer: ViewerAdapter;
 
   constructor(options: AgenticPathGeneratorOptions) {
     this.viewer = options.viewer;
     this.fetchImpl = resolveFetchImpl(options.fetchImpl);
+    this.onProgress = options.onProgress;
+    this.timeoutMs = resolveGenerationTimeoutMs(options.timeoutMs);
   }
 
   isGenerating(): boolean {
     return this.generating;
+  }
+
+  cancelGeneration(): boolean {
+    if (!this.generating || !this.generationTimeout) {
+      return false;
+    }
+
+    this.reportProgress({
+      buttonLabel: 'Cancelling…',
+      message: 'Canceling agentic path generation and restoring controls…',
+      stage: 'cancelling',
+    });
+    this.generationTimeout.cancel('Agentic path generation canceled. Controls restored.');
+    return true;
   }
 
   async generatePath(options: GenerateAgenticPathOptions): Promise<Keyframe[]> {
@@ -141,20 +172,32 @@ export class AgenticPathGenerator {
 
     this.generating = true;
     const livePose = clonePoseFromCamera(camera);
+    const timeout = createGenerationTimeout(this.timeoutMs);
+    this.generationTimeout = timeout;
 
     try {
-      const captures = await this.captureScoutSet(bounds, livePose, camera);
+      const captures = await this.captureScoutSet(bounds, livePose, camera, timeout);
       const response = await this.requestPathPlan({
         captures,
         currentCamera: serializeCamera(camera),
         pathTail: serializePathTail(options.existingKeyframes.at(-1) ?? null),
         prompt,
         sceneBounds: serializeBounds(bounds),
+      }, timeout);
+      this.reportProgress({
+        buttonLabel: 'Triangulating…',
+        message: 'Triangulating the subject anchor from the captured views…',
+        stage: 'triangulating',
       });
       const anchor = triangulateSubjectAnchor(response.subjectLocalizations, captures, bounds);
       const lastKeyframe = options.existingKeyframes.at(-1) ?? null;
       const basePose = lastKeyframe ? keyframeToPose(lastKeyframe) : livePose;
       const startTime = lastKeyframe ? lastKeyframe.time + APPEND_BRIDGE_SECONDS : 0;
+      this.reportProgress({
+        buttonLabel: 'Building path…',
+        message: 'Building orbit keyframes from the planner output…',
+        stage: 'building',
+      });
 
       return buildOrbitKeyframes({
         anchor,
@@ -165,6 +208,7 @@ export class AgenticPathGenerator {
       });
     } finally {
       this.generating = false;
+      this.generationTimeout = null;
     }
   }
 
@@ -172,27 +216,39 @@ export class AgenticPathGenerator {
     bounds: THREE.Box3,
     livePose: InterpolatedPose,
     camera: THREE.PerspectiveCamera,
+    timeout: AgenticGenerationTimeout,
   ): Promise<AgenticPathCapture[]> {
     const captures: AgenticPathCapture[] = [];
 
     try {
-      await this.renderFrame();
-      captures.push(await this.captureCurrentView('capture-current', 'current', camera));
+      this.reportCaptureProgress(1, 'current');
+      await this.renderFrame(timeout, 'capturing the current view');
+      captures.push(
+        await this.captureCurrentView('capture-current', 'current', camera, timeout, 'capturing the current view'),
+      );
 
       const scoutPoses = buildScoutCameraPoses(bounds, camera);
       for (const [index, scoutPose] of scoutPoses.entries()) {
+        timeout.throwIfAborted('capturing scout views');
+        this.reportCaptureProgress(index + 2, 'scout');
         this.viewer.applyCameraPose(scoutPose);
-        await this.renderFrame();
+        await this.renderFrame(timeout, 'capturing scout views');
         const activeCamera = this.viewer.getCamera();
         if (!activeCamera) {
           throw new AgenticPathGenerationError('Viewer camera became unavailable during scout capture.');
         }
 
-        captures.push(await this.captureCurrentView(`capture-scout-${index + 1}`, 'scout', activeCamera));
+        captures.push(await this.captureCurrentView(
+          `capture-scout-${index + 1}`,
+          'scout',
+          activeCamera,
+          timeout,
+          'capturing scout views',
+        ));
       }
     } finally {
       this.viewer.applyCameraPose(livePose);
-      await this.renderFrame();
+      this.viewer.renderNow();
     }
 
     return captures;
@@ -202,9 +258,11 @@ export class AgenticPathGenerator {
     id: string,
     role: 'current' | 'scout',
     camera: THREE.PerspectiveCamera,
+    timeout: AgenticGenerationTimeout,
+    context: string,
   ): Promise<AgenticPathCapture> {
-    const frame = await this.viewer.captureFrame();
-    const image = await blobToJpegDataUrl(frame);
+    const frame = await timeout.runStep(() => this.viewer.captureFrame(), context);
+    const image = await timeout.runStep(() => blobToJpegDataUrl(frame), context);
 
     return {
       camera: serializeCamera(camera),
@@ -216,25 +274,56 @@ export class AgenticPathGenerator {
     };
   }
 
-  private async renderFrame(): Promise<void> {
+  private async renderFrame(timeout: AgenticGenerationTimeout, context: string): Promise<void> {
+    timeout.throwIfAborted(context);
     this.viewer.renderNow();
-    await waitForNextAnimationFrame();
+    await timeout.runStep(waitForNextAnimationFrame, context);
   }
 
-  private async requestPathPlan(request: AgenticPathRequest): Promise<AgenticPathResponse> {
-    const response = await this.fetchImpl('/api/path/generate', {
+  private async requestPathPlan(
+    request: AgenticPathRequest,
+    timeout: AgenticGenerationTimeout,
+  ): Promise<AgenticPathResponse> {
+    this.reportProgress({
+      buttonLabel: 'Planning…',
+      message: 'Sending the captured views to the planner…',
+      stage: 'planning',
+    });
+    const response = await timeout.runStep(() => this.fetchImpl('/api/path/generate', {
       body: JSON.stringify(request),
       headers: {
         'Content-Type': 'application/json',
       },
       method: 'POST',
-    });
+      signal: timeout.signal,
+    }), 'waiting for the planner response');
 
     if (!response.ok) {
-      throw new AgenticPathGenerationError(await readAgenticPathError(response));
+      throw new AgenticPathGenerationError(
+        await timeout.runStep(() => readAgenticPathError(response), 'reading the planner error response'),
+      );
     }
 
-    return parseAgenticPathResponse(await response.json() as unknown);
+    return parseAgenticPathResponse(
+      await timeout.runStep(() => response.json() as Promise<unknown>, 'reading the planner response'),
+    );
+  }
+
+  private reportCaptureProgress(captureIndex: number, role: 'current' | 'scout'): void {
+    const isCurrentCapture = role === 'current';
+    this.reportProgress({
+      buttonLabel: `Capturing ${captureIndex}/${TOTAL_CAPTURE_COUNT}…`,
+      captureIndex,
+      message: isCurrentCapture
+        ? 'Capturing the current view (1/5). Viewer controls are temporarily locked.'
+        : `Capturing scout view ${captureIndex - 1}/4 (${captureIndex}/${TOTAL_CAPTURE_COUNT}). Viewer controls are temporarily locked.`,
+      stage: isCurrentCapture ? 'capturing-current' : 'capturing-scout',
+      totalCaptures: TOTAL_CAPTURE_COUNT,
+    });
+  }
+
+  private reportProgress(progress: AgenticPathProgress): void {
+    this.onProgress?.(progress);
   }
 }
 
@@ -682,6 +771,14 @@ function resolveFetchImpl(fetchImpl?: typeof fetch): typeof fetch {
   return resolvedFetch.bind(globalThis);
 }
 
+function resolveGenerationTimeoutMs(timeoutMs: number | undefined): number {
+  if (typeof timeoutMs !== 'number' || !Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    return DEFAULT_GENERATION_TIMEOUT_MS;
+  }
+
+  return timeoutMs;
+}
+
 function resolveHeightOffset(
   verticalBias: AgenticVerticalBias | undefined,
   preservedHeight: number,
@@ -805,4 +902,101 @@ function waitForNextAnimationFrame(): Promise<void> {
   return new Promise(resolve => {
     requestAnimationFrame(() => resolve());
   });
+}
+
+interface AgenticGenerationTimeout {
+  cancel(message?: string): void;
+  readonly signal: AbortSignal;
+  runStep<T>(operation: () => Promise<T>, context: string): Promise<T>;
+  throwIfAborted(context: string): void;
+}
+
+function createGenerationTimeout(timeoutMs: number): AgenticGenerationTimeout {
+  const startedAt = Date.now();
+  const abortController = new AbortController();
+  let abortReason: AgenticPathGenerationError | null = null;
+
+  const createTimeoutError = (context: string) =>
+    new AgenticPathGenerationError(
+      `Agentic path generation timed out after ${formatTimeoutDuration(timeoutMs)} while ${context}. Controls were restored; try again.`,
+    );
+
+  const abortWith = (reason: AgenticPathGenerationError) => {
+    if (!abortReason) {
+      abortReason = reason;
+      abortController.abort();
+    }
+
+    return abortReason;
+  };
+
+  const throwIfAborted = (context: string) => {
+    if (abortReason) {
+      throw abortReason;
+    }
+
+    if (Date.now() - startedAt >= timeoutMs) {
+      throw abortWith(createTimeoutError(context));
+    }
+  };
+
+  return {
+    cancel(message = 'Agentic path generation canceled. Controls restored.'): void {
+      abortWith(new AgenticPathGenerationError(message));
+    },
+    signal: abortController.signal,
+    async runStep<T>(operation: () => Promise<T>, context: string): Promise<T> {
+      throwIfAborted(context);
+      const remainingMs = Math.max(1, timeoutMs - (Date.now() - startedAt));
+      let abortListener: EventListener | null = null;
+      let timer: ReturnType<typeof setTimeout> | null = null;
+
+      try {
+        return await Promise.race([
+          operation(),
+          new Promise<never>((_, reject) => {
+            abortListener = () => {
+              reject(abortReason ?? new AgenticPathGenerationError('Agentic path generation canceled. Controls restored.'));
+            };
+
+            abortController.signal.addEventListener('abort', abortListener, { once: true });
+            timer = setTimeout(() => {
+              reject(abortWith(createTimeoutError(context)));
+            }, remainingMs);
+          }),
+        ]);
+      } catch (error) {
+        if (abortReason) {
+          throw abortReason;
+        }
+
+        if (isAbortError(error)) {
+          throw abortWith(createTimeoutError(context));
+        }
+
+        throw error;
+      } finally {
+        if (timer !== null) {
+          clearTimeout(timer);
+        }
+        if (abortListener) {
+          abortController.signal.removeEventListener('abort', abortListener);
+        }
+      }
+    },
+    throwIfAborted,
+  };
+}
+
+function formatTimeoutDuration(timeoutMs: number): string {
+  if (timeoutMs % 1000 === 0) {
+    const seconds = timeoutMs / 1000;
+    return `${seconds} second${seconds === 1 ? '' : 's'}`;
+  }
+
+  return `${timeoutMs} ms`;
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof DOMException && error.name === 'AbortError';
 }

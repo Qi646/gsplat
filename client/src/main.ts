@@ -19,7 +19,7 @@ import { parseAppRuntimeQuery } from './lib/runtimeQuery';
 import { detectSceneFormat } from './lib/sceneFormat';
 import { resolveSceneLoadSource, type SceneLoadInput, type SceneLoadSource } from './lib/sceneSource';
 import { SCENE_PRESETS } from './lib/scenePresets';
-import { AgenticPathGenerator } from './path/agenticPath';
+import { AgenticPathGenerator, type AgenticPathProgress } from './path/agenticPath';
 import { CameraPathOverlay } from './path/CameraPathOverlay';
 import { KeyframeManager } from './path/KeyframeManager';
 import {
@@ -131,6 +131,9 @@ async function main(): Promise<void> {
   const exportFpsInput = $('#export-fps-input') as HTMLInputElement;
   const exportFileBaseInput = $('#export-file-base-input') as HTMLInputElement;
   const agenticPathNote = $('#agentic-path-note');
+  const agenticPathBlocker = $('#agentic-path-blocker');
+  const cancelGeneratePathBlockerButton = $('#btn-cancel-generate-path-blocker') as HTMLButtonElement;
+  const agenticPathBlockerMessage = $('#agentic-path-blocker-message');
   const pathPromptInput = $('#path-prompt-input') as HTMLTextAreaElement;
   const generatePathButton = $('#btn-generate-path') as HTMLButtonElement;
   const agenticPromptButtons = Array.from(document.querySelectorAll<HTMLButtonElement>('[data-agentic-prompt]'));
@@ -206,7 +209,14 @@ async function main(): Promise<void> {
   }
 
   const keyframeManager = new KeyframeManager({ viewer, events });
-  const agenticPathGenerator = new AgenticPathGenerator({ viewer });
+  const agenticPathGenerator = new AgenticPathGenerator({
+    onProgress: progress => {
+      agenticPathProgress = progress;
+      updatePathControlsState();
+      setStatusNote(progress.message);
+    },
+    viewer,
+  });
   const exportManager = new ExportManager({ viewer });
   const adaptiveRenderBudgetController = new AdaptiveRenderBudgetController();
   const pathOverlay = new CameraPathOverlay(pathOverlayElement);
@@ -219,6 +229,7 @@ async function main(): Promise<void> {
   let suppressWalkExitStatus = false;
   let exportPlanSettings: ExportPlanSettings = { ...DEFAULT_EXPORT_PLAN_SETTINGS };
   let currentExportProgress: ExportProgress | null = null;
+  let agenticPathProgress: AgenticPathProgress | null = null;
   let agenticPathStatus: AgenticPathStatus = {
     available: false,
     model: null,
@@ -456,6 +467,12 @@ async function main(): Promise<void> {
   };
 
   const updateAgenticPathNote = () => {
+    if (agenticPathGenerator.isGenerating()) {
+      agenticPathNote.textContent =
+        agenticPathProgress?.message ?? 'Generating a camera path. Viewer controls are temporarily locked.';
+      return;
+    }
+
     if (!agenticPathStatus.available) {
       agenticPathNote.textContent =
         agenticPathStatus.reason ?? 'Agentic path generation is currently unavailable.';
@@ -471,6 +488,15 @@ async function main(): Promise<void> {
     const modelLabel = agenticPathStatus.model ? ` Using ${agenticPathStatus.model}.` : '';
     agenticPathNote.textContent =
       `Prompt a cinematic orbit and append generated keyframes based on the current view plus four scout captures.${modelLabel}`;
+  };
+
+  const updateAgenticPathBlocker = () => {
+    const generationActive = agenticPathGenerator.isGenerating();
+    agenticPathBlocker.classList.toggle('active', generationActive);
+    agenticPathBlocker.setAttribute('aria-hidden', String(!generationActive));
+    agenticPathBlockerMessage.textContent = generationActive
+      ? agenticPathProgress?.message ?? 'Generating a camera path. Viewer controls are temporarily locked.'
+      : '';
   };
 
   const updateTimelineUI = (timeSeconds: number, durationSeconds: number) => {
@@ -508,6 +534,7 @@ async function main(): Promise<void> {
     const exportActive = exportManager.isExporting();
     const exportCancelling = exportManager.isCancelling();
     const generationActive = agenticPathGenerator.isGenerating();
+    const generationCancelling = agenticPathProgress?.stage === 'cancelling';
     const interactionLocked = previewActive || exportActive || generationActive;
 
     addKeyframeButton.disabled = !sceneLoaded || exportActive || generationActive;
@@ -530,7 +557,11 @@ async function main(): Promise<void> {
       || !agenticPathStatus.available
       || pathPromptInput.value.trim().length === 0;
     generatePathButton.classList.toggle('active', generationActive);
-    generatePathButton.textContent = generationActive ? 'Analyzing…' : '✨ Generate Path';
+    generatePathButton.textContent = generationActive
+      ? agenticPathProgress?.buttonLabel ?? 'Generating…'
+      : '✨ Generate Path';
+    cancelGeneratePathBlockerButton.disabled = !generationActive || generationCancelling;
+    cancelGeneratePathBlockerButton.textContent = generationCancelling ? 'Cancelling…' : 'Cancel';
     agenticPromptButtons.forEach(button => {
       button.disabled = !sceneLoaded || exportActive || generationActive || !agenticPathStatus.available;
     });
@@ -542,6 +573,7 @@ async function main(): Promise<void> {
     updatePerformanceControlsState();
     updatePathVisualsButton();
     updateAgenticPathNote();
+    updateAgenticPathBlocker();
   };
 
   const loadAgenticPathStatus = async () => {
@@ -951,13 +983,13 @@ async function main(): Promise<void> {
     keyframeManager.stopPreview();
     updatePathControlsState();
     syncPathVisualsState();
-    setStatusNote('Capturing scout views and analyzing the scene for an agentic camera path…');
 
     try {
       const generatedKeyframes = await agenticPathGenerator.generatePath({
         existingKeyframes: keyframeManager.getKeyframes(),
         prompt,
       });
+      agenticPathProgress = null;
       const appendedKeyframes = keyframeManager.appendKeyframes(generatedKeyframes);
       selectedKeyframeId = appendedKeyframes[0]?.id ?? selectedKeyframeId;
       renderKeyframeList();
@@ -967,11 +999,16 @@ async function main(): Promise<void> {
         `Appended ${appendedKeyframes.length} generated keyframe${appendedKeyframes.length === 1 ? '' : 's'} from the prompt.`,
       );
     } catch (error) {
+      agenticPathProgress = null;
       setStatusNote(error instanceof Error ? error.message : 'Could not generate an agentic camera path.');
     } finally {
       updatePathControlsState();
       syncPathVisualsState();
     }
+  });
+
+  cancelGeneratePathBlockerButton.addEventListener('click', () => {
+    agenticPathGenerator.cancelGeneration();
   });
 
   clearKeyframesButton.addEventListener('click', () => {

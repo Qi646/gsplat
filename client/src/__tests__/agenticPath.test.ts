@@ -1,6 +1,7 @@
 import * as THREE from 'three';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  AgenticPathGenerator,
   buildOrbitKeyframes,
   buildScoutCameraPoses,
   triangulateSubjectAnchor,
@@ -8,6 +9,7 @@ import {
   type AgenticShotSpec,
   type AgenticSubjectLocalization,
 } from '../path/agenticPath';
+import type { ViewerAdapter } from '../viewer/ViewerAdapter';
 
 function createCamera(
   position: THREE.Vector3,
@@ -88,6 +90,77 @@ function projectPoint(
     pixelY: ((1 - projected.y) / 2) * capture.height,
   };
 }
+
+function createMockViewer(options: {
+  captureFrame?: () => Promise<Blob>;
+  initialCamera?: THREE.PerspectiveCamera;
+} = {}): {
+  camera: THREE.PerspectiveCamera;
+  viewer: ViewerAdapter;
+} {
+  const bounds = new THREE.Box3(
+    new THREE.Vector3(-4, -2, -4),
+    new THREE.Vector3(4, 4, 4),
+  );
+  const camera = options.initialCamera ?? createCamera(new THREE.Vector3(5, 1, 0), bounds.getCenter(new THREE.Vector3()));
+
+  const viewer = {
+    applyCameraPose: (pose: { fov: number; position: THREE.Vector3; quaternion: THREE.Quaternion }) => {
+      camera.position.copy(pose.position);
+      camera.quaternion.copy(pose.quaternion);
+      camera.fov = pose.fov;
+      camera.updateProjectionMatrix();
+      camera.updateMatrixWorld(true);
+    },
+    captureFrame: options.captureFrame ?? (async () => new Blob(['frame'], { type: 'image/png' })),
+    getCamera: () => camera,
+    getSceneBounds: () => bounds.clone(),
+    isSceneLoaded: () => true,
+    renderNow: () => {},
+  } as unknown as ViewerAdapter;
+
+  return { camera, viewer };
+}
+
+function createPlannerResponse(captures: AgenticPathCapture[]): Response {
+  const subject = new THREE.Vector3(0, 0.5, 0);
+  return new Response(JSON.stringify({
+    shotSpec: createShotSpec(),
+    subjectLocalizations: captures.map(capture => projectPoint(subject, capture)),
+  }), {
+    headers: { 'Content-Type': 'application/json' },
+    status: 200,
+  });
+}
+
+function installCapturePipelineStubs(): void {
+  vi.stubGlobal('createImageBitmap', vi.fn(async () => ({
+    close: vi.fn(),
+    height: 600,
+    width: 800,
+  })));
+  vi.stubGlobal('document', {
+    createElement: vi.fn((tagName: string) => {
+      if (tagName.toLowerCase() !== 'canvas') {
+        throw new Error(`Unexpected element request in test stub: ${tagName}`);
+      }
+
+      return {
+        getContext: vi.fn(() => ({
+          drawImage: vi.fn(),
+        })),
+        height: 0,
+        toDataURL: vi.fn(() => 'data:image/jpeg;base64,AA=='),
+        width: 0,
+      } as unknown as HTMLCanvasElement;
+    }),
+  } as unknown as Document);
+}
+
+afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+});
 
 describe('triangulateSubjectAnchor', () => {
   it('reconstructs a subject anchor from multiple localized captures', () => {
@@ -191,5 +264,149 @@ describe('buildOrbitKeyframes', () => {
     const forward = getForwardVector(keyframes[0]!.quaternion).setY(0).normalize();
 
     expect(forward.dot(tangent)).toBeGreaterThan(0.98);
+  });
+});
+
+describe('AgenticPathGenerator', () => {
+  it('reports staged progress throughout generation', async () => {
+    installCapturePipelineStubs();
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      callback(0);
+      return 1;
+    });
+
+    const progressStages: string[] = [];
+    const progressLabels: string[] = [];
+    const { viewer } = createMockViewer();
+    const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const request = JSON.parse(String(init?.body ?? '{}')) as { captures: AgenticPathCapture[] };
+      return createPlannerResponse(request.captures);
+    }) as unknown as typeof fetch;
+
+    const generator = new AgenticPathGenerator({
+      fetchImpl,
+      onProgress: progress => {
+        progressStages.push(progress.stage);
+        progressLabels.push(progress.buttonLabel);
+      },
+      viewer,
+    });
+
+    const keyframes = await generator.generatePath({
+      existingKeyframes: [],
+      prompt: 'Do a cinematic orbit around the subject.',
+    });
+
+    expect(keyframes.length).toBeGreaterThan(0);
+    expect(progressStages).toEqual([
+      'capturing-current',
+      'capturing-scout',
+      'capturing-scout',
+      'capturing-scout',
+      'capturing-scout',
+      'planning',
+      'triangulating',
+      'building',
+    ]);
+    expect(progressLabels).toEqual([
+      'Capturing 1/5…',
+      'Capturing 2/5…',
+      'Capturing 3/5…',
+      'Capturing 4/5…',
+      'Capturing 5/5…',
+      'Planning…',
+      'Triangulating…',
+      'Building path…',
+    ]);
+  });
+
+  it('times out stalled generation and restores the live camera pose', async () => {
+    installCapturePipelineStubs();
+    vi.useFakeTimers();
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      callback(0);
+      return 1;
+    });
+
+    let captureCount = 0;
+    const initialCamera = createCamera(new THREE.Vector3(5, 1, 0), new THREE.Vector3(0, 0.5, 0));
+    const initialPosition = initialCamera.position.clone();
+    const initialQuaternion = initialCamera.quaternion.clone();
+    const { camera, viewer } = createMockViewer({
+      captureFrame: () => {
+        captureCount += 1;
+        if (captureCount === 1) {
+          return Promise.resolve(new Blob(['frame'], { type: 'image/png' }));
+        }
+
+        return new Promise<Blob>(() => {});
+      },
+      initialCamera,
+    });
+
+    const generator = new AgenticPathGenerator({
+      fetchImpl: vi.fn() as unknown as typeof fetch,
+      timeoutMs: 25,
+      viewer,
+    });
+
+    const generationPromise = generator.generatePath({
+      existingKeyframes: [],
+      prompt: 'Do a cinematic orbit around the subject.',
+    });
+    const rejection = expect(generationPromise).rejects.toThrow(/timed out/i);
+
+    await vi.advanceTimersByTimeAsync(25);
+
+    await rejection;
+    expect(generator.isGenerating()).toBe(false);
+    expect(camera.position.distanceTo(initialPosition)).toBeLessThan(1e-6);
+    expect(camera.quaternion.angleTo(initialQuaternion)).toBeLessThan(1e-6);
+  });
+
+  it('cancels stalled generation and restores the live camera pose', async () => {
+    installCapturePipelineStubs();
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      callback(0);
+      return 1;
+    });
+
+    let captureCount = 0;
+    const progressStages: string[] = [];
+    const initialCamera = createCamera(new THREE.Vector3(5, 1, 0), new THREE.Vector3(0, 0.5, 0));
+    const initialPosition = initialCamera.position.clone();
+    const initialQuaternion = initialCamera.quaternion.clone();
+    const { camera, viewer } = createMockViewer({
+      captureFrame: () => {
+        captureCount += 1;
+        if (captureCount === 1) {
+          return Promise.resolve(new Blob(['frame'], { type: 'image/png' }));
+        }
+
+        return new Promise<Blob>(() => {});
+      },
+      initialCamera,
+    });
+
+    const generator = new AgenticPathGenerator({
+      fetchImpl: vi.fn() as unknown as typeof fetch,
+      onProgress: progress => {
+        progressStages.push(progress.stage);
+      },
+      viewer,
+    });
+
+    const generationPromise = generator.generatePath({
+      existingKeyframes: [],
+      prompt: 'Do a cinematic orbit around the subject.',
+    });
+    const rejection = expect(generationPromise).rejects.toThrow(/canceled/i);
+
+    expect(generator.cancelGeneration()).toBe(true);
+    await rejection;
+    expect(generator.isGenerating()).toBe(false);
+    expect(progressStages.at(-1)).toBe('cancelling');
+    expect(camera.position.distanceTo(initialPosition)).toBeLessThan(1e-6);
+    expect(camera.quaternion.angleTo(initialQuaternion)).toBeLessThan(1e-6);
   });
 });
