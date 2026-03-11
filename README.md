@@ -173,6 +173,7 @@ Notes:
 - Treat `ASSIGNMENT.md` as the scope brief and success criteria.
 - Build the real app at the repo root.
 - Use `gsplat-viewer/` only as a reference source when porting later milestones.
+- If you want Codex browser automation in this repo without re-enabling the host-wide Chrome MCP for every repo, launch Codex here via `./scripts/codex-with-chrome-mcp.sh`.
 
 ## Next Milestone
 

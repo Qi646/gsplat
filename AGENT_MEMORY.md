@@ -1,6 +1,7 @@
 # AGENT_MEMORY
 
 ## Current Context
+- 2026-03-11: The host-wide `chrome-devtools` Codex MCP remains intentionally disabled in `/home/qi/.codex/config.toml` to avoid tool/context overhead in unrelated repos. `gsplat_1` now carries a repo-local wrapper at `scripts/codex-with-chrome-mcp.sh` that launches Codex with the per-session override instead of re-enabling the MCP globally; validated with `bash -n scripts/codex-with-chrome-mcp.sh` and `./scripts/codex-with-chrome-mcp.sh mcp list`.
 - 2026-03-10: Camera-path preview now starts from the currently selected keyframe when the user clicks a keyframe in the list before pressing `Preview`; the shared preview manager accepts a non-zero start time, the behavior is documented in README/progress notes, and it was revalidated with passing root `npm test` / `npm run build`.
 - 2026-03-10: Repo licensing is now explicitly GNU GPL v3 only via the root `LICENSE` file, matching `license: GPL-3.0-only` metadata in the root/client/server `package.json` files and a README license note.
 - 2026-03-10: Navigation mode now uses explicit top-bar buttons for inspection and fly-through (`Inspect [1]` and `Fly [2]`) with no separate mode indicator pill. The active state is represented by button highlight, and shortcut `1`/`2`/click behavior maps directly to those states. Internal control identifiers still use `walk`, and the user-facing rename revalidated with passing root `npm test` / `npm run build`.
