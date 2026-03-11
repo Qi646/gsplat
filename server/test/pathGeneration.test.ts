@@ -129,6 +129,56 @@ describe('pathGeneration model-response parsing', () => {
     expect(parsed.subjectLocalizations).toHaveLength(2);
   });
 
+  it('backfills missing capture ids from request capture order', () => {
+    const request = createGroundRequest();
+    const parsed = parsePathGenerationGroundModelResponse({
+      intent: {
+        continuousPath: true,
+        orientationPreference: 'look-at-subject',
+        pathMode: 'subject-centric',
+        requestedMoveTypes: ['arc'],
+        subjectHint: 'truck',
+        targetDurationSeconds: 8,
+        tone: 'cinematic',
+      },
+      pathMode: 'subject-centric',
+      subjectLocalizations: [
+        { confidence: 0.94, pixelX: 320, pixelY: 240 },
+        { confidence: 0.88, pixelX: 300, pixelY: 210 },
+      ],
+    }, request.captures);
+
+    expect(parsed.subjectLocalizations).toEqual([
+      { captureId: 'capture-current', confidence: 0.94, pixelX: 320, pixelY: 240 },
+      { captureId: 'capture-scout-1', confidence: 0.88, pixelX: 300, pixelY: 210 },
+    ]);
+  });
+
+  it('accepts common capture id aliases from the model output', () => {
+    const request = createGroundRequest();
+    const parsed = parsePathGenerationGroundModelResponse({
+      intent: {
+        continuousPath: true,
+        orientationPreference: 'look-at-subject',
+        pathMode: 'subject-centric',
+        requestedMoveTypes: ['arc'],
+        subjectHint: 'truck',
+        targetDurationSeconds: 8,
+        tone: 'cinematic',
+      },
+      pathMode: 'subject-centric',
+      subjectLocalizations: [
+        { capture: 'current', confidence: 0.94, pixelX: 320, pixelY: 240 },
+        { id: 'scout-1', confidence: 0.88, pixelX: 300, pixelY: 210 },
+      ],
+    }, request.captures);
+
+    expect(parsed.subjectLocalizations).toEqual([
+      { captureId: 'capture-current', confidence: 0.94, pixelX: 320, pixelY: 240 },
+      { captureId: 'capture-scout-1', confidence: 0.88, pixelX: 300, pixelY: 210 },
+    ]);
+  });
+
   it('accepts unsupported route-following classifications', () => {
     const parsed = parsePathGenerationGroundModelResponse({
       intent: {

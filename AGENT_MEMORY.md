@@ -1,6 +1,7 @@
 # AGENT_MEMORY
 
 ## Current Context
+- 2026-03-11: The grounding parser now hardens against sloppy model localization output by explicitly prompting for verbatim `captureId` values and server-side backfilling/normalizing missing or aliased capture identifiers from the original request capture list. Revalidated with passing `npm test --workspace=server`, `npm run build --workspace=server`, root `npm test`, root `npm run build`, and one live `gpt-4.1-mini` grounding call.
 - 2026-03-11: Agentic camera-path generation now uses a draft-first multistep flow: the client captures the current view plus 6 nearby scouts, can run 4 targeted rescans when grounding is weak, calls `/api/path/ground` then `/api/path/compose`, synthesizes and validates the draft locally, allows one repair pass, and exposes `Preview Draft` / `Apply Draft` / `Discard Draft` / `Regenerate` controls. Live keyframes remain untouched until `Apply Draft`.
 - 2026-03-11: Agentic path v1 now only supports one continuous subject-centric move. Route-following prompts like "weave through these trees", multi-subject prompts, and ambiguous prompts are rejected early with inline feedback instead of being forced into an orbit-like result.
 - 2026-03-11: The multistep agentic-path rollout is currently validated by passing `npm test --workspace=server`, `npm run build --workspace=server`, `npm test --workspace=client`, `npm run build --workspace=client`, plus root `npm test` and `npm run build`.

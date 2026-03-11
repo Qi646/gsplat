@@ -270,6 +270,7 @@ export class OpenAIVisionPathPlanner implements PathGenerationPlanner {
     );
     const response = parsePathGenerationGroundModelResponse(
       JSON.parse(stripJsonFences(extractCompletionText(completion))) as unknown,
+      parsedRequest.captures,
     );
 
     if (response.pathMode !== 'subject-centric' && !response.unsupportedReason) {
@@ -404,7 +405,10 @@ export function parsePathGenerationComposeRequest(input: unknown): PathGeneratio
   };
 }
 
-export function parsePathGenerationGroundModelResponse(input: unknown): PathGenerationGroundResponse {
+export function parsePathGenerationGroundModelResponse(
+  input: unknown,
+  captures: PathGenerationCapture[] = [],
+): PathGenerationGroundResponse {
   if (!isRecord(input)) {
     throw new PathGenerationError(502, 'Vision planner returned a non-object grounding response.');
   }
@@ -420,7 +424,7 @@ export function parsePathGenerationGroundModelResponse(input: unknown): PathGene
     intent: { ...intent, pathMode },
     pathMode,
     subjectLocalizations: rawLocalizations.map((entry, index) =>
-      parseLocalization(entry, `subjectLocalizations[${index}]`)),
+      parseLocalization(entry, `subjectLocalizations[${index}]`, captures, index)),
     unsupportedReason: readOptionalNonEmptyString(input, 'unsupportedReason'),
     warning: readOptionalNonEmptyString(input, 'warning'),
   };
@@ -456,6 +460,8 @@ function buildGroundSystemPrompt(): string {
     'Return JSON only with keys pathMode, intent, subjectLocalizations, warning, unsupportedReason.',
     'intent must contain pathMode, continuousPath, subjectHint, tone, orientationPreference, targetDurationSeconds, requestedMoveTypes.',
     'For supported prompts, subjectLocalizations should include every capture where the primary subject is visible.',
+    'Every subjectLocalizations entry must include captureId, pixelX, pixelY, confidence.',
+    'captureId must exactly match one of the input capture ids.',
     'Never invent captures that are not present in the input.',
     'When unsupported, set unsupportedReason and leave subjectLocalizations empty unless a clear primary subject is still visible.',
     'requestedMoveTypes may only contain hold, arc, dolly, pedestal.',
@@ -782,17 +788,113 @@ function parseGroundedSubject(value: unknown, context: string): PathGenerationGr
   };
 }
 
-function parseLocalization(value: unknown, context: string): PathGenerationSubjectLocalization {
+function parseLocalization(
+  value: unknown,
+  context: string,
+  captures: PathGenerationCapture[],
+  localizationIndex: number,
+): PathGenerationSubjectLocalization {
   if (!isRecord(value)) {
     throw new PathGenerationError(502, `${context} must be an object.`);
   }
 
   return {
-    captureId: readString(value, 'captureId', context),
+    captureId: resolveLocalizationCaptureId(value, context, captures, localizationIndex),
     confidence: readFiniteNumber(value, 'confidence', context),
     pixelX: readFiniteNumber(value, 'pixelX', context),
     pixelY: readFiniteNumber(value, 'pixelY', context),
   };
+}
+
+function resolveLocalizationCaptureId(
+  value: UnknownRecord,
+  context: string,
+  captures: PathGenerationCapture[],
+  localizationIndex: number,
+): string {
+  const aliases = [
+    value['captureId'],
+    value['captureID'],
+    value['capture_id'],
+    value['capture'],
+    value['id'],
+  ];
+
+  for (const alias of aliases) {
+    const resolved = resolveCaptureIdAlias(alias, captures);
+    if (resolved) {
+      return resolved;
+    }
+  }
+
+  if (localizationIndex >= 0 && localizationIndex < captures.length) {
+    return captures[localizationIndex]!.id;
+  }
+
+  throw new PathGenerationError(502, `${context}.captureId must be a non-empty string.`);
+}
+
+function resolveCaptureIdAlias(
+  value: unknown,
+  captures: PathGenerationCapture[],
+): string | null {
+  const captureIds = captures.map(capture => capture.id);
+
+  if (typeof value === 'number' && Number.isInteger(value)) {
+    if (value >= 0 && value < captureIds.length) {
+      return captureIds[value]!;
+    }
+    if (value >= 1 && value <= captureIds.length) {
+      return captureIds[value - 1]!;
+    }
+    return null;
+  }
+
+  if (typeof value !== 'string') {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  if (trimmed.length === 0) {
+    return null;
+  }
+
+  if (captures.length === 0) {
+    return trimmed;
+  }
+
+  if (captureIds.includes(trimmed)) {
+    return trimmed;
+  }
+
+  const normalized = trimmed.toLowerCase();
+  const exactNormalizedMatch = captureIds.find(captureId => captureId.toLowerCase() === normalized);
+  if (exactNormalizedMatch) {
+    return exactNormalizedMatch;
+  }
+
+  const prefixed = normalized.startsWith('capture-') ? normalized : `capture-${normalized}`;
+  const prefixedMatch = captureIds.find(captureId => captureId.toLowerCase() === prefixed);
+  if (prefixedMatch) {
+    return prefixedMatch;
+  }
+
+  const suffixMatch = captures.find(capture => {
+    const captureId = capture.id.toLowerCase();
+    return captureId.endsWith(`-${normalized}`) || captureId.endsWith(normalized);
+  });
+  if (suffixMatch) {
+    return suffixMatch.id;
+  }
+
+  if (normalized === 'current') {
+    const currentCapture = captures.find(capture => capture.role === 'current');
+    if (currentCapture) {
+      return currentCapture.id;
+    }
+  }
+
+  return null;
 }
 
 function parsePathMode(value: unknown, context: string): PathGenerationPathMode {
