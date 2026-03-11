@@ -41,21 +41,45 @@ describe('createApp', () => {
 
   function createPathPlanner(overrides: Partial<PathGenerationPlanner> = {}): PathGenerationPlanner {
     return {
-      generatePathPlan: overrides.generatePathPlan ?? vi.fn(async () => ({
-        shotSpec: {
-          fullOrbit: false,
-          orientationMode: 'look-at-subject',
-          pathType: 'orbit',
+      composePathPlan: overrides.composePathPlan ?? vi.fn(async () => ({
+        segments: [
+          {
+            durationSeconds: 4,
+            lookMode: 'look-at-subject',
+            segmentType: 'arc',
+            sweepDegrees: 120,
+          },
+        ],
+        summary: 'Arc around the truck.',
+      })),
+      getStatus: overrides.getStatus ?? vi.fn<PathGenerationPlannerStatus>(() => ({
+        available: true,
+        capabilities: {
+          maxCaptureRounds: 2,
+          maxSegments: 4,
+          segmentTypes: ['hold', 'arc', 'dolly', 'pedestal'],
+          supportedPathModes: ['subject-centric'],
+          unsupportedPathModes: ['route-following', 'multi-subject', 'ambiguous'],
         },
+        model: 'gpt-4.1-mini',
+        plannerVersion: 'multistep-v1',
+        reason: null,
+      })),
+      groundPathIntent: overrides.groundPathIntent ?? vi.fn(async () => ({
+        intent: {
+          continuousPath: true,
+          orientationPreference: 'look-at-subject',
+          pathMode: 'subject-centric',
+          requestedMoveTypes: ['arc'],
+          subjectHint: 'truck',
+          targetDurationSeconds: 10,
+          tone: 'cinematic',
+        },
+        pathMode: 'subject-centric',
         subjectLocalizations: [
           { captureId: 'capture-current', confidence: 0.96, pixelX: 320, pixelY: 240 },
           { captureId: 'capture-scout-1', confidence: 0.92, pixelX: 300, pixelY: 220 },
         ],
-      })),
-      getStatus: overrides.getStatus ?? vi.fn<PathGenerationPlannerStatus>(() => ({
-        available: true,
-        model: 'gpt-4.1-mini',
-        reason: null,
       })),
     };
   }
@@ -254,19 +278,24 @@ describe('createApp', () => {
     expect(response.body).toEqual({ error: 'Unknown export job: missing' });
   });
 
-  it('returns a generated path plan from the planner route', async () => {
+  it('returns a grounded path intent from the ground route', async () => {
     const pathPlanner = createPathPlanner({
-      generatePathPlan: vi.fn(async requestBody => {
+      groundPathIntent: vi.fn(async requestBody => {
         expect(requestBody).toMatchObject({
           prompt: 'Orbit the truck and keep the camera on it.',
         });
 
         return {
-          shotSpec: {
-            fullOrbit: true,
-            orientationMode: 'look-at-subject',
-            pathType: 'orbit',
+          intent: {
+            continuousPath: true,
+            orientationPreference: 'look-at-subject',
+            pathMode: 'subject-centric',
+            requestedMoveTypes: ['arc', 'hold'],
+            subjectHint: 'truck',
+            targetDurationSeconds: 10,
+            tone: 'cinematic',
           },
+          pathMode: 'subject-centric',
           subjectLocalizations: [
             { captureId: 'capture-current', confidence: 0.96, pixelX: 320, pixelY: 240 },
             { captureId: 'capture-scout-1', confidence: 0.91, pixelX: 300, pixelY: 220 },
@@ -277,15 +306,57 @@ describe('createApp', () => {
     const app = createTestApp({ pathPlanner });
 
     const response = await request(app)
-      .post('/api/path/generate')
-      .send(createPathGenerationRequest());
+      .post('/api/path/ground')
+      .send(createPathGenerationGroundRequest());
 
     expect(response.status).toBe(200);
-    expect(response.body.shotSpec).toEqual({
-      fullOrbit: true,
-      orientationMode: 'look-at-subject',
-      pathType: 'orbit',
+    expect(response.body.intent).toEqual({
+      continuousPath: true,
+      orientationPreference: 'look-at-subject',
+      pathMode: 'subject-centric',
+      requestedMoveTypes: ['arc', 'hold'],
+      subjectHint: 'truck',
+      targetDurationSeconds: 10,
+      tone: 'cinematic',
     });
+  });
+
+  it('returns a composed segment plan from the compose route', async () => {
+    const pathPlanner = createPathPlanner({
+      composePathPlan: vi.fn(async requestBody => {
+        expect(requestBody).toMatchObject({
+          intent: {
+            pathMode: 'subject-centric',
+          },
+        });
+
+        return {
+          segments: [
+            {
+              durationSeconds: 4,
+              lookMode: 'look-at-subject',
+              segmentType: 'arc',
+              sweepDegrees: 120,
+            },
+            {
+              durationSeconds: 2,
+              lookMode: 'look-at-subject',
+              segmentType: 'hold',
+            },
+          ],
+          summary: 'Arc around the truck, then hold.',
+        };
+      }),
+    });
+    const app = createTestApp({ pathPlanner });
+
+    const response = await request(app)
+      .post('/api/path/compose')
+      .send(createPathGenerationComposeRequest());
+
+    expect(response.status).toBe(200);
+    expect(response.body.summary).toBe('Arc around the truck, then hold.');
+    expect(response.body.segments).toHaveLength(2);
   });
 
   it('returns planner availability from the path status route', async () => {
@@ -293,7 +364,15 @@ describe('createApp', () => {
       pathPlanner: createPathPlanner({
         getStatus: vi.fn(() => ({
           available: false,
+          capabilities: {
+            maxCaptureRounds: 2,
+            maxSegments: 4,
+            segmentTypes: ['hold', 'arc', 'dolly', 'pedestal'],
+            supportedPathModes: ['subject-centric'],
+            unsupportedPathModes: ['route-following', 'multi-subject', 'ambiguous'],
+          },
           model: 'gpt-4.1-mini',
+          plannerVersion: 'multistep-v1',
           reason: 'Agentic path generation is disabled because OPENAI_API_KEY is not configured on the server.',
         })),
       }),
@@ -304,26 +383,51 @@ describe('createApp', () => {
     expect(response.status).toBe(200);
     expect(response.body).toEqual({
       available: false,
+      capabilities: {
+        maxCaptureRounds: 2,
+        maxSegments: 4,
+        segmentTypes: ['hold', 'arc', 'dolly', 'pedestal'],
+        supportedPathModes: ['subject-centric'],
+        unsupportedPathModes: ['route-following', 'multi-subject', 'ambiguous'],
+      },
       model: 'gpt-4.1-mini',
+      plannerVersion: 'multistep-v1',
       reason: 'Agentic path generation is disabled because OPENAI_API_KEY is not configured on the server.',
     });
   });
 
-  it('returns path-generation planner errors as route errors', async () => {
+  it('returns path-generation planner errors as ground-route errors', async () => {
     const app = createTestApp({
       pathPlanner: createPathPlanner({
-        generatePathPlan: vi.fn(async () => {
+        groundPathIntent: vi.fn(async () => {
           throw new PathGenerationError(400, 'The planner could not localize the truck.');
         }),
       }),
     });
 
     const response = await request(app)
-      .post('/api/path/generate')
-      .send(createPathGenerationRequest());
+      .post('/api/path/ground')
+      .send(createPathGenerationGroundRequest());
 
     expect(response.status).toBe(400);
     expect(response.body).toEqual({ error: 'The planner could not localize the truck.' });
+  });
+
+  it('returns path-generation planner errors as compose-route errors', async () => {
+    const app = createTestApp({
+      pathPlanner: createPathPlanner({
+        composePathPlan: vi.fn(async () => {
+          throw new PathGenerationError(400, 'Route-following prompts are not supported in v1.');
+        }),
+      }),
+    });
+
+    const response = await request(app)
+      .post('/api/path/compose')
+      .send(createPathGenerationComposeRequest());
+
+    expect(response.status).toBe(400);
+    expect(response.body).toEqual({ error: 'Route-following prompts are not supported in v1.' });
   });
 });
 
@@ -341,8 +445,9 @@ function binaryParser(
   });
 }
 
-function createPathGenerationRequest() {
+function createPathGenerationGroundRequest() {
   return {
+    captureRound: 1,
     captures: [
       {
         camera: {
@@ -383,5 +488,40 @@ function createPathGenerationRequest() {
       max: { x: 2, y: 2, z: 2 },
       min: { x: -2, y: -2, z: -2 },
     },
+  };
+}
+
+function createPathGenerationComposeRequest() {
+  return {
+    currentCamera: {
+      aspect: 16 / 9,
+      fov: 60,
+      position: { x: 4, y: 1, z: 0 },
+      quaternion: { x: 0, y: 0, z: 0, w: 1 },
+    },
+    groundedSubject: {
+      anchor: { x: 0, y: 0.5, z: 0 },
+      basisForward: { x: 0, y: 0, z: -1 },
+      basisUp: { x: 0, y: 1, z: 0 },
+      captureCount: 4,
+      confidence: 0.84,
+      meanResidual: 0.08,
+      sceneScale: 8,
+    },
+    intent: {
+      continuousPath: true,
+      orientationPreference: 'look-at-subject',
+      pathMode: 'subject-centric',
+      requestedMoveTypes: ['arc', 'hold'],
+      subjectHint: 'truck',
+      targetDurationSeconds: 10,
+      tone: 'cinematic',
+    },
+    pathTail: null,
+    sceneBounds: {
+      max: { x: 2, y: 2, z: 2 },
+      min: { x: -2, y: -2, z: -2 },
+    },
+    validationFeedback: [],
   };
 }

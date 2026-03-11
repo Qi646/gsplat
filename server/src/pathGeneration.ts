@@ -1,6 +1,28 @@
 export type AgenticOrientationMode = 'look-at-subject' | 'look-forward';
 export type AgenticOrbitDirection = 'clockwise' | 'counterclockwise';
 export type AgenticVerticalBias = 'low' | 'mid' | 'high';
+export type PathGenerationPathMode = 'subject-centric' | 'route-following' | 'multi-subject' | 'ambiguous';
+export type PathGenerationSegmentType = 'hold' | 'arc' | 'dolly' | 'pedestal';
+export type PathGenerationDollyDirection = 'in' | 'out';
+export type PathGenerationPedestalDirection = 'up' | 'down';
+
+export interface PathGenerationVector3 {
+  x: number;
+  y: number;
+  z: number;
+}
+
+export interface PathGenerationQuaternion {
+  w: number;
+  x: number;
+  y: number;
+  z: number;
+}
+
+export interface PathGenerationBounds {
+  max: PathGenerationVector3;
+  min: PathGenerationVector3;
+}
 
 export interface PathGenerationCamera {
   aspect: number;
@@ -18,14 +40,6 @@ export interface PathGenerationCapture {
   width: number;
 }
 
-export interface PathGenerationRequest {
-  captures: PathGenerationCapture[];
-  currentCamera: PathGenerationCamera;
-  pathTail: PathGenerationPathTail | null;
-  prompt: string;
-  sceneBounds: PathGenerationBounds;
-}
-
 export interface PathGenerationPathTail {
   fov: number;
   position: PathGenerationVector3;
@@ -33,24 +47,14 @@ export interface PathGenerationPathTail {
   time: number;
 }
 
-export interface PathGenerationBounds {
-  max: PathGenerationVector3;
-  min: PathGenerationVector3;
-}
-
-export interface PathGenerationResponse {
-  shotSpec: PathGenerationShotSpec;
-  subjectLocalizations: PathGenerationSubjectLocalization[];
-  warning?: string;
-}
-
-export interface PathGenerationShotSpec {
-  pathType: 'orbit';
-  orientationMode: AgenticOrientationMode;
-  fullOrbit: boolean;
-  direction?: AgenticOrbitDirection;
-  durationSeconds?: number;
-  verticalBias?: AgenticVerticalBias;
+export interface PathGenerationPromptIntent {
+  continuousPath: true;
+  orientationPreference: AgenticOrientationMode;
+  pathMode: PathGenerationPathMode;
+  requestedMoveTypes: PathGenerationSegmentType[];
+  subjectHint: string | null;
+  targetDurationSeconds: number | null;
+  tone: string | null;
 }
 
 export interface PathGenerationSubjectLocalization {
@@ -60,9 +64,103 @@ export interface PathGenerationSubjectLocalization {
   pixelY: number;
 }
 
+export interface PathGenerationGroundRequest {
+  captureRound: number;
+  captures: PathGenerationCapture[];
+  currentCamera: PathGenerationCamera;
+  pathTail: PathGenerationPathTail | null;
+  prompt: string;
+  sceneBounds: PathGenerationBounds;
+}
+
+export interface PathGenerationGroundResponse {
+  intent: PathGenerationPromptIntent;
+  pathMode: PathGenerationPathMode;
+  subjectLocalizations: PathGenerationSubjectLocalization[];
+  unsupportedReason?: string;
+  warning?: string;
+}
+
+export interface PathGenerationGroundedSubject {
+  anchor: PathGenerationVector3;
+  basisForward: PathGenerationVector3;
+  basisUp: PathGenerationVector3;
+  captureCount: number;
+  confidence: number;
+  meanResidual: number;
+  sceneScale: number;
+}
+
+export interface PathGenerationBaseSegmentPlan {
+  durationSeconds: number;
+  fovDelta?: number;
+  lookMode: AgenticOrientationMode;
+  segmentType: PathGenerationSegmentType;
+}
+
+export interface PathGenerationHoldSegmentPlan extends PathGenerationBaseSegmentPlan {
+  segmentType: 'hold';
+}
+
+export interface PathGenerationArcSegmentPlan extends PathGenerationBaseSegmentPlan {
+  direction?: AgenticOrbitDirection;
+  segmentType: 'arc';
+  sweepDegrees?: number;
+  verticalBias?: AgenticVerticalBias;
+}
+
+export interface PathGenerationDollySegmentPlan extends PathGenerationBaseSegmentPlan {
+  distanceScale?: number;
+  segmentType: 'dolly';
+  travelDirection?: PathGenerationDollyDirection;
+  verticalBias?: AgenticVerticalBias;
+}
+
+export interface PathGenerationPedestalSegmentPlan extends PathGenerationBaseSegmentPlan {
+  heightScale?: number;
+  segmentType: 'pedestal';
+  travelDirection?: PathGenerationPedestalDirection;
+}
+
+export type PathGenerationSegmentPlan =
+  | PathGenerationHoldSegmentPlan
+  | PathGenerationArcSegmentPlan
+  | PathGenerationDollySegmentPlan
+  | PathGenerationPedestalSegmentPlan;
+
+export interface PathGenerationComposeRequest {
+  currentCamera: PathGenerationCamera;
+  groundedSubject: PathGenerationGroundedSubject;
+  intent: PathGenerationPromptIntent;
+  pathTail: PathGenerationPathTail | null;
+  sceneBounds: PathGenerationBounds;
+  validationFeedback?: string[];
+}
+
+export interface PathGenerationComposeResponse {
+  segments: PathGenerationSegmentPlan[];
+  summary: string;
+  warning?: string;
+}
+
+export interface PathGenerationPlannerStatus {
+  available: boolean;
+  capabilities: {
+    maxCaptureRounds: number;
+    maxSegments: number;
+    segmentTypes: PathGenerationSegmentType[];
+    supportedPathModes: PathGenerationPathMode[];
+    unsupportedPathModes: PathGenerationPathMode[];
+  };
+  model: string | null;
+  plannerVersion: 'multistep-v1';
+  reason: string | null;
+}
+
 export interface PathGenerationPlanner {
-  generatePathPlan: (request: unknown) => Promise<PathGenerationResponse>;
+  composePathPlan: (request: unknown) => Promise<PathGenerationComposeResponse>;
   getStatus: () => PathGenerationPlannerStatus;
+  groundPathIntent: (request: unknown) => Promise<PathGenerationGroundResponse>;
 }
 
 export interface OpenAIVisionPathPlannerOptions {
@@ -72,28 +170,7 @@ export interface OpenAIVisionPathPlannerOptions {
   model?: string;
 }
 
-export interface PathGenerationVector3 {
-  x: number;
-  y: number;
-  z: number;
-}
-
-export interface PathGenerationQuaternion {
-  w: number;
-  x: number;
-  y: number;
-  z: number;
-}
-
-export interface PathGenerationPlannerStatus {
-  available: boolean;
-  model: string | null;
-  reason: string | null;
-}
-
 interface ChatCompletionResponse {
-  output?: unknown;
-  output_text?: unknown;
   choices?: Array<{
     finish_reason?: string | null;
     message?: {
@@ -101,13 +178,8 @@ interface ChatCompletionResponse {
       refusal?: unknown;
     };
   }>;
-}
-
-interface ModelPathPlan {
-  shotSpec: PathGenerationShotSpec | null;
-  subjectLocalizations: PathGenerationSubjectLocalization[];
-  unsupportedReason?: string;
-  warning?: string;
+  output?: unknown;
+  output_text?: unknown;
 }
 
 interface ChatCompletionRequestCompatibility {
@@ -134,7 +206,14 @@ const DEFAULT_CHAT_COMPLETION_REQUEST_COMPATIBILITY: ChatCompletionRequestCompat
   tokenBudgetParameter: 'max_completion_tokens',
 };
 const MAX_CHAT_COMPLETION_COMPATIBILITY_ATTEMPTS = 4;
-const PLANNER_COMPLETION_TOKEN_LIMIT = 1600;
+const PLANNER_COMPLETION_TOKEN_LIMIT = 1800;
+const STATUS_CAPABILITIES = {
+  maxCaptureRounds: 2,
+  maxSegments: 4,
+  segmentTypes: ['hold', 'arc', 'dolly', 'pedestal'] as PathGenerationSegmentType[],
+  supportedPathModes: ['subject-centric'] as PathGenerationPathMode[],
+  unsupportedPathModes: ['route-following', 'multi-subject', 'ambiguous'] as PathGenerationPathMode[],
+};
 
 export class PathGenerationError extends Error {
   readonly statusCode: number;
@@ -166,64 +245,87 @@ export class OpenAIVisionPathPlanner implements PathGenerationPlanner {
     if (!apiKey) {
       return {
         available: false,
+        capabilities: STATUS_CAPABILITIES,
         model,
+        plannerVersion: 'multistep-v1',
         reason: 'Agentic path generation is disabled because OPENAI_API_KEY is not configured on the server.',
       };
     }
 
     return {
       available: true,
+      capabilities: STATUS_CAPABILITIES,
       model,
+      plannerVersion: 'multistep-v1',
       reason: null,
     };
   }
 
-  async generatePathPlan(request: unknown): Promise<PathGenerationResponse> {
-    const parsedRequest = parsePathGenerationRequest(request);
+  async groundPathIntent(request: unknown): Promise<PathGenerationGroundResponse> {
+    const parsedRequest = parsePathGenerationGroundRequest(request);
+    const apiKey = this.requireApiKey();
+    const completion = await this.requestChatCompletion(
+      buildGroundChatCompletionRequestBody(parsedRequest, this.resolveModel()),
+      apiKey,
+    );
+    const response = parsePathGenerationGroundModelResponse(
+      JSON.parse(stripJsonFences(extractCompletionText(completion))) as unknown,
+    );
+
+    if (response.pathMode !== 'subject-centric' && !response.unsupportedReason) {
+      response.unsupportedReason = defaultUnsupportedReasonForPathMode(response.pathMode);
+    }
+
+    return response;
+  }
+
+  async composePathPlan(request: unknown): Promise<PathGenerationComposeResponse> {
+    const parsedRequest = parsePathGenerationComposeRequest(request);
+    const apiKey = this.requireApiKey();
+
+    if (parsedRequest.intent.pathMode !== 'subject-centric') {
+      throw new PathGenerationError(
+        400,
+        defaultUnsupportedReasonForPathMode(parsedRequest.intent.pathMode),
+      );
+    }
+
+    const completion = await this.requestChatCompletion(
+      buildComposeChatCompletionRequestBody(parsedRequest, this.resolveModel()),
+      apiKey,
+    );
+    return parsePathGenerationComposeModelResponse(
+      JSON.parse(stripJsonFences(extractCompletionText(completion))) as unknown,
+    );
+  }
+
+  private resolveModel(): string {
+    return this.model ?? process.env['OPENAI_MODEL'] ?? DEFAULT_OPENAI_MODEL;
+  }
+
+  private requireApiKey(): string {
     const status = this.getStatus();
     if (!status.available) {
       throw new PathGenerationError(503, status.reason ?? 'Agentic path generation is not configured.');
     }
+
     const apiKey = this.apiKey ?? process.env['OPENAI_API_KEY'];
     if (!apiKey) {
       throw new PathGenerationError(503, 'Agentic path generation is not configured.');
     }
-    const payload = await this.requestChatCompletion(parsedRequest, apiKey);
-    const completionText = extractCompletionText(payload);
-    const parsedPlan = parseModelPathPlan(JSON.parse(stripJsonFences(completionText)) as unknown);
-
-    if (parsedPlan.unsupportedReason) {
-      throw new PathGenerationError(400, parsedPlan.unsupportedReason);
-    }
-
-    if (!parsedPlan.shotSpec) {
-      throw new PathGenerationError(502, 'Vision planner did not return a usable orbit shot specification.');
-    }
-
-    if (parsedPlan.subjectLocalizations.length < 2) {
-      throw new PathGenerationError(
-        400,
-        'The planner could not localize the requested subject in enough captured views.',
-      );
-    }
-
-    return {
-      shotSpec: parsedPlan.shotSpec,
-      subjectLocalizations: parsedPlan.subjectLocalizations,
-      warning: parsedPlan.warning,
-    };
+    return apiKey;
   }
 
   private async requestChatCompletion(
-    request: PathGenerationRequest,
+    body: UnknownRecord,
     apiKey: string,
   ): Promise<ChatCompletionResponse> {
-    const model = this.model ?? process.env['OPENAI_MODEL'] ?? DEFAULT_OPENAI_MODEL;
+    const model = this.resolveModel();
     let compatibility = getInitialChatCompletionRequestCompatibility(model);
 
     for (let attemptIndex = 0; attemptIndex < MAX_CHAT_COMPLETION_COMPATIBILITY_ATTEMPTS; attemptIndex += 1) {
       const response = await this.fetchChatCompletion(
-        buildChatCompletionRequestBody(request, model, compatibility),
+        applyCompatibilityToChatCompletionBody(body, compatibility),
         apiKey,
       );
       if (response.ok) {
@@ -245,10 +347,7 @@ export class OpenAIVisionPathPlanner implements PathGenerationPlanner {
     );
   }
 
-  private async fetchChatCompletion(
-    body: UnknownRecord,
-    apiKey: string,
-  ): Promise<Response> {
+  private async fetchChatCompletion(body: UnknownRecord, apiKey: string): Promise<Response> {
     return await this.fetchImpl(
       `${(this.baseUrl ?? process.env['OPENAI_BASE_URL'] ?? DEFAULT_OPENAI_BASE_URL).replace(/\/$/, '')}/chat/completions`,
       {
@@ -263,40 +362,18 @@ export class OpenAIVisionPathPlanner implements PathGenerationPlanner {
   }
 }
 
-export function parseModelPathPlan(input: unknown): ModelPathPlan {
+export function parsePathGenerationGroundRequest(input: unknown): PathGenerationGroundRequest {
   if (!isRecord(input)) {
-    throw new PathGenerationError(502, 'Vision planner returned a non-object response.');
-  }
-
-  const rawLocalizations = input['subjectLocalizations'];
-  if (!Array.isArray(rawLocalizations)) {
-    throw new PathGenerationError(502, 'Vision planner response is missing subjectLocalizations.');
-  }
-
-  return {
-    shotSpec: input['shotSpec'] === null || input['shotSpec'] === undefined ? null : parseShotSpec(input['shotSpec']),
-    subjectLocalizations: rawLocalizations.map((entry, index) =>
-      parseLocalization(entry, `subjectLocalizations[${index}]`)),
-    unsupportedReason: typeof input['unsupportedReason'] === 'string' && input['unsupportedReason'].trim().length > 0
-      ? input['unsupportedReason']
-      : undefined,
-    warning: typeof input['warning'] === 'string' && input['warning'].trim().length > 0
-      ? input['warning']
-      : undefined,
-  };
-}
-
-export function parsePathGenerationRequest(input: unknown): PathGenerationRequest {
-  if (!isRecord(input)) {
-    throw new PathGenerationError(400, 'Path-generation request body must be a JSON object.');
+    throw new PathGenerationError(400, 'Path-generation ground request body must be a JSON object.');
   }
 
   const rawCaptures = input['captures'];
   if (!Array.isArray(rawCaptures) || rawCaptures.length < 2) {
-    throw new PathGenerationError(400, 'Path-generation requests must include at least two captures.');
+    throw new PathGenerationError(400, 'Ground requests must include at least two captures.');
   }
 
   return {
+    captureRound: readIntegerInRange(input, 'captureRound', 'request', 1, STATUS_CAPABILITIES.maxCaptureRounds),
     captures: rawCaptures.map((capture, index) => parseCapture(capture, `captures[${index}]`)),
     currentCamera: parseCamera(input['currentCamera'], 'currentCamera'),
     pathTail: input['pathTail'] === null || input['pathTail'] === undefined
@@ -307,56 +384,162 @@ export function parsePathGenerationRequest(input: unknown): PathGenerationReques
   };
 }
 
-function buildSystemPrompt(): string {
+export function parsePathGenerationComposeRequest(input: unknown): PathGenerationComposeRequest {
+  if (!isRecord(input)) {
+    throw new PathGenerationError(400, 'Path-generation compose request body must be a JSON object.');
+  }
+
+  const rawValidationFeedback = input['validationFeedback'];
+  return {
+    currentCamera: parseCamera(input['currentCamera'], 'currentCamera'),
+    groundedSubject: parseGroundedSubject(input['groundedSubject'], 'groundedSubject'),
+    intent: parsePromptIntent(input['intent'], 'intent'),
+    pathTail: input['pathTail'] === null || input['pathTail'] === undefined
+      ? null
+      : parsePathTail(input['pathTail'], 'pathTail'),
+    sceneBounds: parseBounds(input['sceneBounds'], 'sceneBounds'),
+    validationFeedback: rawValidationFeedback === undefined
+      ? undefined
+      : parseValidationFeedback(rawValidationFeedback, 'validationFeedback'),
+  };
+}
+
+export function parsePathGenerationGroundModelResponse(input: unknown): PathGenerationGroundResponse {
+  if (!isRecord(input)) {
+    throw new PathGenerationError(502, 'Vision planner returned a non-object grounding response.');
+  }
+
+  const pathMode = parsePathMode(input['pathMode'], 'pathMode');
+  const rawLocalizations = input['subjectLocalizations'];
+  if (!Array.isArray(rawLocalizations)) {
+    throw new PathGenerationError(502, 'Vision planner grounding response is missing subjectLocalizations.');
+  }
+
+  const intent = parsePromptIntent(input['intent'], 'intent', pathMode);
+  return {
+    intent: { ...intent, pathMode },
+    pathMode,
+    subjectLocalizations: rawLocalizations.map((entry, index) =>
+      parseLocalization(entry, `subjectLocalizations[${index}]`)),
+    unsupportedReason: readOptionalNonEmptyString(input, 'unsupportedReason'),
+    warning: readOptionalNonEmptyString(input, 'warning'),
+  };
+}
+
+export function parsePathGenerationComposeModelResponse(input: unknown): PathGenerationComposeResponse {
+  if (!isRecord(input)) {
+    throw new PathGenerationError(502, 'Vision planner returned a non-object composition response.');
+  }
+
+  const rawSegments = input['segments'];
+  if (!Array.isArray(rawSegments) || rawSegments.length === 0) {
+    throw new PathGenerationError(502, 'Vision planner composition response is missing segments.');
+  }
+
+  return {
+    segments: rawSegments
+      .slice(0, STATUS_CAPABILITIES.maxSegments)
+      .map((segment, index) => parseSegmentPlan(segment, `segments[${index}]`)),
+    summary: readOptionalNonEmptyString(input, 'summary') ?? 'Generated a multi-step subject-centric draft path.',
+    warning: readOptionalNonEmptyString(input, 'warning'),
+  };
+}
+
+function buildGroundSystemPrompt(): string {
   return [
-    'You are a camera path planner for a 3D scene viewer.',
-    'You only support orbit-style shots.',
-    'Return JSON only with keys shotSpec, subjectLocalizations, warning, unsupportedReason.',
-    'shotSpec.pathType must be "orbit" when the prompt is supported.',
-    'orientationMode must be "look-at-subject" when the user says the camera should stay focused on the subject.',
-    'orientationMode must be "look-forward" when the user says the camera should face forward or along the path.',
-    'Set fullOrbit to true only when the user explicitly requests a full circle, all the way around, or 360.',
-    'direction may be omitted when the user does not specify clockwise or counterclockwise.',
-    'verticalBias must be exactly "low", "mid", or "high" when included; omit it unless the user clearly asks for a specific vertical angle.',
-    'subjectLocalizations should contain one entry per image where the requested subject is visible, with captureId, pixelX, pixelY, confidence.',
-    'If the prompt requests a non-orbit motion, set unsupportedReason and leave shotSpec null.',
-    'Do not invent captures that are not present in the input.',
+    'You are the grounding step of a camera path planner for a 3D scene viewer.',
+    'Classify the prompt into exactly one pathMode: "subject-centric", "route-following", "multi-subject", or "ambiguous".',
+    'Only "subject-centric" is supported in v1.',
+    'Route-following prompts include weave through, pass between, move down a corridor, or follow a route through space.',
+    'Multi-subject prompts include visiting multiple landmarks or switching primary subjects.',
+    'Ambiguous means there is not one clear primary subject or movement request.',
+    'Return JSON only with keys pathMode, intent, subjectLocalizations, warning, unsupportedReason.',
+    'intent must contain pathMode, continuousPath, subjectHint, tone, orientationPreference, targetDurationSeconds, requestedMoveTypes.',
+    'For supported prompts, subjectLocalizations should include every capture where the primary subject is visible.',
+    'Never invent captures that are not present in the input.',
+    'When unsupported, set unsupportedReason and leave subjectLocalizations empty unless a clear primary subject is still visible.',
+    'requestedMoveTypes may only contain hold, arc, dolly, pedestal.',
+    'Map orbit, turntable, circle-around requests to "arc"; push-in/pull-back to "dolly"; rise/drop to "pedestal"; pause/linger to "hold".',
   ].join(' ');
 }
 
-function buildChatCompletionRequestBody(
-  request: PathGenerationRequest,
+function buildComposeSystemPrompt(): string {
+  return [
+    'You are the composition step of a camera path planner for a 3D scene viewer.',
+    'The prompt has already been classified as subject-centric and the subject is already grounded in 3D.',
+    'Return JSON only with keys summary, segments, warning.',
+    'Use at most 4 ordered segments and only these segment types: hold, arc, dolly, pedestal.',
+    'Every segment must include segmentType, durationSeconds, lookMode.',
+    'Arc segments may include sweepDegrees, direction, verticalBias.',
+    'Dolly segments may include travelDirection, distanceScale, verticalBias.',
+    'Pedestal segments may include travelDirection and heightScale.',
+    'Hold segments may include fovDelta.',
+    'Do not output raw keyframes.',
+    'Keep the overall path cinematic, continuous, and compatible with a single primary subject.',
+    'If validationFeedback is present, adjust the segment choices to address those failures.',
+  ].join(' ');
+}
+
+function buildGroundChatCompletionRequestBody(
+  request: PathGenerationGroundRequest,
   model: string,
-  compatibility: ChatCompletionRequestCompatibility,
 ): UnknownRecord {
-  const body: UnknownRecord = {
-    [compatibility.tokenBudgetParameter]: PLANNER_COMPLETION_TOKEN_LIMIT,
+  return {
     messages: [
       {
-        content: buildSystemPrompt(),
+        content: buildGroundSystemPrompt(),
         role: 'system',
       },
       {
-        content: buildUserContent(request),
+        content: buildGroundUserContent(request),
         role: 'user',
       },
     ],
     model,
   };
+}
+
+function buildComposeChatCompletionRequestBody(
+  request: PathGenerationComposeRequest,
+  model: string,
+): UnknownRecord {
+  return {
+    messages: [
+      {
+        content: buildComposeSystemPrompt(),
+        role: 'system',
+      },
+      {
+        content: buildComposeUserContent(request),
+        role: 'user',
+      },
+    ],
+    model,
+  };
+}
+
+function applyCompatibilityToChatCompletionBody(
+  body: UnknownRecord,
+  compatibility: ChatCompletionRequestCompatibility,
+): UnknownRecord {
+  const nextBody: UnknownRecord = {
+    ...body,
+    [compatibility.tokenBudgetParameter]: PLANNER_COMPLETION_TOKEN_LIMIT,
+  };
 
   if (compatibility.includeResponseFormat) {
-    body['response_format'] = { type: 'json_object' };
+    nextBody['response_format'] = { type: 'json_object' };
   }
 
   if (compatibility.includeTemperature) {
-    body['temperature'] = 0.2;
+    nextBody['temperature'] = 0.2;
   }
 
   if (compatibility.includeReasoningEffort) {
-    body['reasoning_effort'] = 'minimal';
+    nextBody['reasoning_effort'] = 'minimal';
   }
 
-  return body;
+  return nextBody;
 }
 
 function getInitialChatCompletionRequestCompatibility(model: string): ChatCompletionRequestCompatibility {
@@ -367,11 +550,12 @@ function getInitialChatCompletionRequestCompatibility(model: string): ChatComple
   };
 }
 
-function buildUserContent(request: PathGenerationRequest): Array<Record<string, unknown>> {
+function buildGroundUserContent(request: PathGenerationGroundRequest): Array<Record<string, unknown>> {
   const content: Array<Record<string, unknown>> = [
     {
       text: [
         `Prompt: ${request.prompt}`,
+        `Capture round: ${request.captureRound}`,
         `Scene bounds: ${JSON.stringify(request.sceneBounds)}`,
         `Current camera: ${JSON.stringify(request.currentCamera)}`,
         `Path tail: ${JSON.stringify(request.pathTail)}`,
@@ -398,6 +582,17 @@ function buildUserContent(request: PathGenerationRequest): Array<Record<string, 
   }
 
   return content;
+}
+
+function buildComposeUserContent(request: PathGenerationComposeRequest): string {
+  return [
+    `Intent: ${JSON.stringify(request.intent)}`,
+    `Grounded subject: ${JSON.stringify(request.groundedSubject)}`,
+    `Scene bounds: ${JSON.stringify(request.sceneBounds)}`,
+    `Current camera: ${JSON.stringify(request.currentCamera)}`,
+    `Path tail: ${JSON.stringify(request.pathTail)}`,
+    `Validation feedback: ${JSON.stringify(request.validationFeedback ?? [])}`,
+  ].join('\n');
 }
 
 function extractCompletionText(payload: ChatCompletionResponse): string {
@@ -571,12 +766,20 @@ function parseCapture(value: unknown, context: string): PathGenerationCapture {
   };
 }
 
-function parseDirection(value: unknown, context: string): AgenticOrbitDirection {
-  if (value !== 'clockwise' && value !== 'counterclockwise') {
-    throw new PathGenerationError(502, `${context} must be "clockwise" or "counterclockwise".`);
+function parseGroundedSubject(value: unknown, context: string): PathGenerationGroundedSubject {
+  if (!isRecord(value)) {
+    throw new PathGenerationError(400, `${context} must be an object.`);
   }
 
-  return value;
+  return {
+    anchor: parseVector3(value['anchor'], `${context}.anchor`),
+    basisForward: parseVector3(value['basisForward'], `${context}.basisForward`),
+    basisUp: parseVector3(value['basisUp'], `${context}.basisUp`),
+    captureCount: readPositiveNumber(value, 'captureCount', context),
+    confidence: readFiniteNumber(value, 'confidence', context),
+    meanResidual: readFiniteNumber(value, 'meanResidual', context),
+    sceneScale: readPositiveNumber(value, 'sceneScale', context),
+  };
 }
 
 function parseLocalization(value: unknown, context: string): PathGenerationSubjectLocalization {
@@ -592,6 +795,30 @@ function parseLocalization(value: unknown, context: string): PathGenerationSubje
   };
 }
 
+function parsePathMode(value: unknown, context: string): PathGenerationPathMode {
+  if (value === 'subject-centric' || value === 'route-following' || value === 'multi-subject' || value === 'ambiguous') {
+    return value;
+  }
+
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (normalized.includes('route') || normalized.includes('weave') || normalized.includes('corridor')) {
+      return 'route-following';
+    }
+    if (normalized.includes('multi')) {
+      return 'multi-subject';
+    }
+    if (normalized.includes('ambig')) {
+      return 'ambiguous';
+    }
+    if (normalized.includes('subject')) {
+      return 'subject-centric';
+    }
+  }
+
+  throw new PathGenerationError(502, `${context} must be a supported path mode.`);
+}
+
 function parsePathTail(value: unknown, context: string): PathGenerationPathTail {
   if (!isRecord(value)) {
     throw new PathGenerationError(400, `${context} must be an object.`);
@@ -602,6 +829,33 @@ function parsePathTail(value: unknown, context: string): PathGenerationPathTail 
     position: parseVector3(value['position'], `${context}.position`),
     quaternion: parseQuaternion(value['quaternion'], `${context}.quaternion`),
     time: readFiniteNumber(value, 'time', context),
+  };
+}
+
+function parsePromptIntent(
+  value: unknown,
+  context: string,
+  fallbackPathMode?: PathGenerationPathMode,
+): PathGenerationPromptIntent {
+  if (!isRecord(value)) {
+    throw new PathGenerationError(502, `${context} must be an object.`);
+  }
+
+  const pathMode = value['pathMode'] === undefined
+    ? fallbackPathMode ?? 'subject-centric'
+    : parsePathMode(value['pathMode'], `${context}.pathMode`);
+
+  return {
+    continuousPath: true,
+    orientationPreference: parseOrientationMode(
+      value['orientationPreference'] ?? value['lookMode'] ?? 'look-at-subject',
+      `${context}.orientationPreference`,
+    ),
+    pathMode,
+    requestedMoveTypes: parseRequestedMoveTypes(value['requestedMoveTypes'], `${context}.requestedMoveTypes`),
+    subjectHint: readNullableString(value, 'subjectHint'),
+    targetDurationSeconds: readNullableFiniteNumber(value, 'targetDurationSeconds'),
+    tone: readNullableString(value, 'tone'),
   };
 }
 
@@ -618,40 +872,163 @@ function parseQuaternion(value: unknown, context: string): PathGenerationQuatern
   };
 }
 
-function parseShotSpec(value: unknown): PathGenerationShotSpec {
+function parseRequestedMoveTypes(value: unknown, context: string): PathGenerationSegmentType[] {
+  if (!Array.isArray(value)) {
+    return ['arc'];
+  }
+
+  const moves = value
+    .map(entry => coerceSegmentType(entry))
+    .filter((entry): entry is PathGenerationSegmentType => entry !== null);
+  return moves.length > 0 ? Array.from(new Set(moves)) : ['arc'];
+}
+
+function parseSegmentPlan(value: unknown, context: string): PathGenerationSegmentPlan {
   if (!isRecord(value)) {
-    throw new PathGenerationError(502, 'shotSpec must be an object.');
+    throw new PathGenerationError(502, `${context} must be an object.`);
   }
 
-  const pathType = readString(value, 'pathType', 'shotSpec');
-  if (pathType !== 'orbit') {
-    throw new PathGenerationError(502, `Unsupported shotSpec.pathType: ${pathType}`);
+  const segmentType = coerceSegmentType(value['segmentType']);
+  if (!segmentType) {
+    throw new PathGenerationError(502, `${context}.segmentType must be hold, arc, dolly, or pedestal.`);
   }
 
-  const orientationMode = readString(value, 'orientationMode', 'shotSpec');
-  if (orientationMode !== 'look-at-subject' && orientationMode !== 'look-forward') {
-    throw new PathGenerationError(502, `Unsupported shotSpec.orientationMode: ${orientationMode}`);
+  const baseSegment: PathGenerationBaseSegmentPlan = {
+    durationSeconds: readPositiveNumber(value, 'durationSeconds', context),
+    fovDelta: readOptionalFiniteNumber(value, 'fovDelta'),
+    lookMode: parseOrientationMode(value['lookMode'] ?? 'look-at-subject', `${context}.lookMode`),
+    segmentType,
+  };
+
+  if (segmentType === 'hold') {
+    return {
+      ...baseSegment,
+      segmentType,
+    };
   }
 
-  const fullOrbit = readBoolean(value, 'fullOrbit', 'shotSpec');
-  const directionValue = value['direction'];
-  const durationValue = value['durationSeconds'];
-  const verticalBiasValue = value['verticalBias'];
+  if (segmentType === 'arc') {
+    return {
+      ...baseSegment,
+      direction: value['direction'] === undefined ? undefined : parseDirection(value['direction'], `${context}.direction`),
+      segmentType,
+      sweepDegrees: readOptionalFiniteNumber(value, 'sweepDegrees'),
+      verticalBias: value['verticalBias'] === undefined
+        ? undefined
+        : parseVerticalBias(value['verticalBias'], `${context}.verticalBias`),
+    };
+  }
+
+  if (segmentType === 'dolly') {
+    return {
+      ...baseSegment,
+      distanceScale: readOptionalFiniteNumber(value, 'distanceScale'),
+      segmentType,
+      travelDirection: value['travelDirection'] === undefined
+        ? undefined
+        : parseDollyDirection(value['travelDirection'], `${context}.travelDirection`),
+      verticalBias: value['verticalBias'] === undefined
+        ? undefined
+        : parseVerticalBias(value['verticalBias'], `${context}.verticalBias`),
+    };
+  }
 
   return {
-    direction: directionValue === undefined || directionValue === null
+    ...baseSegment,
+    heightScale: readOptionalFiniteNumber(value, 'heightScale'),
+    segmentType,
+    travelDirection: value['travelDirection'] === undefined
       ? undefined
-      : parseDirection(directionValue, 'shotSpec.direction'),
-    durationSeconds: durationValue === undefined || durationValue === null
-      ? undefined
-      : readFiniteNumber(value, 'durationSeconds', 'shotSpec'),
-    fullOrbit,
-    orientationMode,
-    pathType: 'orbit',
-    verticalBias: verticalBiasValue === undefined || verticalBiasValue === null
-      ? undefined
-      : parseVerticalBias(verticalBiasValue, 'shotSpec.verticalBias'),
+      : parsePedestalDirection(value['travelDirection'], `${context}.travelDirection`),
   };
+}
+
+function coerceSegmentType(value: unknown): PathGenerationSegmentType | null {
+  if (value === 'hold' || value === 'arc' || value === 'dolly' || value === 'pedestal') {
+    return value;
+  }
+
+  if (typeof value !== 'string') {
+    return null;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  if (normalized === 'orbit' || normalized === 'turntable' || normalized === 'circle') {
+    return 'arc';
+  }
+  if (normalized === 'push-in' || normalized === 'push in' || normalized === 'pull-back' || normalized === 'pull back') {
+    return 'dolly';
+  }
+  if (normalized === 'crane' || normalized === 'rise' || normalized === 'drop') {
+    return 'pedestal';
+  }
+  if (normalized === 'pause' || normalized === 'linger' || normalized === 'still') {
+    return 'hold';
+  }
+
+  return null;
+}
+
+function parseDirection(value: unknown, context: string): AgenticOrbitDirection {
+  if (value === 'clockwise' || value === 'counterclockwise') {
+    return value;
+  }
+
+  throw new PathGenerationError(502, `${context} must be "clockwise" or "counterclockwise".`);
+}
+
+function parseDollyDirection(value: unknown, context: string): PathGenerationDollyDirection {
+  if (value === 'in' || value === 'out') {
+    return value;
+  }
+
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (normalized.includes('in') || normalized.includes('toward') || normalized.includes('closer')) {
+      return 'in';
+    }
+    if (normalized.includes('out') || normalized.includes('back') || normalized.includes('away')) {
+      return 'out';
+    }
+  }
+
+  throw new PathGenerationError(502, `${context} must be "in" or "out".`);
+}
+
+function parseOrientationMode(value: unknown, context: string): AgenticOrientationMode {
+  if (value === 'look-at-subject' || value === 'look-forward') {
+    return value;
+  }
+
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (normalized.includes('forward') || normalized.includes('along')) {
+      return 'look-forward';
+    }
+    if (normalized.includes('subject') || normalized.includes('focus') || normalized.includes('look-at')) {
+      return 'look-at-subject';
+    }
+  }
+
+  throw new PathGenerationError(502, `${context} must be "look-at-subject" or "look-forward".`);
+}
+
+function parsePedestalDirection(value: unknown, context: string): PathGenerationPedestalDirection {
+  if (value === 'up' || value === 'down') {
+    return value;
+  }
+
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (normalized.includes('up') || normalized.includes('rise') || normalized.includes('crane')) {
+      return 'up';
+    }
+    if (normalized.includes('down') || normalized.includes('drop') || normalized.includes('lower')) {
+      return 'down';
+    }
+  }
+
+  throw new PathGenerationError(502, `${context} must be "up" or "down".`);
 }
 
 function parseVector3(value: unknown, context: string): PathGenerationVector3 {
@@ -666,26 +1043,38 @@ function parseVector3(value: unknown, context: string): PathGenerationVector3 {
   };
 }
 
-function parseVerticalBias(value: unknown, context: string): AgenticVerticalBias {
-  if (value === 'low' || value === 'mid' || value === 'high') return value;
-  // Coerce common model synonyms rather than hard-failing
-  if (typeof value === 'string') {
-    const v = value.toLowerCase();
-    if (v === 'medium' || v === 'center' || v === 'middle' || v === 'normal' || v === 'neutral') return 'mid';
-    if (v === 'top' || v === 'upper' || v === 'elevated' || v === 'above') return 'high';
-    if (v === 'bottom' || v === 'lower' || v === 'ground' || v === 'below') return 'low';
+function parseValidationFeedback(value: unknown, context: string): string[] {
+  if (!Array.isArray(value)) {
+    throw new PathGenerationError(400, `${context} must be an array of strings.`);
   }
-  // Unknown value: default to mid (neutral) instead of hard-failing
-  return 'mid';
+
+  return value.map((entry, index) => {
+    if (typeof entry !== 'string' || entry.trim().length === 0) {
+      throw new PathGenerationError(400, `${context}[${index}] must be a non-empty string.`);
+    }
+    return entry.trim();
+  });
 }
 
-function readBoolean(record: UnknownRecord, key: string, context: string): boolean {
-  const value = record[key];
-  if (typeof value !== 'boolean') {
-    throw new PathGenerationError(400, `${context}.${key} must be a boolean.`);
+function parseVerticalBias(value: unknown, context: string): AgenticVerticalBias {
+  if (value === 'low' || value === 'mid' || value === 'high') {
+    return value;
   }
 
-  return value;
+  if (typeof value === 'string') {
+    const normalized = value.toLowerCase();
+    if (normalized === 'medium' || normalized === 'center' || normalized === 'middle' || normalized === 'neutral') {
+      return 'mid';
+    }
+    if (normalized === 'top' || normalized === 'upper' || normalized === 'elevated' || normalized === 'above') {
+      return 'high';
+    }
+    if (normalized === 'bottom' || normalized === 'lower' || normalized === 'ground' || normalized === 'below') {
+      return 'low';
+    }
+  }
+
+  throw new PathGenerationError(502, `${context} must be "low", "mid", or "high".`);
 }
 
 function readFiniteNumber(record: UnknownRecord, key: string, context: string): number {
@@ -697,6 +1086,40 @@ function readFiniteNumber(record: UnknownRecord, key: string, context: string): 
   return value;
 }
 
+function readIntegerInRange(
+  record: UnknownRecord,
+  key: string,
+  context: string,
+  min: number,
+  max: number,
+): number {
+  const value = readFiniteNumber(record, key, context);
+  if (!Number.isInteger(value) || value < min || value > max) {
+    throw new PathGenerationError(400, `${context}.${key} must be an integer between ${min} and ${max}.`);
+  }
+
+  return value;
+}
+
+function readOptionalFiniteNumber(record: UnknownRecord, key: string): number | undefined {
+  const value = record[key];
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    throw new PathGenerationError(502, `${key} must be a finite number when provided.`);
+  }
+  return value;
+}
+
+function readOptionalNonEmptyString(record: UnknownRecord, key: string): string | undefined {
+  const value = record[key];
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    return undefined;
+  }
+  return value.trim();
+}
+
 function readPositiveNumber(record: UnknownRecord, key: string, context: string): number {
   const value = readFiniteNumber(record, key, context);
   if (!(value > 0)) {
@@ -704,6 +1127,28 @@ function readPositiveNumber(record: UnknownRecord, key: string, context: string)
   }
 
   return value;
+}
+
+function readNullableFiniteNumber(record: UnknownRecord, key: string): number | null {
+  const value = record[key];
+  if (value === undefined || value === null) {
+    return null;
+  }
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    throw new PathGenerationError(502, `${key} must be a finite number when provided.`);
+  }
+  return value;
+}
+
+function readNullableString(record: UnknownRecord, key: string): string | null {
+  const value = record[key];
+  if (value === undefined || value === null) {
+    return null;
+  }
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    throw new PathGenerationError(502, `${key} must be a non-empty string when provided.`);
+  }
+  return value.trim();
 }
 
 function readString(record: UnknownRecord, key: string, context: string): string {
@@ -729,6 +1174,19 @@ function buildPlanningRequestFailure(statusCode: number, failureText: string): P
     502,
     `Vision planning request failed (${statusCode}): ${failureDetails.message.slice(0, 200)}`.trim(),
   );
+}
+
+function defaultUnsupportedReasonForPathMode(pathMode: PathGenerationPathMode): string {
+  if (pathMode === 'route-following') {
+    return 'Route-following prompts like weaving through geometry are not supported in agentic path v1.';
+  }
+  if (pathMode === 'multi-subject') {
+    return 'Multi-subject path prompts are not supported in agentic path v1.';
+  }
+  if (pathMode === 'ambiguous') {
+    return 'The prompt is too ambiguous for agentic path v1. Name one clear subject and one continuous camera move.';
+  }
+  return 'The prompt is not supported in agentic path v1.';
 }
 
 function parsePlannerRequestFailureDetails(failureText: string): PlannerRequestFailureDetails {

@@ -57,7 +57,7 @@ export function createApp(options: Partial<AppOptions> = {}): express.Express {
 
   app.use(applyCrossOriginIsolationHeaders);
   app.use(cors({ origin: corsOrigin }));
-  app.use(express.json({ limit: '8mb' }));
+  app.use(express.json({ limit: '12mb' }));
 
   app.get('/api/health', (_request, response) => {
     response.json({ ok: true });
@@ -90,12 +90,21 @@ export function createApp(options: Partial<AppOptions> = {}): express.Express {
     }
   });
 
-  app.post('/api/path/generate', async (request, response) => {
+  app.post('/api/path/ground', async (request, response) => {
     try {
-      const plan = await pathPlanner.generatePathPlan(request.body);
-      response.status(200).json(plan);
+      const groundResponse = await pathPlanner.groundPathIntent(request.body);
+      response.status(200).json(groundResponse);
     } catch (error) {
-      sendPathGenerationError(response, error, 'Could not generate camera path.');
+      sendPathGenerationError(response, error, 'Could not ground camera path intent.');
+    }
+  });
+
+  app.post('/api/path/compose', async (request, response) => {
+    try {
+      const composeResponse = await pathPlanner.composePathPlan(request.body);
+      response.status(200).json(composeResponse);
+    } catch (error) {
+      sendPathGenerationError(response, error, 'Could not compose camera path.');
     }
   });
 
