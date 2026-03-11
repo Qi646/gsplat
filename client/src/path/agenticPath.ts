@@ -246,18 +246,18 @@ const MIN_VECTOR_LENGTH_SQUARED = 1e-8;
 const ROUND_ONE_TOTAL_CAPTURE_COUNT = 7;
 const ROUND_TWO_TOTAL_CAPTURE_COUNT = 4;
 const ROUND_ONE_SCOUT_POSE_SPECS: ScoutPoseSpec[] = [
-  { pitchRadians: 0, yawRadians: THREE.MathUtils.degToRad(-24) },
   { pitchRadians: 0, yawRadians: THREE.MathUtils.degToRad(-12) },
+  { pitchRadians: 0, yawRadians: THREE.MathUtils.degToRad(-6) },
+  { pitchRadians: 0, yawRadians: THREE.MathUtils.degToRad(6) },
   { pitchRadians: 0, yawRadians: THREE.MathUtils.degToRad(12) },
-  { pitchRadians: 0, yawRadians: THREE.MathUtils.degToRad(24) },
-  { pitchRadians: THREE.MathUtils.degToRad(-10), yawRadians: 0 },
-  { pitchRadians: THREE.MathUtils.degToRad(10), yawRadians: 0 },
+  { pitchRadians: THREE.MathUtils.degToRad(-5), yawRadians: 0 },
+  { pitchRadians: THREE.MathUtils.degToRad(5), yawRadians: 0 },
 ];
 const ROUND_TWO_RESCAN_POSE_SPECS: ScoutPoseSpec[] = [
-  { pitchRadians: 0, yawRadians: THREE.MathUtils.degToRad(-8) },
-  { pitchRadians: 0, yawRadians: THREE.MathUtils.degToRad(8) },
-  { pitchRadians: THREE.MathUtils.degToRad(-8), yawRadians: 0 },
-  { pitchRadians: THREE.MathUtils.degToRad(8), yawRadians: 0 },
+  { pitchRadians: 0, yawRadians: THREE.MathUtils.degToRad(-4) },
+  { pitchRadians: 0, yawRadians: THREE.MathUtils.degToRad(4) },
+  { pitchRadians: THREE.MathUtils.degToRad(-4), yawRadians: 0 },
+  { pitchRadians: THREE.MathUtils.degToRad(4), yawRadians: 0 },
 ];
 const SEGMENT_KEYFRAME_COUNT: Record<AgenticPathSegmentType, number> = {
   arc: 4,
@@ -338,6 +338,7 @@ export class AgenticPathOrchestrator {
     const serializedCurrentCamera = serializePoseAsCamera(livePose, camera.aspect);
     const serializedBounds = serializeBounds(bounds);
     const serializedPathTail = serializePathTail(options.existingKeyframes.at(-1) ?? null);
+    const fallbackRescanTarget = estimateScoutFocusTarget(bounds, camera);
 
     try {
       const roundOneCaptures = await this.captureRoundOne(bounds, livePose, camera, timeout);
@@ -353,15 +354,43 @@ export class AgenticPathOrchestrator {
 
       let captures = [...roundOneCaptures];
       let localizations = [...groundResponse.subjectLocalizations];
+      let roundTwoUsed = false;
+
+      if (localizations.length < 2) {
+        const roundTwoCaptures = await this.captureRoundTwo(
+          fallbackRescanTarget,
+          bounds,
+          livePose,
+          camera,
+          timeout,
+          'current-view subject area',
+        );
+        captures = [...captures, ...roundTwoCaptures];
+
+        const roundTwoGroundResponse = await this.requestGround({
+          captureRound: 2,
+          captures: roundTwoCaptures,
+          currentCamera: serializedCurrentCamera,
+          pathTail: serializedPathTail,
+          prompt,
+          sceneBounds: serializedBounds,
+        }, timeout);
+        assertSupportedGroundResponse(roundTwoGroundResponse);
+        groundResponse = roundTwoGroundResponse;
+        localizations = [...localizations, ...roundTwoGroundResponse.subjectLocalizations];
+        roundTwoUsed = true;
+      }
+
       let groundedSubject = groundSubjectFromLocalizations(localizations, captures, bounds, basePose);
 
-      if (shouldRunTargetedRescan(groundedSubject)) {
+      if (!roundTwoUsed && shouldRunTargetedRescan(groundedSubject)) {
         const roundTwoCaptures = await this.captureRoundTwo(
           vectorFromSerializable(groundedSubject.anchor),
           bounds,
           livePose,
           camera,
           timeout,
+          'provisional subject anchor',
         );
         captures = [...captures, ...roundTwoCaptures];
 
@@ -500,6 +529,7 @@ export class AgenticPathOrchestrator {
     livePose: InterpolatedPose,
     camera: THREE.PerspectiveCamera,
     timeout: AgenticGenerationTimeout,
+    focusLabel: string,
   ): Promise<AgenticPathCapture[]> {
     const captures: AgenticPathCapture[] = [];
 
@@ -511,7 +541,7 @@ export class AgenticPathOrchestrator {
           2,
           index + 1,
           ROUND_TWO_TOTAL_CAPTURE_COUNT,
-          `Capturing targeted rescan ${index + 1}/4 around the provisional subject anchor.`,
+          `Capturing targeted rescan ${index + 1}/4 around the ${focusLabel}.`,
         );
         this.viewer.applyCameraPose(rescanPose);
         await this.renderFrame(timeout, 'capturing round 2 targeted rescans');
@@ -653,12 +683,12 @@ export function buildScoutCameraPoses(
   camera: THREE.PerspectiveCamera,
 ): InterpolatedPose[] {
   return buildCapturePosesAroundTarget(
-    bounds.getCenter(new THREE.Vector3()),
+    estimateScoutFocusTarget(bounds, camera),
     bounds,
     camera,
     ROUND_ONE_SCOUT_POSE_SPECS,
-    0.92,
-    1.08,
+    0.97,
+    1.03,
   );
 }
 
@@ -667,7 +697,7 @@ export function buildTargetedRescanPoses(
   bounds: THREE.Box3,
   camera: THREE.PerspectiveCamera,
 ): InterpolatedPose[] {
-  return buildCapturePosesAroundTarget(anchor, bounds, camera, ROUND_TWO_RESCAN_POSE_SPECS, 0.86, 1.02);
+  return buildCapturePosesAroundTarget(anchor, bounds, camera, ROUND_TWO_RESCAN_POSE_SPECS, 0.95, 1.01);
 }
 
 export function groundSubjectFromLocalizations(
@@ -1320,6 +1350,26 @@ function parseDirection(value: unknown, context: string): AgenticOrbitDirection 
     return value;
   }
 
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (
+      normalized === 'cw'
+      || normalized.includes('clockwise')
+      || normalized.includes('right')
+    ) {
+      return 'clockwise';
+    }
+    if (
+      normalized === 'ccw'
+      || normalized.includes('counterclockwise')
+      || normalized.includes('anticlockwise')
+      || normalized.includes('anti-clockwise')
+      || normalized.includes('left')
+    ) {
+      return 'counterclockwise';
+    }
+  }
+
   throw new AgenticPathGenerationError(`Planner response field ${context} must be clockwise or counterclockwise.`);
 }
 
@@ -1537,15 +1587,47 @@ function parseVerticalBias(value: unknown, context: string): AgenticVerticalBias
     return value;
   }
 
-  if (typeof value === 'string') {
-    const normalized = value.toLowerCase();
-    if (normalized === 'medium' || normalized === 'center' || normalized === 'middle' || normalized === 'neutral') {
-      return 'mid';
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    if (value <= -0.25) {
+      return 'low';
     }
-    if (normalized === 'top' || normalized === 'upper' || normalized === 'elevated' || normalized === 'above') {
+    if (value >= 0.25) {
       return 'high';
     }
-    if (normalized === 'bottom' || normalized === 'lower' || normalized === 'ground' || normalized === 'below') {
+    return 'mid';
+  }
+
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (
+      normalized.includes('mid')
+      || normalized.includes('medium')
+      || normalized.includes('center')
+      || normalized.includes('middle')
+      || normalized.includes('neutral')
+      || normalized.includes('eye')
+      || normalized.includes('level')
+    ) {
+      return 'mid';
+    }
+    if (
+      normalized.includes('high')
+      || normalized.includes('top')
+      || normalized.includes('upper')
+      || normalized.includes('elevated')
+      || normalized.includes('above')
+      || normalized.includes('overhead')
+    ) {
+      return 'high';
+    }
+    if (
+      normalized.includes('low')
+      || normalized.includes('bottom')
+      || normalized.includes('lower')
+      || normalized.includes('ground')
+      || normalized.includes('below')
+      || normalized.includes('under')
+    ) {
       return 'low';
     }
   }
@@ -1704,6 +1786,21 @@ async function readAgenticPathError(response: Response): Promise<string> {
   }
 
   return 'Could not generate an agentic camera-path draft from that prompt.';
+}
+
+function estimateScoutFocusTarget(bounds: THREE.Box3, camera: THREE.PerspectiveCamera): THREE.Vector3 {
+  const sceneCenter = bounds.getCenter(new THREE.Vector3());
+  const forward = getForwardVector(camera.quaternion);
+  const sceneDiagonal = Math.max(bounds.getSize(new THREE.Vector3()).length(), 1);
+  const projectedDistance = sceneCenter.clone().sub(camera.position).dot(forward);
+  const fallbackDistance = camera.position.distanceTo(sceneCenter);
+  const focusDistance = THREE.MathUtils.clamp(
+    projectedDistance > 0 ? projectedDistance : fallbackDistance,
+    0.75,
+    sceneDiagonal * 1.5,
+  );
+
+  return camera.position.clone().add(forward.multiplyScalar(focusDistance));
 }
 
 function resolveArcDirection(

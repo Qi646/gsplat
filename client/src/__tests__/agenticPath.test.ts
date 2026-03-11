@@ -176,12 +176,14 @@ describe('buildScoutCameraPoses', () => {
       new THREE.Vector3(2, 3, 2),
     );
     const camera = createCamera(new THREE.Vector3(5, 2, 0), bounds.getCenter(new THREE.Vector3()));
+    const currentDistance = camera.position.distanceTo(bounds.getCenter(new THREE.Vector3()));
 
     const poses = buildScoutCameraPoses(bounds, camera);
 
     expect(poses).toHaveLength(6);
     poses.forEach(pose => {
       expect(pose.position.distanceTo(camera.position)).toBeGreaterThan(0.2);
+      expect(pose.position.distanceTo(camera.position)).toBeLessThan(currentDistance * 0.3);
     });
   });
 
@@ -374,7 +376,14 @@ describe('AgenticPathOrchestrator', () => {
       },
       {
         segments: [
-          createSegmentPlan({ segmentType: 'arc', sweepDegrees: 90 }),
+          {
+            direction: 'right',
+            durationSeconds: 4,
+            lookMode: 'look-at-subject',
+            segmentType: 'arc',
+            sweepDegrees: 90,
+            verticalBias: 0.15,
+          },
           createSegmentPlan({ durationSeconds: 2, segmentType: 'hold' }),
         ],
         summary: 'Repaired draft.',
@@ -433,6 +442,63 @@ describe('AgenticPathOrchestrator', () => {
       'repairing',
       'validating',
     ]);
+  });
+
+  it('uses the rescue round when only the current view localizes the subject initially', async () => {
+    installCapturePipelineStubs();
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      callback(0);
+      return 1;
+    });
+
+    const progressStages: string[] = [];
+    const { viewer } = createMockViewer();
+    let groundCallCount = 0;
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith('/api/path/ground')) {
+        groundCallCount += 1;
+        const request = JSON.parse(String(init?.body ?? '{}')) as { captures: AgenticPathCapture[] };
+        const subject = new THREE.Vector3(0, 0.5, 0);
+        const captures = groundCallCount === 1 ? request.captures.slice(0, 1) : request.captures;
+        return new Response(JSON.stringify(createGroundResponse(
+          'subject-centric',
+          captures.map(capture => projectPoint(subject, capture)),
+        )), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        });
+      }
+
+      return new Response(JSON.stringify({
+        segments: [
+          createSegmentPlan({ segmentType: 'arc', sweepDegrees: 90 }),
+          createSegmentPlan({ durationSeconds: 2, segmentType: 'hold' }),
+        ],
+        summary: 'Recovered draft.',
+      }), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 200,
+      });
+    }) as unknown as typeof fetch;
+
+    const orchestrator = new AgenticPathOrchestrator({
+      fetchImpl,
+      onProgress: progress => {
+        progressStages.push(progress.stage);
+      },
+      viewer,
+    });
+
+    const draft = await orchestrator.generateDraft({
+      existingKeyframes: [],
+      prompt: 'Create a cinematic arc around the truck and then hold.',
+    });
+
+    expect(draft.summary).toBe('Recovered draft.');
+    expect(groundCallCount).toBe(2);
+    expect(progressStages).toContain('capture-round-2');
+    expect(progressStages.filter(stage => stage === 'grounding')).toHaveLength(2);
   });
 
   it('stops on unsupported route-following prompts', async () => {

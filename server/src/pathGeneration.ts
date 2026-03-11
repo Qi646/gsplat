@@ -198,7 +198,7 @@ type TokenBudgetParameter = 'max_completion_tokens' | 'max_tokens';
 type UnknownRecord = Record<string, unknown>;
 
 const DEFAULT_OPENAI_BASE_URL = 'https://api.openai.com/v1';
-const DEFAULT_OPENAI_MODEL = 'gpt-4.1-mini';
+const DEFAULT_OPENAI_MODEL = 'gpt-5-mini';
 const DEFAULT_CHAT_COMPLETION_REQUEST_COMPATIBILITY: ChatCompletionRequestCompatibility = {
   includeReasoningEffort: false,
   includeResponseFormat: true,
@@ -480,6 +480,8 @@ function buildComposeSystemPrompt(): string {
     'Dolly segments may include travelDirection, distanceScale, verticalBias.',
     'Pedestal segments may include travelDirection and heightScale.',
     'Hold segments may include fovDelta.',
+    'When verticalBias is present, it must be the string "low", "mid", or "high"; never emit numeric verticalBias values.',
+    'When direction is present, it must be the string "clockwise" or "counterclockwise".',
     'Do not output raw keyframes.',
     'Keep the overall path cinematic, continuous, and compatible with a single primary subject.',
     'If validationFeedback is present, adjust the segment choices to address those failures.',
@@ -1076,6 +1078,26 @@ function parseDirection(value: unknown, context: string): AgenticOrbitDirection 
     return value;
   }
 
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (
+      normalized === 'cw'
+      || normalized.includes('clockwise')
+      || normalized.includes('right')
+    ) {
+      return 'clockwise';
+    }
+    if (
+      normalized === 'ccw'
+      || normalized.includes('counterclockwise')
+      || normalized.includes('anticlockwise')
+      || normalized.includes('anti-clockwise')
+      || normalized.includes('left')
+    ) {
+      return 'counterclockwise';
+    }
+  }
+
   throw new PathGenerationError(502, `${context} must be "clockwise" or "counterclockwise".`);
 }
 
@@ -1163,15 +1185,47 @@ function parseVerticalBias(value: unknown, context: string): AgenticVerticalBias
     return value;
   }
 
-  if (typeof value === 'string') {
-    const normalized = value.toLowerCase();
-    if (normalized === 'medium' || normalized === 'center' || normalized === 'middle' || normalized === 'neutral') {
-      return 'mid';
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    if (value <= -0.25) {
+      return 'low';
     }
-    if (normalized === 'top' || normalized === 'upper' || normalized === 'elevated' || normalized === 'above') {
+    if (value >= 0.25) {
       return 'high';
     }
-    if (normalized === 'bottom' || normalized === 'lower' || normalized === 'ground' || normalized === 'below') {
+    return 'mid';
+  }
+
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (
+      normalized.includes('mid')
+      || normalized.includes('medium')
+      || normalized.includes('center')
+      || normalized.includes('middle')
+      || normalized.includes('neutral')
+      || normalized.includes('eye')
+      || normalized.includes('level')
+    ) {
+      return 'mid';
+    }
+    if (
+      normalized.includes('high')
+      || normalized.includes('top')
+      || normalized.includes('upper')
+      || normalized.includes('elevated')
+      || normalized.includes('above')
+      || normalized.includes('overhead')
+    ) {
+      return 'high';
+    }
+    if (
+      normalized.includes('low')
+      || normalized.includes('bottom')
+      || normalized.includes('lower')
+      || normalized.includes('ground')
+      || normalized.includes('below')
+      || normalized.includes('under')
+    ) {
       return 'low';
     }
   }

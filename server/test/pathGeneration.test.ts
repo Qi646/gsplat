@@ -223,6 +223,79 @@ describe('pathGeneration model-response parsing', () => {
     expect(parsed.segments[0]?.segmentType).toBe('arc');
     expect(parsed.segments[1]?.segmentType).toBe('hold');
   });
+
+  it('normalizes loose arc direction labels', () => {
+    const parsed = parsePathGenerationComposeModelResponse({
+      segments: [
+        {
+          direction: 'right',
+          durationSeconds: 4,
+          lookMode: 'look-at-subject',
+          segmentType: 'arc',
+          sweepDegrees: 90,
+        },
+        {
+          direction: 'ccw',
+          durationSeconds: 4,
+          lookMode: 'look-at-subject',
+          segmentType: 'arc',
+          sweepDegrees: 90,
+        },
+      ],
+      summary: 'Two arcs around the truck.',
+    });
+
+    expect(parsed.segments[0]?.segmentType).toBe('arc');
+    expect(parsed.segments[0]?.direction).toBe('clockwise');
+    expect(parsed.segments[1]?.segmentType).toBe('arc');
+    expect(parsed.segments[1]?.direction).toBe('counterclockwise');
+  });
+
+  it('normalizes loose vertical-bias labels', () => {
+    const parsed = parsePathGenerationComposeModelResponse({
+      segments: [
+        {
+          distanceScale: 0.9,
+          durationSeconds: 4,
+          lookMode: 'look-at-subject',
+          segmentType: 'dolly',
+          travelDirection: 'in',
+          verticalBias: 'eye-level',
+        },
+        {
+          direction: 'clockwise',
+          durationSeconds: 4,
+          lookMode: 'look-at-subject',
+          segmentType: 'arc',
+          sweepDegrees: 90,
+          verticalBias: 0.15,
+        },
+        {
+          durationSeconds: 4,
+          heightScale: 0.4,
+          lookMode: 'look-at-subject',
+          segmentType: 'pedestal',
+          travelDirection: 'up',
+        },
+        {
+          direction: 'clockwise',
+          durationSeconds: 4,
+          lookMode: 'look-at-subject',
+          segmentType: 'arc',
+          sweepDegrees: 90,
+          verticalBias: 'slightly elevated',
+        },
+      ],
+      summary: 'Push in, rise, then arc high around the truck.',
+    });
+
+    expect(parsed.segments[0]?.segmentType).toBe('dolly');
+    expect(parsed.segments[0]?.verticalBias).toBe('mid');
+    expect(parsed.segments[1]?.segmentType).toBe('arc');
+    expect(parsed.segments[1]?.verticalBias).toBe('mid');
+    expect(parsed.segments[3]?.segmentType).toBe('arc');
+    expect(parsed.segments[3]?.verticalBias).toBe('high');
+  });
 });
 
 describe('OpenAIVisionPathPlanner status', () => {
