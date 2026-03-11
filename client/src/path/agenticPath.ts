@@ -246,18 +246,18 @@ const MIN_VECTOR_LENGTH_SQUARED = 1e-8;
 const ROUND_ONE_TOTAL_CAPTURE_COUNT = 7;
 const ROUND_TWO_TOTAL_CAPTURE_COUNT = 4;
 const ROUND_ONE_SCOUT_POSE_SPECS: ScoutPoseSpec[] = [
-  { pitchRadians: 0, yawRadians: THREE.MathUtils.degToRad(-12) },
-  { pitchRadians: 0, yawRadians: THREE.MathUtils.degToRad(-6) },
-  { pitchRadians: 0, yawRadians: THREE.MathUtils.degToRad(6) },
-  { pitchRadians: 0, yawRadians: THREE.MathUtils.degToRad(12) },
-  { pitchRadians: THREE.MathUtils.degToRad(-5), yawRadians: 0 },
-  { pitchRadians: THREE.MathUtils.degToRad(5), yawRadians: 0 },
+  { pitchRadians: 0, yawRadians: THREE.MathUtils.degToRad(-16) },
+  { pitchRadians: 0, yawRadians: THREE.MathUtils.degToRad(-8) },
+  { pitchRadians: 0, yawRadians: THREE.MathUtils.degToRad(8) },
+  { pitchRadians: 0, yawRadians: THREE.MathUtils.degToRad(16) },
+  { pitchRadians: THREE.MathUtils.degToRad(-6), yawRadians: 0 },
+  { pitchRadians: THREE.MathUtils.degToRad(6), yawRadians: 0 },
 ];
 const ROUND_TWO_RESCAN_POSE_SPECS: ScoutPoseSpec[] = [
-  { pitchRadians: 0, yawRadians: THREE.MathUtils.degToRad(-4) },
-  { pitchRadians: 0, yawRadians: THREE.MathUtils.degToRad(4) },
-  { pitchRadians: THREE.MathUtils.degToRad(-4), yawRadians: 0 },
-  { pitchRadians: THREE.MathUtils.degToRad(4), yawRadians: 0 },
+  { pitchRadians: 0, yawRadians: THREE.MathUtils.degToRad(-5) },
+  { pitchRadians: 0, yawRadians: THREE.MathUtils.degToRad(5) },
+  { pitchRadians: THREE.MathUtils.degToRad(-5), yawRadians: 0 },
+  { pitchRadians: THREE.MathUtils.degToRad(5), yawRadians: 0 },
 ];
 const SEGMENT_KEYFRAME_COUNT: Record<AgenticPathSegmentType, number> = {
   arc: 4,
@@ -759,7 +759,7 @@ export function buildDraftPath(options: BuildDraftPathOptions): BuiltDraftPath {
   const sceneDiagonal = Math.max(sceneSize.length(), 1);
   const keyframes: Keyframe[] = [];
   const windows: SegmentWindow[] = [];
-  let currentPose = clonePose(options.basePose);
+  let currentPose = ensureSafeStartingPose(options.basePose, anchor, sceneDiagonal);
   let currentTime = options.startTime;
 
   for (const [segmentIndex, segment] of options.segments.entries()) {
@@ -918,7 +918,7 @@ function buildSegmentSamples(
   sampleCount: number,
 ): InterpolatedPose[] {
   const orbitFrame = deriveOrbitFrame(anchor, currentPose.position, currentPose.quaternion, axis);
-  const minRadius = Math.max(sceneDiagonal * 0.15, 0.6);
+  const minRadius = Math.max(sceneDiagonal * 0.18, 0.7);
   const maxRadius = Math.max(sceneDiagonal * 1.6, minRadius + 0.5);
   const radius = THREE.MathUtils.clamp(orbitFrame.radius || sceneDiagonal * 0.45, minRadius, maxRadius);
   const sceneHeight = Math.max(computeBoundsExtentAlongAxis(bounds, orbitFrame.axis), sceneDiagonal * 0.25, 1);
@@ -1207,6 +1207,30 @@ function distancePointToRay(
   const projectionLength = toPoint.dot(direction);
   const projection = direction.clone().multiplyScalar(projectionLength);
   return toPoint.sub(projection).length();
+}
+
+function ensureSafeStartingPose(
+  pose: InterpolatedPose,
+  anchor: THREE.Vector3,
+  sceneDiagonal: number,
+): InterpolatedPose {
+  const minDistanceToSubject = Math.max(0.7, sceneDiagonal * 0.18);
+  const relativeOffset = pose.position.clone().sub(anchor);
+  const currentDistance = relativeOffset.length();
+
+  if (currentDistance >= minDistanceToSubject) {
+    return clonePose(pose);
+  }
+
+  const safeDirection = currentDistance <= MIN_VECTOR_LENGTH_SQUARED
+    ? getForwardVector(pose.quaternion).multiplyScalar(-1)
+    : relativeOffset.normalize();
+
+  return {
+    fov: pose.fov,
+    position: anchor.clone().addScaledVector(safeDirection, minDistanceToSubject),
+    quaternion: pose.quaternion.clone(),
+  };
 }
 
 function findSegmentWindow(windows: SegmentWindow[], time: number): SegmentWindow | null {

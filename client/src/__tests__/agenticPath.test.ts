@@ -183,7 +183,7 @@ describe('buildScoutCameraPoses', () => {
     expect(poses).toHaveLength(6);
     poses.forEach(pose => {
       expect(pose.position.distanceTo(camera.position)).toBeGreaterThan(0.2);
-      expect(pose.position.distanceTo(camera.position)).toBeLessThan(currentDistance * 0.3);
+      expect(pose.position.distanceTo(camera.position)).toBeLessThan(currentDistance * 0.45);
     });
   });
 
@@ -301,6 +301,58 @@ describe('buildDraftPath and validateDraftPath', () => {
     });
 
     expect(builtDraft.keyframes.length).toBeGreaterThan(3);
+    expect(validation.valid).toBe(true);
+  });
+
+  it('reframes an overly close starting pose before validating the draft', () => {
+    const anchor = new THREE.Vector3(0, 0.5, 0);
+    const bounds = new THREE.Box3(
+      new THREE.Vector3(-4, -2, -4),
+      new THREE.Vector3(4, 4, 4),
+    );
+    const builtDraft = buildDraftPath({
+      basePose: {
+        fov: 60,
+        position: new THREE.Vector3(0.12, 0.55, 0.06),
+        quaternion: createCamera(new THREE.Vector3(0.12, 0.55, 0.06), anchor).quaternion.clone(),
+      },
+      bounds,
+      groundedSubject: {
+        anchor: { x: anchor.x, y: anchor.y, z: anchor.z },
+        basisForward: { x: 0, y: 0, z: -1 },
+        basisUp: { x: 0, y: 1, z: 0 },
+        captureCount: 3,
+        confidence: 0.82,
+        meanResidual: 0.08,
+        sceneScale: bounds.getSize(new THREE.Vector3()).length(),
+      },
+      segments: [
+        createSegmentPlan({ durationSeconds: 6, segmentType: 'hold' }),
+      ],
+      startTime: 0,
+    });
+
+    const firstKeyframe = builtDraft.keyframes[0];
+    const firstPosition = new THREE.Vector3(
+      firstKeyframe?.position.x ?? 0,
+      firstKeyframe?.position.y ?? 0,
+      firstKeyframe?.position.z ?? 0,
+    );
+
+    expect(firstPosition.distanceTo(anchor)).toBeGreaterThanOrEqual(
+      Math.max(0.7, bounds.getSize(new THREE.Vector3()).length() * 0.18) - 1e-6,
+    );
+
+    const validation = validateDraftPath(builtDraft, bounds, {
+      anchor: { x: anchor.x, y: anchor.y, z: anchor.z },
+      basisForward: { x: 0, y: 0, z: -1 },
+      basisUp: { x: 0, y: 1, z: 0 },
+      captureCount: 3,
+      confidence: 0.82,
+      meanResidual: 0.08,
+      sceneScale: bounds.getSize(new THREE.Vector3()).length(),
+    });
+
     expect(validation.valid).toBe(true);
   });
 
