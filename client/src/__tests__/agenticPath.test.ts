@@ -1,12 +1,15 @@
 import * as THREE from 'three';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
-  AgenticPathGenerator,
-  buildOrbitKeyframes,
+  AgenticPathOrchestrator,
+  buildDraftPath,
   buildScoutCameraPoses,
-  triangulateSubjectAnchor,
+  buildTargetedRescanPoses,
+  groundSubjectFromLocalizations,
+  validateDraftPath,
+  type AgenticGroundResponse,
   type AgenticPathCapture,
-  type AgenticShotSpec,
+  type AgenticPathSegmentPlan,
   type AgenticSubjectLocalization,
 } from '../path/agenticPath';
 import type { ViewerAdapter } from '../viewer/ViewerAdapter';
@@ -47,25 +50,7 @@ function createCapture(id: string, camera: THREE.PerspectiveCamera): AgenticPath
   };
 }
 
-function createShotSpec(overrides: Partial<AgenticShotSpec> = {}): AgenticShotSpec {
-  return {
-    fullOrbit: false,
-    orientationMode: 'look-at-subject',
-    pathType: 'orbit',
-    ...overrides,
-  };
-}
-
-function getForwardVector(quaternion: { w: number; x: number; y: number; z: number }): THREE.Vector3 {
-  return new THREE.Vector3(0, 0, -1).applyQuaternion(
-    new THREE.Quaternion(quaternion.x, quaternion.y, quaternion.z, quaternion.w),
-  ).normalize();
-}
-
-function projectPoint(
-  point: THREE.Vector3,
-  capture: AgenticPathCapture,
-): AgenticSubjectLocalization {
+function projectPoint(point: THREE.Vector3, capture: AgenticPathCapture): AgenticSubjectLocalization {
   const camera = createCamera(
     new THREE.Vector3(
       capture.camera.position.x,
@@ -93,14 +78,45 @@ function projectPoint(
   };
 }
 
+function createGroundResponse(
+  pathMode: AgenticGroundResponse['pathMode'],
+  localizations: AgenticSubjectLocalization[],
+): AgenticGroundResponse {
+  return {
+    intent: {
+      continuousPath: true,
+      orientationPreference: 'look-at-subject',
+      pathMode,
+      requestedMoveTypes: ['arc', 'hold'],
+      subjectHint: 'truck',
+      targetDurationSeconds: 10,
+      tone: 'cinematic',
+    },
+    pathMode,
+    subjectLocalizations: localizations,
+    unsupportedReason: pathMode === 'subject-centric' ? undefined : 'Unsupported prompt class.',
+  };
+}
+
+function createSegmentPlan(overrides: Partial<AgenticPathSegmentPlan> = {}): AgenticPathSegmentPlan {
+  return {
+    durationSeconds: 4,
+    lookMode: 'look-at-subject',
+    segmentType: 'arc',
+    sweepDegrees: 120,
+    ...overrides,
+  } as AgenticPathSegmentPlan;
+}
+
 function createMockViewer(options: {
+  bounds?: THREE.Box3;
   captureFrame?: () => Promise<Blob>;
   initialCamera?: THREE.PerspectiveCamera;
 } = {}): {
   camera: THREE.PerspectiveCamera;
   viewer: ViewerAdapter;
 } {
-  const bounds = new THREE.Box3(
+  const bounds = options.bounds ?? new THREE.Box3(
     new THREE.Vector3(-4, -2, -4),
     new THREE.Vector3(4, 4, 4),
   );
@@ -122,17 +138,6 @@ function createMockViewer(options: {
   } as unknown as ViewerAdapter;
 
   return { camera, viewer };
-}
-
-function createPlannerResponse(captures: AgenticPathCapture[]): Response {
-  const subject = new THREE.Vector3(0, 0.5, 0);
-  return new Response(JSON.stringify({
-    shotSpec: createShotSpec(),
-    subjectLocalizations: captures.map(capture => projectPoint(subject, capture)),
-  }), {
-    headers: { 'Content-Type': 'application/json' },
-    status: 200,
-  });
 }
 
 function installCapturePipelineStubs(): void {
@@ -164,28 +169,8 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe('triangulateSubjectAnchor', () => {
-  it('reconstructs a subject anchor from multiple localized captures', () => {
-    const subject = new THREE.Vector3(1.5, 0.75, -0.5);
-    const captureA = createCapture('capture-a', createCamera(new THREE.Vector3(6, 2, 3), subject));
-    const captureB = createCapture('capture-b', createCamera(new THREE.Vector3(-5, 1.5, 2), subject));
-    const sceneBounds = new THREE.Box3(
-      new THREE.Vector3(-10, -3, -10),
-      new THREE.Vector3(10, 6, 10),
-    );
-
-    const solved = triangulateSubjectAnchor(
-      [projectPoint(subject, captureA), projectPoint(subject, captureB)],
-      [captureA, captureB],
-      sceneBounds,
-    );
-
-    expect(solved.distanceTo(subject)).toBeLessThan(0.05);
-  });
-});
-
 describe('buildScoutCameraPoses', () => {
-  it('creates four deterministic scout poses around the scene bounds', () => {
+  it('creates six deterministic scout poses around the current view', () => {
     const bounds = new THREE.Box3(
       new THREE.Vector3(-2, -1, -2),
       new THREE.Vector3(2, 3, 2),
@@ -194,25 +179,9 @@ describe('buildScoutCameraPoses', () => {
 
     const poses = buildScoutCameraPoses(bounds, camera);
 
-    expect(poses).toHaveLength(4);
-    expect(poses[0]?.position.distanceTo(bounds.getCenter(new THREE.Vector3()))).toBeGreaterThan(2);
-  });
-
-  it('keeps scout captures close to the live camera pose', () => {
-    const bounds = new THREE.Box3(
-      new THREE.Vector3(-4, -4, -6),
-      new THREE.Vector3(4, 4, 6),
-    );
-    const center = bounds.getCenter(new THREE.Vector3());
-    const camera = createCamera(new THREE.Vector3(5, 0, 3), center);
-    const currentDistance = camera.position.distanceTo(center);
-
-    const poses = buildScoutCameraPoses(bounds, camera);
-
-    expect(poses).toHaveLength(4);
+    expect(poses).toHaveLength(6);
     poses.forEach(pose => {
-      expect(pose.position.distanceTo(camera.position)).toBeLessThan(currentDistance * 0.8);
-      expect(pose.position.distanceTo(center)).toBeLessThan(currentDistance * 1.2);
+      expect(pose.position.distanceTo(camera.position)).toBeGreaterThan(0.2);
     });
   });
 
@@ -225,23 +194,70 @@ describe('buildScoutCameraPoses', () => {
     const sceneUp = new THREE.Vector3(0, 0, 1);
     const camera = createCamera(new THREE.Vector3(6, 0, 3), center, 16 / 9, sceneUp);
     const baseCameraUp = new THREE.Vector3(0, 1, 0).applyQuaternion(camera.quaternion).normalize();
-    const baseCameraRight = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion).normalize();
 
     const poses = buildScoutCameraPoses(bounds, camera);
-    const heights = poses.map(pose => pose.position.clone().sub(center).dot(baseCameraUp));
-    const laterals = poses.map(pose => pose.position.clone().sub(center).dot(baseCameraRight));
 
-    expect(Math.max(...heights) - Math.min(...heights)).toBeGreaterThan(0.8);
-    expect(Math.max(...laterals) - Math.min(...laterals)).toBeGreaterThan(1.2);
+    expect(poses).toHaveLength(6);
     poses.forEach(pose => {
       const poseUp = new THREE.Vector3(0, 1, 0).applyQuaternion(pose.quaternion).normalize();
-      expect(poseUp.dot(baseCameraUp)).toBeGreaterThan(0.99);
+      expect(poseUp.dot(baseCameraUp)).toBeGreaterThan(0.98);
     });
   });
 });
 
-describe('buildOrbitKeyframes', () => {
-  it('orients generated keyframes toward the subject when requested', () => {
+describe('buildTargetedRescanPoses', () => {
+  it('creates four tighter rescans around the provisional anchor', () => {
+    const bounds = new THREE.Box3(
+      new THREE.Vector3(-4, -4, -6),
+      new THREE.Vector3(4, 4, 6),
+    );
+    const anchor = new THREE.Vector3(0, 0.5, 0);
+    const camera = createCamera(new THREE.Vector3(5, 1, 3), anchor);
+
+    const poses = buildTargetedRescanPoses(anchor, bounds, camera);
+
+    expect(poses).toHaveLength(4);
+    poses.forEach(pose => {
+      expect(pose.position.distanceTo(anchor)).toBeLessThan(camera.position.distanceTo(anchor) * 1.1);
+    });
+  });
+});
+
+describe('groundSubjectFromLocalizations', () => {
+  it('reconstructs a grounded subject with confidence and residual data', () => {
+    const subject = new THREE.Vector3(1.5, 0.75, -0.5);
+    const captureA = createCapture('capture-a', createCamera(new THREE.Vector3(6, 2, 3), subject));
+    const captureB = createCapture('capture-b', createCamera(new THREE.Vector3(-5, 1.5, 2), subject));
+    const sceneBounds = new THREE.Box3(
+      new THREE.Vector3(-10, -3, -10),
+      new THREE.Vector3(10, 6, 10),
+    );
+    const basePose = {
+      fov: 60,
+      position: new THREE.Vector3(5, 1, 0),
+      quaternion: createCamera(new THREE.Vector3(5, 1, 0), subject).quaternion.clone(),
+    };
+
+    const grounded = groundSubjectFromLocalizations(
+      [projectPoint(subject, captureA), projectPoint(subject, captureB)],
+      [captureA, captureB],
+      sceneBounds,
+      basePose,
+    );
+
+    const solvedAnchor = new THREE.Vector3(
+      grounded.anchor.x,
+      grounded.anchor.y,
+      grounded.anchor.z,
+    );
+    expect(solvedAnchor.distanceTo(subject)).toBeLessThan(0.05);
+    expect(grounded.confidence).toBeGreaterThan(0.5);
+    expect(grounded.meanResidual).toBeLessThan(0.05);
+  });
+});
+
+describe('buildDraftPath and validateDraftPath', () => {
+  it('builds a multi-segment draft that validates successfully', () => {
     const anchor = new THREE.Vector3(0, 0.5, 0);
     const bounds = new THREE.Box3(
       new THREE.Vector3(-4, -2, -4),
@@ -249,117 +265,92 @@ describe('buildOrbitKeyframes', () => {
     );
     const baseCamera = createCamera(new THREE.Vector3(5, 1, 0), anchor);
 
-    const keyframes = buildOrbitKeyframes({
-      anchor,
+    const builtDraft = buildDraftPath({
       basePose: {
         fov: baseCamera.fov,
         position: baseCamera.position.clone(),
         quaternion: baseCamera.quaternion.clone(),
       },
       bounds,
-      shotSpec: createShotSpec(),
+      groundedSubject: {
+        anchor: { x: anchor.x, y: anchor.y, z: anchor.z },
+        basisForward: { x: 0, y: 0, z: -1 },
+        basisUp: { x: 0, y: 1, z: 0 },
+        captureCount: 4,
+        confidence: 0.88,
+        meanResidual: 0.05,
+        sceneScale: bounds.getSize(new THREE.Vector3()).length(),
+      },
+      segments: [
+        createSegmentPlan({ segmentType: 'arc', sweepDegrees: 90 }),
+        createSegmentPlan({ durationSeconds: 2, segmentType: 'hold' }),
+      ],
       startTime: 0,
     });
 
-    const firstPosition = new THREE.Vector3(
-      keyframes[0]!.position.x,
-      keyframes[0]!.position.y,
-      keyframes[0]!.position.z,
-    );
-    const forward = getForwardVector(keyframes[0]!.quaternion);
-    const toAnchor = anchor.clone().sub(firstPosition).normalize();
+    const validation = validateDraftPath(builtDraft, bounds, {
+      anchor: { x: anchor.x, y: anchor.y, z: anchor.z },
+      basisForward: { x: 0, y: 0, z: -1 },
+      basisUp: { x: 0, y: 1, z: 0 },
+      captureCount: 4,
+      confidence: 0.88,
+      meanResidual: 0.05,
+      sceneScale: bounds.getSize(new THREE.Vector3()).length(),
+    });
 
-    expect(keyframes).toHaveLength(8);
-    expect(forward.dot(toAnchor)).toBeGreaterThan(0.999);
+    expect(builtDraft.keyframes.length).toBeGreaterThan(3);
+    expect(validation.valid).toBe(true);
   });
 
-  it('faces forward along the orbit tangent when requested', () => {
-    const anchor = new THREE.Vector3(0, 0, 0);
+  it('flags invalid drafts when the subject leaves the frame', () => {
     const bounds = new THREE.Box3(
-      new THREE.Vector3(-4, -2, -4),
-      new THREE.Vector3(4, 4, 4),
+      new THREE.Vector3(-2, -2, -2),
+      new THREE.Vector3(2, 2, 2),
     );
-    const baseCamera = createCamera(new THREE.Vector3(5, 1, 0), anchor);
-
-    const keyframes = buildOrbitKeyframes({
-      anchor,
+    const builtDraft = buildDraftPath({
       basePose: {
-        fov: baseCamera.fov,
-        position: baseCamera.position.clone(),
-        quaternion: baseCamera.quaternion.clone(),
+        fov: 60,
+        position: new THREE.Vector3(5, 0, 0),
+        quaternion: new THREE.Quaternion(),
       },
       bounds,
-      shotSpec: createShotSpec({ orientationMode: 'look-forward' }),
+      groundedSubject: {
+        anchor: { x: 0, y: 0, z: 0 },
+        basisForward: { x: 0, y: 0, z: -1 },
+        basisUp: { x: 0, y: 1, z: 0 },
+        captureCount: 2,
+        confidence: 0.5,
+        meanResidual: 0.1,
+        sceneScale: bounds.getSize(new THREE.Vector3()).length(),
+      },
+      segments: [
+        createSegmentPlan({
+          durationSeconds: 6,
+          lookMode: 'look-forward',
+          segmentType: 'pedestal',
+          travelDirection: 'up',
+        }),
+      ],
       startTime: 0,
     });
 
-    const firstPosition = new THREE.Vector3(
-      keyframes[0]!.position.x,
-      keyframes[0]!.position.y,
-      keyframes[0]!.position.z,
-    );
-    const secondPosition = new THREE.Vector3(
-      keyframes[1]!.position.x,
-      keyframes[1]!.position.y,
-      keyframes[1]!.position.z,
-    );
-    const tangent = secondPosition.clone().sub(firstPosition).setY(0).normalize();
-    const forward = getForwardVector(keyframes[0]!.quaternion).setY(0).normalize();
-
-    expect(forward.dot(tangent)).toBeGreaterThan(0.98);
-  });
-
-  it('starts the orbit from the live pose for non-Y-up scenes', () => {
-    const anchor = new THREE.Vector3(0, 0, 0);
-    const bounds = new THREE.Box3(
-      new THREE.Vector3(-4, -4, -6),
-      new THREE.Vector3(4, 4, 6),
-    );
-    const sceneUp = new THREE.Vector3(0, 0, 1);
-    const baseCamera = createCamera(new THREE.Vector3(5, 0, 3), anchor, 16 / 9, sceneUp);
-    const baseCameraUp = new THREE.Vector3(0, 1, 0).applyQuaternion(baseCamera.quaternion).normalize();
-
-    const keyframes = buildOrbitKeyframes({
-      anchor,
-      basePose: {
-        fov: baseCamera.fov,
-        position: baseCamera.position.clone(),
-        quaternion: baseCamera.quaternion.clone(),
-      },
-      bounds,
-      shotSpec: createShotSpec(),
-      startTime: 0,
+    const validation = validateDraftPath(builtDraft, bounds, {
+      anchor: { x: 0, y: 0, z: 0 },
+      basisForward: { x: 0, y: 0, z: -1 },
+      basisUp: { x: 0, y: 1, z: 0 },
+      captureCount: 2,
+      confidence: 0.5,
+      meanResidual: 0.1,
+      sceneScale: bounds.getSize(new THREE.Vector3()).length(),
     });
 
-    const firstPosition = new THREE.Vector3(
-      keyframes[0]!.position.x,
-      keyframes[0]!.position.y,
-      keyframes[0]!.position.z,
-    );
-    const firstUp = getForwardVector({
-      w: keyframes[0]!.quaternion.w,
-      x: keyframes[0]!.quaternion.x,
-      y: keyframes[0]!.quaternion.y,
-      z: keyframes[0]!.quaternion.z,
-    });
-    const upVector = new THREE.Vector3(0, 1, 0).applyQuaternion(
-      new THREE.Quaternion(
-        keyframes[0]!.quaternion.x,
-        keyframes[0]!.quaternion.y,
-        keyframes[0]!.quaternion.z,
-        keyframes[0]!.quaternion.w,
-      ),
-    ).normalize();
-    const toAnchor = anchor.clone().sub(firstPosition).normalize();
-
-    expect(firstPosition.distanceTo(baseCamera.position)).toBeLessThan(1e-5);
-    expect(firstUp.dot(toAnchor)).toBeGreaterThan(0.999);
-    expect(upVector.dot(baseCameraUp)).toBeGreaterThan(0.999);
+    expect(validation.valid).toBe(false);
+    expect(validation.feedback.join(' ')).toMatch(/subject|frame|camera/i);
   });
 });
 
-describe('AgenticPathGenerator', () => {
-  it('reports staged progress throughout generation', async () => {
+describe('AgenticPathOrchestrator', () => {
+  it('runs the full draft-generation pipeline with a repair pass', async () => {
     installCapturePipelineStubs();
     vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
       callback(0);
@@ -367,92 +358,109 @@ describe('AgenticPathGenerator', () => {
     });
 
     const progressStages: string[] = [];
-    const progressLabels: string[] = [];
     const { viewer } = createMockViewer();
-    const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
-      const request = JSON.parse(String(init?.body ?? '{}')) as { captures: AgenticPathCapture[] };
-      return createPlannerResponse(request.captures);
+    const groundResponses: AgenticGroundResponse[] = [];
+    const composeResponses = [
+      {
+        segments: [
+          createSegmentPlan({
+            durationSeconds: 4,
+            lookMode: 'look-forward',
+            segmentType: 'pedestal',
+            travelDirection: 'up',
+          }),
+        ],
+        summary: 'Bad first draft.',
+      },
+      {
+        segments: [
+          createSegmentPlan({ segmentType: 'arc', sweepDegrees: 90 }),
+          createSegmentPlan({ durationSeconds: 2, segmentType: 'hold' }),
+        ],
+        summary: 'Repaired draft.',
+      },
+    ];
+
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith('/api/path/ground')) {
+        const request = JSON.parse(String(init?.body ?? '{}')) as { captures: AgenticPathCapture[] };
+        const subject = new THREE.Vector3(0, 0.5, 0);
+        const response = createGroundResponse(
+          'subject-centric',
+          request.captures.map(capture => projectPoint(subject, capture)),
+        );
+        groundResponses.push(response);
+        return new Response(JSON.stringify(response), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        });
+      }
+
+      return new Response(JSON.stringify(composeResponses.shift()), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 200,
+      });
     }) as unknown as typeof fetch;
 
-    const generator = new AgenticPathGenerator({
+    const orchestrator = new AgenticPathOrchestrator({
       fetchImpl,
       onProgress: progress => {
         progressStages.push(progress.stage);
-        progressLabels.push(progress.buttonLabel);
       },
       viewer,
     });
 
-    const keyframes = await generator.generatePath({
+    const draft = await orchestrator.generateDraft({
       existingKeyframes: [],
-      prompt: 'Do a cinematic orbit around the subject.',
+      prompt: 'Create a cinematic arc around the truck and then hold.',
     });
 
-    expect(keyframes.length).toBeGreaterThan(0);
+    expect(draft.summary).toBe('Repaired draft.');
+    expect(draft.keyframes.length).toBeGreaterThan(3);
+    expect(groundResponses).toHaveLength(1);
     expect(progressStages).toEqual([
-      'capturing-current',
-      'capturing-scout',
-      'capturing-scout',
-      'capturing-scout',
-      'capturing-scout',
-      'planning',
-      'triangulating',
-      'building',
-    ]);
-    expect(progressLabels).toEqual([
-      'Capturing 1/5…',
-      'Capturing 2/5…',
-      'Capturing 3/5…',
-      'Capturing 4/5…',
-      'Capturing 5/5…',
-      'Planning…',
-      'Triangulating…',
-      'Building path…',
+      'capture-round-1',
+      'capture-round-1',
+      'capture-round-1',
+      'capture-round-1',
+      'capture-round-1',
+      'capture-round-1',
+      'capture-round-1',
+      'grounding',
+      'composing',
+      'validating',
+      'repairing',
+      'validating',
     ]);
   });
 
-  it('times out stalled generation and restores the live camera pose', async () => {
+  it('stops on unsupported route-following prompts', async () => {
     installCapturePipelineStubs();
-    vi.useFakeTimers();
     vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
       callback(0);
       return 1;
     });
 
-    let captureCount = 0;
-    const initialCamera = createCamera(new THREE.Vector3(5, 1, 0), new THREE.Vector3(0, 0.5, 0));
-    const initialPosition = initialCamera.position.clone();
-    const initialQuaternion = initialCamera.quaternion.clone();
-    const { camera, viewer } = createMockViewer({
-      captureFrame: () => {
-        captureCount += 1;
-        if (captureCount === 1) {
-          return Promise.resolve(new Blob(['frame'], { type: 'image/png' }));
-        }
+    const { viewer } = createMockViewer();
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith('/api/path/ground')) {
+        return new Response(JSON.stringify(createGroundResponse('route-following', [])), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        });
+      }
 
-        return new Promise<Blob>(() => {});
-      },
-      initialCamera,
-    });
+      throw new Error('compose should not be called for unsupported prompts');
+    }) as unknown as typeof fetch;
 
-    const generator = new AgenticPathGenerator({
-      fetchImpl: vi.fn() as unknown as typeof fetch,
-      timeoutMs: 25,
-      viewer,
-    });
+    const orchestrator = new AgenticPathOrchestrator({ fetchImpl, viewer });
 
-    const generationPromise = generator.generatePath({
+    await expect(orchestrator.generateDraft({
       existingKeyframes: [],
-      prompt: 'Do a cinematic orbit around the subject.',
-    });
-    const rejection = expect(generationPromise).rejects.toThrow(/timed out/i);
-
-    await vi.advanceTimersByTimeAsync(25);
-
-    await rejection;
-    expect(generator.isGenerating()).toBe(false);
-    expect(camera.position.distanceTo(initialPosition)).toBeLessThan(1e-6);
-    expect(camera.quaternion.angleTo(initialQuaternion)).toBeLessThan(1e-6);
+      prompt: 'Weave through these trees.',
+    })).rejects.toThrow(/unsupported/i);
   });
 
   it('cancels stalled generation and restores the live camera pose', async () => {
@@ -463,7 +471,6 @@ describe('AgenticPathGenerator', () => {
     });
 
     let captureCount = 0;
-    const progressStages: string[] = [];
     const initialCamera = createCamera(new THREE.Vector3(5, 1, 0), new THREE.Vector3(0, 0.5, 0));
     const initialPosition = initialCamera.position.clone();
     const initialQuaternion = initialCamera.quaternion.clone();
@@ -479,24 +486,20 @@ describe('AgenticPathGenerator', () => {
       initialCamera,
     });
 
-    const generator = new AgenticPathGenerator({
+    const orchestrator = new AgenticPathOrchestrator({
       fetchImpl: vi.fn() as unknown as typeof fetch,
-      onProgress: progress => {
-        progressStages.push(progress.stage);
-      },
       viewer,
     });
 
-    const generationPromise = generator.generatePath({
+    const generationPromise = orchestrator.generateDraft({
       existingKeyframes: [],
-      prompt: 'Do a cinematic orbit around the subject.',
+      prompt: 'Create a cinematic arc around the truck.',
     });
     const rejection = expect(generationPromise).rejects.toThrow(/canceled/i);
 
-    expect(generator.cancelGeneration()).toBe(true);
+    expect(orchestrator.cancelGeneration()).toBe(true);
     await rejection;
-    expect(generator.isGenerating()).toBe(false);
-    expect(progressStages.at(-1)).toBe('cancelling');
+    expect(orchestrator.isGenerating()).toBe(false);
     expect(camera.position.distanceTo(initialPosition)).toBeLessThan(1e-6);
     expect(camera.quaternion.angleTo(initialQuaternion)).toBeLessThan(1e-6);
   });

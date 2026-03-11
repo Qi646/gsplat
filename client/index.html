@@ -276,6 +276,49 @@
       color: rgba(255, 229, 222, 0.82);
     }
 
+    .agentic-draft-card {
+      display: none;
+      gap: 6px;
+      margin-bottom: 10px;
+      padding: 12px 14px;
+      border-radius: 14px;
+      border: 1px solid rgba(0,229,255,0.28);
+      background:
+        linear-gradient(180deg, rgba(6, 32, 38, 0.96), rgba(8, 15, 21, 0.98));
+      box-shadow: 0 12px 28px rgba(0, 0, 0, 0.24);
+    }
+
+    .agentic-draft-card.visible {
+      display: grid;
+    }
+
+    .agentic-draft-title {
+      font-family: var(--sans);
+      font-size: 13px;
+      font-weight: 700;
+      color: #c7fcff;
+      letter-spacing: -0.02em;
+    }
+
+    .agentic-draft-summary {
+      font-size: 12px;
+      line-height: 1.45;
+      color: #eefcff;
+    }
+
+    .agentic-draft-meta {
+      font-size: 11px;
+      line-height: 1.45;
+      color: rgba(221, 247, 255, 0.8);
+    }
+
+    .agentic-draft-actions {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 6px;
+      margin-top: 2px;
+    }
+
     #loading-overlay {
       position: absolute;
       inset: 0;
@@ -816,7 +859,7 @@
       <div class="panel-section">
         <div class="section-label">Camera Path</div>
         <div class="note" id="agentic-path-note" style="margin-bottom: 10px">
-          Load a scene to enable prompt-driven orbit generation. It uses the current view plus four nearby multi-axis scout captures.
+          Load a scene to enable subject-centric draft generation. It uses the current view plus nearby scout captures and does not support route-style prompts.
         </div>
         <div class="agentic-path-feedback" id="agentic-path-feedback" aria-live="polite" hidden>
           <div class="agentic-path-feedback-title" id="agentic-path-feedback-title"></div>
@@ -825,32 +868,42 @@
         </div>
         <textarea
           id="path-prompt-input"
-          placeholder="Do a cinematic path around this truck, with the camera focused on the truck all the way around."
+          placeholder="Create one continuous cinematic move around this truck, then hold on the front badge."
           style="width: 100%; min-height: 84px; resize: vertical; border-radius: 14px; border: 1px solid rgba(255,255,255,0.12); background: rgba(10,12,18,0.9); color: #f5f7fb; padding: 12px; box-sizing: border-box; font: inherit; margin-bottom: 10px;"
         ></textarea>
         <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px;">
           <button
             class="btn"
             type="button"
-            data-agentic-prompt="Do a cinematic path around this truck, with the camera focused on the truck all the way around."
+            data-agentic-prompt="Create one continuous cinematic arc around this truck, keep the camera focused on it, then hold for a beat."
             style="flex: 1 1 180px;"
-          >Orbit + focus subject</button>
+          >Arc + hold</button>
           <button
             class="btn"
             type="button"
-            data-agentic-prompt="Do a cinematic path around this truck, with the camera facing forward along the path."
+            data-agentic-prompt="Create one continuous cinematic push-in toward this truck, then rise slightly while keeping the camera on it."
             style="flex: 1 1 180px;"
-          >Orbit + face forward</button>
+          >Push in + rise</button>
         </div>
         <div class="path-primary-action">
-          <button class="btn path-generate-btn" id="btn-generate-path" disabled>✨ Generate Path</button>
+          <button class="btn path-generate-btn" id="btn-generate-path" disabled>✨ Generate Draft</button>
+        </div>
+        <div class="agentic-draft-card" id="agentic-draft-card" aria-live="polite" hidden>
+          <div class="agentic-draft-title">Draft Ready</div>
+          <div class="agentic-draft-summary" id="agentic-draft-summary"></div>
+          <div class="agentic-draft-meta" id="agentic-draft-meta"></div>
+          <div class="agentic-draft-actions">
+            <button class="btn" id="btn-preview-draft" disabled>▶ Preview Draft</button>
+            <button class="btn" id="btn-apply-draft" disabled>✓ Apply Draft</button>
+            <button class="btn" id="btn-discard-draft" disabled>✕ Discard Draft</button>
+          </div>
         </div>
         <div class="path-actions">
           <button class="btn" id="btn-add-kf" disabled aria-keyshortcuts="K">+ Add Keyframe</button>
           <button class="btn" id="btn-clear-kfs" disabled>✕ Clear</button>
         </div>
         <div class="path-secondary-actions">
-          <button class="btn" id="btn-preview" disabled>▶ Preview</button>
+          <button class="btn" id="btn-preview" disabled>▶ Preview Live</button>
           <button class="btn" id="btn-save-path" disabled>⬇ Save</button>
           <button class="btn" id="btn-load-path" disabled>⬆ Load</button>
         </div>

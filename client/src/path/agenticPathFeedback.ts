@@ -37,6 +37,24 @@ export function buildAgenticPathFailureFeedback(error: unknown): AgenticPathFail
     };
   }
 
+  if (matchesAny(message, [/route-following/i, /weav(e|ing) through/i, /multi-subject/i, /ambiguous/i])) {
+    return {
+      detail:
+        'Agentic path v1 only supports one continuous subject-centric move. Rewrite the prompt around one primary subject instead of a route through geometry.',
+      message,
+      title: 'Prompt Is Outside V1 Scope',
+    };
+  }
+
+  if (matchesAny(message, [/safe frame box/i, /supported scene volume/i, /too close to the subject/i, /fov outside/i])) {
+    return {
+      detail:
+        'The draft was composed, but it failed local path validation. Retry with a simpler subject-centric move or reframe the scene before regenerating.',
+      message,
+      title: 'Draft Could Not Be Validated',
+    };
+  }
+
   if (matchesAny(message, [/timed out/i, /canceled/i])) {
     return {
       detail:

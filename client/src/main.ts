@@ -19,13 +19,19 @@ import { parseAppRuntimeQuery } from './lib/runtimeQuery';
 import { detectSceneFormat } from './lib/sceneFormat';
 import { resolveSceneLoadSource, type SceneLoadInput, type SceneLoadSource } from './lib/sceneSource';
 import { SCENE_PRESETS } from './lib/scenePresets';
-import { AgenticPathGenerator, type AgenticPathProgress } from './path/agenticPath';
+import {
+  AgenticPathOrchestrator,
+  type AgenticPathDraft,
+  type AgenticPathProgress,
+  type AgenticPathStatus,
+} from './path/agenticPath';
 import {
   buildAgenticPathFailureFeedback,
   type AgenticPathFailureFeedback,
 } from './path/agenticPathFeedback';
 import { CameraPathOverlay } from './path/CameraPathOverlay';
 import { KeyframeManager } from './path/KeyframeManager';
+import { PathPreviewPlayer } from './path/PathPreviewPlayer';
 import {
   AdaptiveRenderBudgetController,
   buildAdaptiveRenderBudgetNote,
@@ -37,12 +43,6 @@ import type { ViewerAdapter } from './viewer/ViewerAdapter';
 
 const CAMERA_ROLL_STEP_RADIANS = Math.PI / 36;
 const SUPPORTED_LOCAL_SCENE_FILE_PATTERN = /\.(ply|splat|ksplat)$/i;
-
-interface AgenticPathStatus {
-  available: boolean;
-  model: string | null;
-  reason: string | null;
-}
 
 function $(selector: string): HTMLElement {
   const element = document.querySelector<HTMLElement>(selector);
@@ -97,7 +97,15 @@ function parseAgenticPathStatus(input: unknown): AgenticPathStatus {
   if (typeof input !== 'object' || input === null) {
     return {
       available: false,
+      capabilities: {
+        maxCaptureRounds: 2,
+        maxSegments: 4,
+        segmentTypes: ['hold', 'arc', 'dolly', 'pedestal'],
+        supportedPathModes: ['subject-centric'],
+        unsupportedPathModes: ['route-following', 'multi-subject', 'ambiguous'],
+      },
       model: null,
+      plannerVersion: 'multistep-v1',
       reason: 'Agentic path generation is unavailable because the server capability check returned invalid data.',
     };
   }
@@ -105,7 +113,15 @@ function parseAgenticPathStatus(input: unknown): AgenticPathStatus {
   const record = input as Record<string, unknown>;
   return {
     available: record['available'] === true,
+    capabilities: {
+      maxCaptureRounds: 2,
+      maxSegments: 4,
+      segmentTypes: ['hold', 'arc', 'dolly', 'pedestal'],
+      supportedPathModes: ['subject-centric'],
+      unsupportedPathModes: ['route-following', 'multi-subject', 'ambiguous'],
+    },
     model: typeof record['model'] === 'string' ? record['model'] : null,
+    plannerVersion: 'multistep-v1',
     reason: typeof record['reason'] === 'string' ? record['reason'] : null,
   };
 }
@@ -144,6 +160,12 @@ async function main(): Promise<void> {
   const agenticPathBlockerMessage = $('#agentic-path-blocker-message');
   const pathPromptInput = $('#path-prompt-input') as HTMLTextAreaElement;
   const generatePathButton = $('#btn-generate-path') as HTMLButtonElement;
+  const draftCard = $('#agentic-draft-card');
+  const draftSummary = $('#agentic-draft-summary');
+  const draftMeta = $('#agentic-draft-meta');
+  const previewDraftButton = $('#btn-preview-draft') as HTMLButtonElement;
+  const applyDraftButton = $('#btn-apply-draft') as HTMLButtonElement;
+  const discardDraftButton = $('#btn-discard-draft') as HTMLButtonElement;
   const agenticPromptButtons = Array.from(document.querySelectorAll<HTMLButtonElement>('[data-agentic-prompt]'));
   const pathFileInput = $('#path-file-input') as HTMLInputElement;
   const timelineScrubber = $('#timeline-scrubber') as HTMLInputElement;
@@ -217,7 +239,7 @@ async function main(): Promise<void> {
   }
 
   const keyframeManager = new KeyframeManager({ viewer, events });
-  const agenticPathGenerator = new AgenticPathGenerator({
+  const agenticPathOrchestrator = new AgenticPathOrchestrator({
     onProgress: progress => {
       agenticPathProgress = progress;
       updatePathControlsState();
@@ -228,6 +250,23 @@ async function main(): Promise<void> {
   const exportManager = new ExportManager({ viewer });
   const adaptiveRenderBudgetController = new AdaptiveRenderBudgetController();
   const pathOverlay = new CameraPathOverlay(pathOverlayElement);
+  const draftPreviewPlayer = new PathPreviewPlayer({
+    onSeek: () => {
+      syncPathVisualsState();
+    },
+    onStart: () => {
+      updatePathControlsState();
+      syncPathVisualsState();
+    },
+    onStop: () => {
+      updatePathControlsState();
+      syncPathVisualsState();
+      if (agenticDraft && Math.abs(draftPreviewPlayer.getCurrentTime() - draftPreviewPlayer.getEndTime()) < 0.001) {
+        setStatusNote('Draft preview complete.');
+      }
+    },
+    viewer,
+  });
   let walkState: WalkControlState = 'inactive';
   let pathVisualsEnabled = true;
   let sceneLoadInProgress = false;
@@ -237,16 +276,28 @@ async function main(): Promise<void> {
   let suppressWalkExitStatus = false;
   let exportPlanSettings: ExportPlanSettings = { ...DEFAULT_EXPORT_PLAN_SETTINGS };
   let currentExportProgress: ExportProgress | null = null;
+  let agenticDraft: AgenticPathDraft | null = null;
   let agenticPathProgress: AgenticPathProgress | null = null;
   let agenticPathFailure: AgenticPathFailureFeedback | null = null;
   let agenticPathStatus: AgenticPathStatus = {
     available: false,
+    capabilities: {
+      maxCaptureRounds: 2,
+      maxSegments: 4,
+      segmentTypes: ['hold', 'arc', 'dolly', 'pedestal'],
+      supportedPathModes: ['subject-centric'],
+      unsupportedPathModes: ['route-following', 'multi-subject', 'ambiguous'],
+    },
     model: null,
+    plannerVersion: 'multistep-v1',
     reason: 'Checking whether agentic path generation is available on the server…',
   };
   const isSceneLoaded = () => !sceneLoadInProgress && viewer.isSceneLoaded();
   const isInteractionLocked = () =>
-    keyframeManager.isPreviewActive() || exportManager.isExporting() || agenticPathGenerator.isGenerating();
+    keyframeManager.isPreviewActive()
+    || draftPreviewPlayer.isActive()
+    || exportManager.isExporting()
+    || agenticPathOrchestrator.isGenerating();
   targetFpsSlider.min = String(adaptiveRenderBudgetController.getState().minTargetFps);
   targetFpsSlider.max = String(adaptiveRenderBudgetController.getState().maxTargetFps);
   targetFpsSlider.step = String(adaptiveRenderBudgetController.getState().sliderStep);
@@ -259,7 +310,7 @@ async function main(): Promise<void> {
   });
 
   const getPathVisualsState = () => {
-    const keyframes = keyframeManager.getKeyframes();
+    const keyframes = agenticDraft?.keyframes ?? keyframeManager.getKeyframes();
     const sceneLoaded = !sceneLoadInProgress && viewer.isSceneLoaded();
     const exportActive = exportManager.isExporting();
     const available = sceneLoaded && keyframes.length > 0;
@@ -285,7 +336,7 @@ async function main(): Promise<void> {
     const { keyframes, sceneLoaded, visible } = getPathVisualsState();
     pathOverlay.setViewportSize(viewerHost.clientWidth, viewerHost.clientHeight);
     pathOverlay.setKeyframes(keyframes);
-    pathOverlay.setSelectedKeyframeId(selectedKeyframeId);
+    pathOverlay.setSelectedKeyframeId(agenticDraft ? null : selectedKeyframeId);
     pathOverlay.setSceneBounds(sceneLoaded ? viewer.getSceneBounds() : null);
     pathOverlay.setEnabled(visible);
     if (visible) {
@@ -295,6 +346,40 @@ async function main(): Promise<void> {
     }
 
     updatePathVisualsButton();
+  };
+
+  const updateAgenticDraftCard = () => {
+    const visible = agenticDraft !== null;
+    draftCard.hidden = !visible;
+    draftCard.classList.toggle('visible', visible);
+
+    if (!visible || !agenticDraft) {
+      draftSummary.textContent = '';
+      draftMeta.textContent = '';
+      return;
+    }
+
+    draftSummary.textContent = agenticDraft.summary;
+    const segmentSummary = `${agenticDraft.segments.length} segment${agenticDraft.segments.length === 1 ? '' : 's'} · ${agenticDraft.keyframes.length} keyframe${agenticDraft.keyframes.length === 1 ? '' : 's'}`;
+    draftMeta.textContent = agenticDraft.warning
+      ? `${segmentSummary} · ${agenticDraft.warning}`
+      : segmentSummary;
+  };
+
+  const clearAgenticDraft = (options: { silent?: boolean; statusMessage?: string } = {}): boolean => {
+    if (!agenticDraft) {
+      return false;
+    }
+
+    draftPreviewPlayer.stop();
+    agenticDraft = null;
+    updateAgenticDraftCard();
+    updatePathControlsState();
+    syncPathVisualsState();
+    if (!options.silent && options.statusMessage) {
+      setStatusNote(options.statusMessage);
+    }
+    return true;
   };
 
   const consumeQueuedWalkStatusMessage = (previousState: WalkControlState) => {
@@ -335,6 +420,10 @@ async function main(): Promise<void> {
   };
 
   const addAndRenderKeyframe = (): boolean => {
+    if (agenticDraft) {
+      return false;
+    }
+
     const keyframe = keyframeManager.addKeyframe();
     if (!keyframe) {
       return false;
@@ -390,7 +479,7 @@ async function main(): Promise<void> {
 
   const updatePreviewButton = () => {
     previewButton.classList.toggle('active', keyframeManager.isPreviewActive());
-    previewButton.textContent = keyframeManager.isPreviewActive() ? '■ Stop' : '▶ Preview';
+    previewButton.textContent = keyframeManager.isPreviewActive() ? '■ Stop Live' : '▶ Preview Live';
   };
 
   const buildIdleExportNote = () => {
@@ -476,9 +565,15 @@ async function main(): Promise<void> {
   };
 
   const updateAgenticPathNote = () => {
-    if (agenticPathGenerator.isGenerating()) {
+    if (agenticPathOrchestrator.isGenerating()) {
       agenticPathNote.textContent =
-        agenticPathProgress?.message ?? 'Generating a camera path. Viewer controls are temporarily locked.';
+        agenticPathProgress?.message ?? 'Generating a camera-path draft. Viewer controls are temporarily locked.';
+      return;
+    }
+
+    if (agenticDraft) {
+      agenticPathNote.textContent =
+        'Draft ready. Preview it, apply it to the live path, discard it, or regenerate from the current prompt.';
       return;
     }
 
@@ -490,26 +585,26 @@ async function main(): Promise<void> {
 
     if (!isSceneLoaded()) {
       agenticPathNote.textContent =
-        'Load a scene to enable prompt-driven orbit generation. It uses the current view plus four nearby multi-axis scout captures.';
+        'Load a scene to enable subject-centric draft generation. It captures the current view plus nearby scouts and does not support route-following prompts.';
       return;
     }
 
     const modelLabel = agenticPathStatus.model ? ` Using ${agenticPathStatus.model}.` : '';
     agenticPathNote.textContent =
-      `Prompt a cinematic orbit and append generated keyframes based on the current view plus four nearby multi-axis scout captures.${modelLabel}`;
+      `Prompt one continuous subject-centric camera move. The planner generates a draft first, using the current view plus nearby scout captures.${modelLabel}`;
   };
 
   const updateAgenticPathBlocker = () => {
-    const generationActive = agenticPathGenerator.isGenerating();
+    const generationActive = agenticPathOrchestrator.isGenerating();
     agenticPathBlocker.classList.toggle('active', generationActive);
     agenticPathBlocker.setAttribute('aria-hidden', String(!generationActive));
     agenticPathBlockerMessage.textContent = generationActive
-      ? agenticPathProgress?.message ?? 'Generating a camera path. Viewer controls are temporarily locked.'
+      ? agenticPathProgress?.message ?? 'Generating a camera-path draft. Viewer controls are temporarily locked.'
       : '';
   };
 
   const updateAgenticPathFeedback = () => {
-    const visible = !agenticPathGenerator.isGenerating() && agenticPathFailure !== null;
+    const visible = !agenticPathOrchestrator.isGenerating() && agenticPathFailure !== null;
     agenticPathFeedback.hidden = !visible;
     agenticPathFeedback.classList.toggle('visible', visible);
     agenticPathFeedback.setAttribute('aria-hidden', String(!visible));
@@ -557,40 +652,50 @@ async function main(): Promise<void> {
   const updatePathControlsState = () => {
     const keyframeCount = keyframeManager.getKeyframes().length;
     const sceneLoaded = isSceneLoaded();
-    const previewActive = keyframeManager.isPreviewActive();
+    const livePreviewActive = keyframeManager.isPreviewActive();
+    const draftPreviewActive = draftPreviewPlayer.isActive();
+    const draftPending = agenticDraft !== null;
     const exportActive = exportManager.isExporting();
     const exportCancelling = exportManager.isCancelling();
-    const generationActive = agenticPathGenerator.isGenerating();
+    const generationActive = agenticPathOrchestrator.isGenerating();
     const generationCancelling = agenticPathProgress?.stage === 'cancelling';
-    const interactionLocked = previewActive || exportActive || generationActive;
+    const interactionLocked = livePreviewActive || draftPreviewActive || exportActive || generationActive;
 
-    addKeyframeButton.disabled = !sceneLoaded || exportActive || generationActive;
-    clearKeyframesButton.disabled = keyframeCount === 0 || exportActive || generationActive;
-    previewButton.disabled = !sceneLoaded || keyframeCount < 2 || exportActive || generationActive;
-    savePathButton.disabled = keyframeCount === 0 || exportActive || generationActive;
-    saveExportPlanButton.disabled = keyframeCount === 0 || exportActive || generationActive;
-    loadPathButton.disabled = !sceneLoaded || exportActive || generationActive;
-    timelineScrubber.disabled = !sceneLoaded || keyframeCount < 2 || exportActive || generationActive;
-    exportButton.disabled = !sceneLoaded || keyframeCount < 2 || exportActive || generationActive;
+    addKeyframeButton.disabled = !sceneLoaded || exportActive || generationActive || draftPending || draftPreviewActive;
+    clearKeyframesButton.disabled = keyframeCount === 0 || exportActive || generationActive || draftPending || draftPreviewActive;
+    previewButton.disabled = !sceneLoaded || keyframeCount < 2 || exportActive || generationActive || draftPending || draftPreviewActive;
+    savePathButton.disabled = keyframeCount === 0 || exportActive || generationActive || draftPending;
+    saveExportPlanButton.disabled = keyframeCount === 0 || exportActive || generationActive || draftPending;
+    loadPathButton.disabled = !sceneLoaded || exportActive || generationActive || draftPending || draftPreviewActive;
+    timelineScrubber.disabled = !sceneLoaded || keyframeCount < 2 || exportActive || generationActive || draftPending || draftPreviewActive;
+    exportButton.disabled = !sceneLoaded || keyframeCount < 2 || exportActive || generationActive || draftPending || draftPreviewActive;
     cancelExportButton.disabled = !exportActive || exportCancelling;
-    exportProfileSelect.disabled = exportActive || generationActive;
-    exportFpsInput.disabled = exportActive || generationActive;
-    exportFileBaseInput.disabled = exportActive || generationActive;
-    pathPromptInput.disabled = !sceneLoaded || exportActive || generationActive || !agenticPathStatus.available;
+    exportProfileSelect.disabled = exportActive || generationActive || draftPending;
+    exportFpsInput.disabled = exportActive || generationActive || draftPending;
+    exportFileBaseInput.disabled = exportActive || generationActive || draftPending;
+    pathPromptInput.disabled = !sceneLoaded || exportActive || generationActive || draftPreviewActive || !agenticPathStatus.available;
     generatePathButton.disabled =
       !sceneLoaded
       || exportActive
       || generationActive
+      || draftPreviewActive
       || !agenticPathStatus.available
       || pathPromptInput.value.trim().length === 0;
     generatePathButton.classList.toggle('active', generationActive);
     generatePathButton.textContent = generationActive
       ? agenticPathProgress?.buttonLabel ?? 'Generating…'
-      : '✨ Generate Path';
+      : draftPending
+        ? '↻ Regenerate Draft'
+        : '✨ Generate Draft';
+    previewDraftButton.disabled = !draftPending || exportActive || generationActive || livePreviewActive;
+    previewDraftButton.textContent = draftPreviewActive ? '■ Stop Draft' : '▶ Preview Draft';
+    previewDraftButton.classList.toggle('active', draftPreviewActive);
+    applyDraftButton.disabled = !draftPending || exportActive || generationActive || livePreviewActive || draftPreviewActive;
+    discardDraftButton.disabled = !draftPending || generationActive || exportActive || draftPreviewActive;
     cancelGeneratePathBlockerButton.disabled = !generationActive || generationCancelling;
     cancelGeneratePathBlockerButton.textContent = generationCancelling ? 'Cancelling…' : 'Cancel';
     agenticPromptButtons.forEach(button => {
-      button.disabled = !sceneLoaded || exportActive || generationActive || !agenticPathStatus.available;
+      button.disabled = !sceneLoaded || exportActive || generationActive || draftPreviewActive || !agenticPathStatus.available;
     });
     setSceneButtonsEnabled(sceneLoaded, interactionLocked, walkState);
     setSceneSourceEnabled(!exportActive && !generationActive);
@@ -599,6 +704,7 @@ async function main(): Promise<void> {
     updateExportButton(currentExportProgress);
     updatePerformanceControlsState();
     updatePathVisualsButton();
+    updateAgenticDraftCard();
     updateAgenticPathNote();
     updateAgenticPathBlocker();
     updateAgenticPathFeedback();
@@ -615,14 +721,18 @@ async function main(): Promise<void> {
       if (!agenticPathStatus.available && !agenticPathStatus.reason) {
         agenticPathStatus = {
           available: false,
+          capabilities: agenticPathStatus.capabilities,
           model: agenticPathStatus.model,
+          plannerVersion: agenticPathStatus.plannerVersion,
           reason: 'Agentic path generation is unavailable on this server.',
         };
       }
     } catch {
       agenticPathStatus = {
         available: false,
+        capabilities: agenticPathStatus.capabilities,
         model: null,
+        plannerVersion: 'multistep-v1',
         reason: 'Agentic path generation is unavailable because the server capability check failed.',
       };
     }
@@ -632,6 +742,7 @@ async function main(): Promise<void> {
 
   const renderKeyframeList = () => {
     const keyframes = keyframeManager.getKeyframes();
+    const keyframeEditingDisabled = agenticDraft !== null || isInteractionLocked();
 
     if (keyframes.length === 0) {
       keyframeList.innerHTML = `
@@ -670,9 +781,12 @@ async function main(): Promise<void> {
       moveUpButton.type = 'button';
       moveUpButton.textContent = '↑';
       moveUpButton.title = 'Move up';
-      moveUpButton.disabled = index === 0;
+      moveUpButton.disabled = index === 0 || keyframeEditingDisabled;
       moveUpButton.addEventListener('click', event => {
         event.stopPropagation();
+        if (keyframeEditingDisabled) {
+          return;
+        }
         if (keyframeManager.moveKeyframe(keyframe.id, -1)) {
           selectedKeyframeId = keyframe.id;
           setStatusNote(`Moved keyframe ${index + 1} earlier in the path.`);
@@ -686,9 +800,12 @@ async function main(): Promise<void> {
       moveDownButton.type = 'button';
       moveDownButton.textContent = '↓';
       moveDownButton.title = 'Move down';
-      moveDownButton.disabled = index === keyframes.length - 1;
+      moveDownButton.disabled = index === keyframes.length - 1 || keyframeEditingDisabled;
       moveDownButton.addEventListener('click', event => {
         event.stopPropagation();
+        if (keyframeEditingDisabled) {
+          return;
+        }
         if (keyframeManager.moveKeyframe(keyframe.id, 1)) {
           selectedKeyframeId = keyframe.id;
           setStatusNote(`Moved keyframe ${index + 1} later in the path.`);
@@ -702,8 +819,12 @@ async function main(): Promise<void> {
       deleteButton.type = 'button';
       deleteButton.textContent = '✕';
       deleteButton.title = 'Delete keyframe';
+      deleteButton.disabled = keyframeEditingDisabled;
       deleteButton.addEventListener('click', event => {
         event.stopPropagation();
+        if (keyframeEditingDisabled) {
+          return;
+        }
         if (keyframeManager.deleteKeyframe(keyframe.id)) {
           if (selectedKeyframeId === keyframe.id) {
             selectedKeyframeId = null;
@@ -717,6 +838,9 @@ async function main(): Promise<void> {
       controls.append(moveUpButton, moveDownButton, deleteButton);
       item.append(info, controls);
       item.addEventListener('click', () => {
+        if (keyframeEditingDisabled) {
+          return;
+        }
         selectedKeyframeId = keyframe.id;
         keyframeManager.seekToTime(keyframe.time);
         setStatusNote(`Jumped to keyframe ${index + 1}.`);
@@ -737,6 +861,7 @@ async function main(): Promise<void> {
   window.addEventListener('resize', resizeViewer);
   window.addEventListener('beforeunload', () => {
     stopWalkMode({ silent: true });
+    draftPreviewPlayer.stop();
     pathOverlay.dispose();
     revokeSceneObjectUrl(currentSceneObjectUrl);
     viewer.dispose();
@@ -749,6 +874,7 @@ async function main(): Promise<void> {
 
     stopWalkMode({ silent: true });
     keyframeManager.stopPreview();
+    clearAgenticDraft({ silent: true });
     adaptiveRenderBudgetController.resetScene();
     viewer.setRenderBudget(null);
     agenticPathFailure = null;
@@ -782,7 +908,7 @@ async function main(): Promise<void> {
       updatePathControlsState();
       syncPathVisualsState();
       updateTimelineUI(0, 0);
-      setStatusNote('Scene loaded. Use Z/C to roll the camera, press K to capture keyframes, generate an orbit prompt, scrub the path, or preview a camera move.');
+      setStatusNote('Scene loaded. Use Z/C to roll the camera, press K to capture keyframes, generate a draft path prompt, scrub the path, or preview a camera move.');
     } catch (error) {
       sceneLoadInProgress = false;
       currentSceneObjectUrl = null;
@@ -1006,31 +1132,31 @@ async function main(): Promise<void> {
 
   generatePathButton.addEventListener('click', async () => {
     const prompt = pathPromptInput.value.trim();
-    if (!prompt || !isSceneLoaded() || exportManager.isExporting()) {
+    if (!prompt || !isSceneLoaded() || exportManager.isExporting() || draftPreviewPlayer.isActive()) {
       return;
     }
 
     stopWalkMode({ silent: true });
     keyframeManager.stopPreview();
+    clearAgenticDraft({ silent: true });
     agenticPathFailure = null;
+    agenticPathProgress = null;
     updatePathControlsState();
     syncPathVisualsState();
 
     try {
-      const generatedKeyframes = await agenticPathGenerator.generatePath({
+      const draft = await agenticPathOrchestrator.generateDraft({
         existingKeyframes: keyframeManager.getKeyframes(),
         prompt,
       });
       agenticPathProgress = null;
       agenticPathFailure = null;
-      const appendedKeyframes = keyframeManager.appendKeyframes(generatedKeyframes);
-      selectedKeyframeId = appendedKeyframes[0]?.id ?? selectedKeyframeId;
+      agenticDraft = draft;
+      selectedKeyframeId = null;
       renderKeyframeList();
       updatePathControlsState();
       syncPathVisualsState();
-      setStatusNote(
-        `Appended ${appendedKeyframes.length} generated keyframe${appendedKeyframes.length === 1 ? '' : 's'} from the prompt.`,
-      );
+      setStatusNote('Draft ready. Preview it, apply it, discard it, or regenerate with a different prompt.');
     } catch (error) {
       agenticPathProgress = null;
       agenticPathFailure = buildAgenticPathFailureFeedback(error);
@@ -1042,7 +1168,48 @@ async function main(): Promise<void> {
   });
 
   cancelGeneratePathBlockerButton.addEventListener('click', () => {
-    agenticPathGenerator.cancelGeneration();
+    agenticPathOrchestrator.cancelGeneration();
+  });
+
+  previewDraftButton.addEventListener('click', () => {
+    if (!agenticDraft) {
+      return;
+    }
+
+    if (draftPreviewPlayer.isActive()) {
+      draftPreviewPlayer.stop();
+      setStatusNote('Draft preview stopped.');
+      return;
+    }
+
+    stopWalkMode({ silent: true });
+    keyframeManager.stopPreview();
+    if (draftPreviewPlayer.start(agenticDraft.keyframes, agenticDraft.keyframes[0]?.time ?? 0)) {
+      updatePathControlsState();
+      syncPathVisualsState();
+      setStatusNote('Previewing the generated draft path.');
+    }
+  });
+
+  applyDraftButton.addEventListener('click', () => {
+    if (!agenticDraft) {
+      return;
+    }
+
+    const appliedDraft = agenticDraft;
+    const appendedKeyframes = keyframeManager.appendKeyframes(appliedDraft.keyframes);
+    clearAgenticDraft({ silent: true });
+    selectedKeyframeId = appendedKeyframes[0]?.id ?? null;
+    renderKeyframeList();
+    updatePathControlsState();
+    syncPathVisualsState();
+    setStatusNote(
+      `Applied draft with ${appliedDraft.segments.length} segment${appliedDraft.segments.length === 1 ? '' : 's'} and ${appendedKeyframes.length} keyframe${appendedKeyframes.length === 1 ? '' : 's'}.`,
+    );
+  });
+
+  discardDraftButton.addEventListener('click', () => {
+    clearAgenticDraft({ statusMessage: 'Draft discarded. Live camera path unchanged.' });
   });
 
   clearKeyframesButton.addEventListener('click', () => {
@@ -1061,11 +1228,12 @@ async function main(): Promise<void> {
   previewButton.addEventListener('click', () => {
     if (keyframeManager.isPreviewActive()) {
       keyframeManager.stopPreview();
-      setStatusNote('Preview stopped.');
+      setStatusNote('Live path preview stopped.');
       return;
     }
 
     stopWalkMode({ silent: true });
+    draftPreviewPlayer.stop();
 
     const keyframes = keyframeManager.getKeyframes();
     const selectedPreviewIndex = selectedKeyframeId
@@ -1080,8 +1248,8 @@ async function main(): Promise<void> {
       syncPathVisualsState();
       setStatusNote(
         selectedPreviewIndex >= 0
-          ? `Previewing camera path from keyframe ${selectedPreviewIndex + 1}.`
-          : 'Previewing camera path.',
+          ? `Previewing live camera path from keyframe ${selectedPreviewIndex + 1}.`
+          : 'Previewing live camera path.',
       );
     }
   });
@@ -1119,6 +1287,7 @@ async function main(): Promise<void> {
     }
 
     try {
+      clearAgenticDraft({ silent: true });
       const text = await file.text();
       const imported = parseImportedExportDocument(JSON.parse(text) as unknown);
       const path = keyframeManager.fromJSON(imported.cameraPath);
@@ -1159,6 +1328,7 @@ async function main(): Promise<void> {
 
     stopWalkMode({ silent: true });
     keyframeManager.stopPreview();
+    draftPreviewPlayer.stop();
     adaptiveRenderBudgetController.setSuspended(true);
     currentExportProgress = null;
     const exportTargets = buildExportSettingsList(exportPlanSettings);
@@ -1266,7 +1436,7 @@ async function main(): Promise<void> {
     syncPathVisualsState();
     const totalDuration = keyframeManager.getTotalDuration();
     if (totalDuration > 0 && Math.abs(keyframeManager.getCurrentTime() - totalDuration) < 0.001) {
-      setStatusNote('Preview complete.');
+      setStatusNote('Live path preview complete.');
     }
   });
 

@@ -2,19 +2,15 @@ import * as THREE from 'three';
 import type { InterpolatedPose, Keyframe, SerializableQuaternion, SerializableVector3 } from '../types';
 import { computeFramedSceneView } from '../viewer/sceneFraming';
 import type { ViewerAdapter } from '../viewer/ViewerAdapter';
+import { PathInterpolator } from './PathInterpolator';
 
 export type AgenticOrientationMode = 'look-at-subject' | 'look-forward';
 export type AgenticOrbitDirection = 'clockwise' | 'counterclockwise';
 export type AgenticVerticalBias = 'low' | 'mid' | 'high';
-
-export interface AgenticShotSpec {
-  pathType: 'orbit';
-  orientationMode: AgenticOrientationMode;
-  fullOrbit: boolean;
-  direction?: AgenticOrbitDirection;
-  durationSeconds?: number;
-  verticalBias?: AgenticVerticalBias;
-}
+export type AgenticPathMode = 'subject-centric' | 'route-following' | 'multi-subject' | 'ambiguous';
+export type AgenticPathSegmentType = 'hold' | 'arc' | 'dolly' | 'pedestal';
+export type AgenticDollyDirection = 'in' | 'out';
+export type AgenticPedestalDirection = 'up' | 'down';
 
 export interface AgenticPathCapture {
   camera: SerializedCaptureCamera;
@@ -32,33 +28,143 @@ export interface AgenticSubjectLocalization {
   pixelY: number;
 }
 
-export interface AgenticPathResponse {
-  shotSpec: AgenticShotSpec;
+export interface AgenticPromptIntent {
+  continuousPath: true;
+  orientationPreference: AgenticOrientationMode;
+  pathMode: AgenticPathMode;
+  requestedMoveTypes: AgenticPathSegmentType[];
+  subjectHint: string | null;
+  targetDurationSeconds: number | null;
+  tone: string | null;
+}
+
+export interface AgenticGroundResponse {
+  intent: AgenticPromptIntent;
+  pathMode: AgenticPathMode;
   subjectLocalizations: AgenticSubjectLocalization[];
+  unsupportedReason?: string;
+  warning?: string;
+}
+
+export interface AgenticGroundedSubject {
+  anchor: SerializableVector3;
+  basisForward: SerializableVector3;
+  basisUp: SerializableVector3;
+  captureCount: number;
+  confidence: number;
+  meanResidual: number;
+  sceneScale: number;
+}
+
+export interface AgenticPathStatus {
+  available: boolean;
+  capabilities: {
+    maxCaptureRounds: number;
+    maxSegments: number;
+    segmentTypes: AgenticPathSegmentType[];
+    supportedPathModes: AgenticPathMode[];
+    unsupportedPathModes: AgenticPathMode[];
+  };
+  model: string | null;
+  plannerVersion: 'multistep-v1';
+  reason: string | null;
+}
+
+export interface AgenticBaseSegmentPlan {
+  durationSeconds: number;
+  fovDelta?: number;
+  lookMode: AgenticOrientationMode;
+  segmentType: AgenticPathSegmentType;
+}
+
+export interface AgenticHoldSegmentPlan extends AgenticBaseSegmentPlan {
+  segmentType: 'hold';
+}
+
+export interface AgenticArcSegmentPlan extends AgenticBaseSegmentPlan {
+  direction?: AgenticOrbitDirection;
+  segmentType: 'arc';
+  sweepDegrees?: number;
+  verticalBias?: AgenticVerticalBias;
+}
+
+export interface AgenticDollySegmentPlan extends AgenticBaseSegmentPlan {
+  distanceScale?: number;
+  segmentType: 'dolly';
+  travelDirection?: AgenticDollyDirection;
+  verticalBias?: AgenticVerticalBias;
+}
+
+export interface AgenticPedestalSegmentPlan extends AgenticBaseSegmentPlan {
+  heightScale?: number;
+  segmentType: 'pedestal';
+  travelDirection?: AgenticPedestalDirection;
+}
+
+export type AgenticPathSegmentPlan =
+  | AgenticHoldSegmentPlan
+  | AgenticArcSegmentPlan
+  | AgenticDollySegmentPlan
+  | AgenticPedestalSegmentPlan;
+
+export interface AgenticComposeResponse {
+  segments: AgenticPathSegmentPlan[];
+  summary: string;
+  warning?: string;
+}
+
+export interface AgenticPathDraft {
+  draftId: string;
+  groundedSubject: AgenticGroundedSubject;
+  keyframes: Keyframe[];
+  segments: AgenticPathSegmentPlan[];
+  summary: string;
   warning?: string;
 }
 
 export interface AgenticPathProgress {
   buttonLabel: string;
   captureIndex?: number;
+  captureRound?: number;
   message: string;
-  stage: 'capturing-current' | 'capturing-scout' | 'planning' | 'triangulating' | 'building' | 'cancelling';
+  stage:
+    | 'capture-round-1'
+    | 'grounding'
+    | 'capture-round-2'
+    | 'composing'
+    | 'validating'
+    | 'repairing'
+    | 'cancelling';
   totalCaptures?: number;
 }
 
-export interface AgenticPathGeneratorOptions {
+export interface AgenticPathOrchestratorOptions {
   fetchImpl?: typeof fetch;
   onProgress?: (progress: AgenticPathProgress) => void;
   timeoutMs?: number;
   viewer: ViewerAdapter;
 }
 
-export interface GenerateAgenticPathOptions {
+export interface GenerateAgenticDraftOptions {
   existingKeyframes: Keyframe[];
   prompt: string;
 }
 
-interface AgenticPathRequest {
+export interface BuildDraftPathOptions {
+  basePose: InterpolatedPose;
+  bounds: THREE.Box3;
+  groundedSubject: AgenticGroundedSubject;
+  segments: AgenticPathSegmentPlan[];
+  startTime: number;
+}
+
+export interface AgenticDraftValidationResult {
+  feedback: string[];
+  valid: boolean;
+}
+
+interface AgenticGroundRequest {
+  captureRound: number;
   captures: AgenticPathCapture[];
   currentCamera: SerializedCaptureCamera;
   pathTail: SerializedPathTail | null;
@@ -66,12 +172,18 @@ interface AgenticPathRequest {
   sceneBounds: SerializedBounds;
 }
 
-interface BuildOrbitKeyframesOptions {
-  anchor: THREE.Vector3;
-  basePose: InterpolatedPose;
-  bounds: THREE.Box3;
-  shotSpec: AgenticShotSpec;
-  startTime: number;
+interface AgenticComposeRequest {
+  currentCamera: SerializedCaptureCamera;
+  groundedSubject: AgenticGroundedSubject;
+  intent: AgenticPromptIntent;
+  pathTail: SerializedPathTail | null;
+  sceneBounds: SerializedBounds;
+  validationFeedback?: string[];
+}
+
+interface BuiltDraftPath {
+  keyframes: Keyframe[];
+  windows: SegmentWindow[];
 }
 
 interface OrbitFrame {
@@ -81,15 +193,27 @@ interface OrbitFrame {
   radius: number;
 }
 
+interface RayObservation {
+  confidence: number;
+  direction: THREE.Vector3;
+  origin: THREE.Vector3;
+}
+
 interface ScoutPoseSpec {
   pitchRadians: number;
   yawRadians: number;
 }
 
-interface RayObservation {
-  confidence: number;
-  direction: THREE.Vector3;
-  origin: THREE.Vector3;
+interface SegmentWindow {
+  endTime: number;
+  lookMode: AgenticOrientationMode;
+  segmentType: AgenticPathSegmentType;
+  startTime: number;
+}
+
+interface SegmentPoseSample {
+  fov: number;
+  position: THREE.Vector3;
 }
 
 interface SerializedBounds {
@@ -114,21 +238,34 @@ interface SerializedPathTail {
 type UnknownRecord = Record<string, unknown>;
 
 const APPEND_BRIDGE_SECONDS = 1;
-const DEFAULT_ORBIT_DURATION_SECONDS = 6;
-const DEFAULT_ORBIT_SWEEP_DEGREES = 300;
-const DEFAULT_PARTIAL_ORBIT_KEYFRAME_COUNT = 8;
-const DEFAULT_FULL_ORBIT_KEYFRAME_COUNT = 9;
-const DEFAULT_GENERATION_TIMEOUT_MS = 45_000;
+const DEFAULT_GENERATION_TIMEOUT_MS = 60_000;
 const DEFAULT_LOOK_UP = new THREE.Vector3(0, 1, 0);
 const MAX_CAPTURE_LONG_SIDE = 640;
+const MAX_VALIDATION_FEEDBACK = 4;
 const MIN_VECTOR_LENGTH_SQUARED = 1e-8;
-const TOTAL_CAPTURE_COUNT = 5;
-const SCOUT_POSE_SPECS: ScoutPoseSpec[] = [
-  { pitchRadians: THREE.MathUtils.degToRad(6), yawRadians: THREE.MathUtils.degToRad(-10) },
-  { pitchRadians: THREE.MathUtils.degToRad(6), yawRadians: THREE.MathUtils.degToRad(10) },
-  { pitchRadians: THREE.MathUtils.degToRad(-6), yawRadians: THREE.MathUtils.degToRad(-10) },
-  { pitchRadians: THREE.MathUtils.degToRad(-6), yawRadians: THREE.MathUtils.degToRad(10) },
+const ROUND_ONE_TOTAL_CAPTURE_COUNT = 7;
+const ROUND_TWO_TOTAL_CAPTURE_COUNT = 4;
+const ROUND_ONE_SCOUT_POSE_SPECS: ScoutPoseSpec[] = [
+  { pitchRadians: 0, yawRadians: THREE.MathUtils.degToRad(-24) },
+  { pitchRadians: 0, yawRadians: THREE.MathUtils.degToRad(-12) },
+  { pitchRadians: 0, yawRadians: THREE.MathUtils.degToRad(12) },
+  { pitchRadians: 0, yawRadians: THREE.MathUtils.degToRad(24) },
+  { pitchRadians: THREE.MathUtils.degToRad(-10), yawRadians: 0 },
+  { pitchRadians: THREE.MathUtils.degToRad(10), yawRadians: 0 },
 ];
+const ROUND_TWO_RESCAN_POSE_SPECS: ScoutPoseSpec[] = [
+  { pitchRadians: 0, yawRadians: THREE.MathUtils.degToRad(-8) },
+  { pitchRadians: 0, yawRadians: THREE.MathUtils.degToRad(8) },
+  { pitchRadians: THREE.MathUtils.degToRad(-8), yawRadians: 0 },
+  { pitchRadians: THREE.MathUtils.degToRad(8), yawRadians: 0 },
+];
+const SEGMENT_KEYFRAME_COUNT: Record<AgenticPathSegmentType, number> = {
+  arc: 4,
+  dolly: 3,
+  hold: 2,
+  pedestal: 3,
+};
+const VALIDATION_SAMPLE_STEP_SECONDS = 0.25;
 
 export class AgenticPathGenerationError extends Error {
   constructor(message: string) {
@@ -137,7 +274,7 @@ export class AgenticPathGenerationError extends Error {
   }
 }
 
-export class AgenticPathGenerator {
+export class AgenticPathOrchestrator {
   private readonly fetchImpl: typeof fetch;
   private generating = false;
   private generationTimeout: AgenticGenerationTimeout | null = null;
@@ -145,7 +282,7 @@ export class AgenticPathGenerator {
   private readonly timeoutMs: number;
   private readonly viewer: ViewerAdapter;
 
-  constructor(options: AgenticPathGeneratorOptions) {
+  constructor(options: AgenticPathOrchestratorOptions) {
     this.viewer = options.viewer;
     this.fetchImpl = resolveFetchImpl(options.fetchImpl);
     this.onProgress = options.onProgress;
@@ -163,25 +300,25 @@ export class AgenticPathGenerator {
 
     this.reportProgress({
       buttonLabel: 'Cancelling…',
-      message: 'Canceling agentic path generation and restoring controls…',
+      message: 'Canceling agentic draft generation and restoring controls…',
       stage: 'cancelling',
     });
-    this.generationTimeout.cancel('Agentic path generation canceled. Controls restored.');
+    this.generationTimeout.cancel('Agentic draft generation canceled. Controls restored.');
     return true;
   }
 
-  async generatePath(options: GenerateAgenticPathOptions): Promise<Keyframe[]> {
+  async generateDraft(options: GenerateAgenticDraftOptions): Promise<AgenticPathDraft> {
     if (this.generating) {
       throw new AgenticPathGenerationError('Agentic path generation is already in progress.');
     }
 
     const prompt = options.prompt.trim();
     if (!prompt) {
-      throw new AgenticPathGenerationError('Enter a camera-path prompt before generating keyframes.');
+      throw new AgenticPathGenerationError('Enter a camera-path prompt before generating a draft.');
     }
 
     if (!this.viewer.isSceneLoaded()) {
-      throw new AgenticPathGenerationError('Load a scene before generating a camera path.');
+      throw new AgenticPathGenerationError('Load a scene before generating a camera-path draft.');
     }
 
     const camera = this.viewer.getCamera();
@@ -194,45 +331,119 @@ export class AgenticPathGenerator {
     const livePose = clonePoseFromCamera(camera);
     const timeout = createGenerationTimeout(this.timeoutMs);
     this.generationTimeout = timeout;
+    const basePose = options.existingKeyframes.at(-1) ? keyframeToPose(options.existingKeyframes.at(-1) as Keyframe) : livePose;
+    const startTime = options.existingKeyframes.length > 0
+      ? (options.existingKeyframes.at(-1)?.time ?? 0) + APPEND_BRIDGE_SECONDS
+      : 0;
+    const serializedCurrentCamera = serializePoseAsCamera(livePose, camera.aspect);
+    const serializedBounds = serializeBounds(bounds);
+    const serializedPathTail = serializePathTail(options.existingKeyframes.at(-1) ?? null);
 
     try {
-      const captures = await this.captureScoutSet(bounds, livePose, camera, timeout);
-      const response = await this.requestPathPlan({
-        captures,
-        currentCamera: serializeCamera(camera),
-        pathTail: serializePathTail(options.existingKeyframes.at(-1) ?? null),
+      const roundOneCaptures = await this.captureRoundOne(bounds, livePose, camera, timeout);
+      let groundResponse = await this.requestGround({
+        captureRound: 1,
+        captures: roundOneCaptures,
+        currentCamera: serializedCurrentCamera,
+        pathTail: serializedPathTail,
         prompt,
-        sceneBounds: serializeBounds(bounds),
+        sceneBounds: serializedBounds,
       }, timeout);
-      this.reportProgress({
-        buttonLabel: 'Triangulating…',
-        message: 'Triangulating the subject anchor from the captured views…',
-        stage: 'triangulating',
-      });
-      const anchor = triangulateSubjectAnchor(response.subjectLocalizations, captures, bounds);
-      const lastKeyframe = options.existingKeyframes.at(-1) ?? null;
-      const basePose = lastKeyframe ? keyframeToPose(lastKeyframe) : livePose;
-      const startTime = lastKeyframe ? lastKeyframe.time + APPEND_BRIDGE_SECONDS : 0;
-      this.reportProgress({
-        buttonLabel: 'Building path…',
-        message: 'Building orbit keyframes from the planner output…',
-        stage: 'building',
-      });
+      assertSupportedGroundResponse(groundResponse);
 
-      return buildOrbitKeyframes({
-        anchor,
+      let captures = [...roundOneCaptures];
+      let localizations = [...groundResponse.subjectLocalizations];
+      let groundedSubject = groundSubjectFromLocalizations(localizations, captures, bounds, basePose);
+
+      if (shouldRunTargetedRescan(groundedSubject)) {
+        const roundTwoCaptures = await this.captureRoundTwo(
+          vectorFromSerializable(groundedSubject.anchor),
+          bounds,
+          livePose,
+          camera,
+          timeout,
+        );
+        captures = [...captures, ...roundTwoCaptures];
+
+        const roundTwoGroundResponse = await this.requestGround({
+          captureRound: 2,
+          captures: roundTwoCaptures,
+          currentCamera: serializedCurrentCamera,
+          pathTail: serializedPathTail,
+          prompt,
+          sceneBounds: serializedBounds,
+        }, timeout);
+        assertSupportedGroundResponse(roundTwoGroundResponse);
+        groundResponse = roundTwoGroundResponse;
+        localizations = [...localizations, ...roundTwoGroundResponse.subjectLocalizations];
+        groundedSubject = groundSubjectFromLocalizations(localizations, captures, bounds, basePose);
+      }
+
+      let composeResponse = await this.requestCompose({
+        currentCamera: serializedCurrentCamera,
+        groundedSubject,
+        intent: groundResponse.intent,
+        pathTail: serializedPathTail,
+        sceneBounds: serializedBounds,
+      }, timeout);
+      let builtDraft = buildDraftPath({
         basePose,
         bounds,
-        shotSpec: response.shotSpec,
+        groundedSubject,
+        segments: composeResponse.segments,
         startTime,
       });
+      this.reportProgress({
+        buttonLabel: 'Validating…',
+        message: 'Validating the generated camera-path draft…',
+        stage: 'validating',
+      });
+      let validation = validateDraftPath(builtDraft, bounds, groundedSubject);
+
+      if (!validation.valid) {
+        composeResponse = await this.requestCompose({
+          currentCamera: serializedCurrentCamera,
+          groundedSubject,
+          intent: groundResponse.intent,
+          pathTail: serializedPathTail,
+          sceneBounds: serializedBounds,
+          validationFeedback: validation.feedback,
+        }, timeout);
+        builtDraft = buildDraftPath({
+          basePose,
+          bounds,
+          groundedSubject,
+          segments: composeResponse.segments,
+          startTime,
+        });
+        this.reportProgress({
+          buttonLabel: 'Validating…',
+          message: 'Re-validating the repaired camera-path draft…',
+          stage: 'validating',
+        });
+        validation = validateDraftPath(builtDraft, bounds, groundedSubject);
+        if (!validation.valid) {
+          throw new AgenticPathGenerationError(validation.feedback[0] ?? 'The draft path could not be validated.');
+        }
+      }
+
+      return {
+        draftId: crypto.randomUUID(),
+        groundedSubject,
+        keyframes: builtDraft.keyframes,
+        segments: composeResponse.segments,
+        summary: composeResponse.summary,
+        warning: composeResponse.warning ?? groundResponse.warning,
+      };
     } finally {
       this.generating = false;
       this.generationTimeout = null;
+      this.viewer.applyCameraPose(livePose);
+      this.viewer.renderNow();
     }
   }
 
-  private async captureScoutSet(
+  private async captureRoundOne(
     bounds: THREE.Box3,
     livePose: InterpolatedPose,
     camera: THREE.PerspectiveCamera,
@@ -241,29 +452,80 @@ export class AgenticPathGenerator {
     const captures: AgenticPathCapture[] = [];
 
     try {
-      this.reportCaptureProgress(1, 'current');
-      await this.renderFrame(timeout, 'capturing the current view');
-      captures.push(
-        await this.captureCurrentView('capture-current', 'current', camera, timeout, 'capturing the current view'),
-      );
+      this.reportCaptureProgress(1, 1, ROUND_ONE_TOTAL_CAPTURE_COUNT, 'Capturing the current view for draft planning.');
+      await this.renderFrame(timeout, 'capturing round 1 current view');
+      captures.push(await this.captureCurrentView(
+        'capture-round-1-current',
+        'current',
+        camera,
+        timeout,
+        'capturing round 1 current view',
+      ));
 
       const scoutPoses = buildScoutCameraPoses(bounds, camera);
       for (const [index, scoutPose] of scoutPoses.entries()) {
-        timeout.throwIfAborted('capturing scout views');
-        this.reportCaptureProgress(index + 2, 'scout');
+        timeout.throwIfAborted('capturing round 1 scout views');
+        this.reportCaptureProgress(
+          1,
+          index + 2,
+          ROUND_ONE_TOTAL_CAPTURE_COUNT,
+          `Capturing nearby scout view ${index + 1}/6 for draft planning.`,
+        );
         this.viewer.applyCameraPose(scoutPose);
-        await this.renderFrame(timeout, 'capturing scout views');
+        await this.renderFrame(timeout, 'capturing round 1 scout views');
         const activeCamera = this.viewer.getCamera();
         if (!activeCamera) {
-          throw new AgenticPathGenerationError('Viewer camera became unavailable during scout capture.');
+          throw new AgenticPathGenerationError('Viewer camera became unavailable during draft capture.');
         }
 
         captures.push(await this.captureCurrentView(
-          `capture-scout-${index + 1}`,
+          `capture-round-1-scout-${index + 1}`,
           'scout',
           activeCamera,
           timeout,
-          'capturing scout views',
+          'capturing round 1 scout views',
+        ));
+      }
+    } finally {
+      this.viewer.applyCameraPose(livePose);
+      this.viewer.renderNow();
+    }
+
+    return captures;
+  }
+
+  private async captureRoundTwo(
+    anchor: THREE.Vector3,
+    bounds: THREE.Box3,
+    livePose: InterpolatedPose,
+    camera: THREE.PerspectiveCamera,
+    timeout: AgenticGenerationTimeout,
+  ): Promise<AgenticPathCapture[]> {
+    const captures: AgenticPathCapture[] = [];
+
+    try {
+      const rescanPoses = buildTargetedRescanPoses(anchor, bounds, camera);
+      for (const [index, rescanPose] of rescanPoses.entries()) {
+        timeout.throwIfAborted('capturing round 2 targeted rescans');
+        this.reportCaptureProgress(
+          2,
+          index + 1,
+          ROUND_TWO_TOTAL_CAPTURE_COUNT,
+          `Capturing targeted rescan ${index + 1}/4 around the provisional subject anchor.`,
+        );
+        this.viewer.applyCameraPose(rescanPose);
+        await this.renderFrame(timeout, 'capturing round 2 targeted rescans');
+        const activeCamera = this.viewer.getCamera();
+        if (!activeCamera) {
+          throw new AgenticPathGenerationError('Viewer camera became unavailable during targeted rescans.');
+        }
+
+        captures.push(await this.captureCurrentView(
+          `capture-round-2-scout-${index + 1}`,
+          'scout',
+          activeCamera,
+          timeout,
+          'capturing round 2 targeted rescans',
         ));
       }
     } finally {
@@ -300,45 +562,82 @@ export class AgenticPathGenerator {
     await timeout.runStep(waitForNextAnimationFrame, context);
   }
 
-  private async requestPathPlan(
-    request: AgenticPathRequest,
+  private async requestGround(
+    request: AgenticGroundRequest,
     timeout: AgenticGenerationTimeout,
-  ): Promise<AgenticPathResponse> {
+  ): Promise<AgenticGroundResponse> {
     this.reportProgress({
-      buttonLabel: 'Planning…',
-      message: 'Sending the captured views to the planner…',
-      stage: 'planning',
+      buttonLabel: request.captureRound === 1 ? 'Grounding…' : 'Refining…',
+      captureRound: request.captureRound,
+      message: request.captureRound === 1
+        ? 'Grounding the prompt against the captured views…'
+        : 'Refining the grounded subject using targeted rescans…',
+      stage: 'grounding',
     });
-    const response = await timeout.runStep(() => this.fetchImpl('/api/path/generate', {
+    const response = await timeout.runStep(() => this.fetchImpl('/api/path/ground', {
       body: JSON.stringify(request),
       headers: {
         'Content-Type': 'application/json',
       },
       method: 'POST',
       signal: timeout.signal,
-    }), 'waiting for the planner response');
+    }), 'waiting for the grounding response');
 
     if (!response.ok) {
       throw new AgenticPathGenerationError(
-        await timeout.runStep(() => readAgenticPathError(response), 'reading the planner error response'),
+        await timeout.runStep(() => readAgenticPathError(response), 'reading the grounding error response'),
       );
     }
 
-    return parseAgenticPathResponse(
-      await timeout.runStep(() => response.json() as Promise<unknown>, 'reading the planner response'),
+    return parseGroundResponse(
+      await timeout.runStep(() => response.json() as Promise<unknown>, 'reading the grounding response'),
     );
   }
 
-  private reportCaptureProgress(captureIndex: number, role: 'current' | 'scout'): void {
-    const isCurrentCapture = role === 'current';
+  private async requestCompose(
+    request: AgenticComposeRequest,
+    timeout: AgenticGenerationTimeout,
+  ): Promise<AgenticComposeResponse> {
     this.reportProgress({
-      buttonLabel: `Capturing ${captureIndex}/${TOTAL_CAPTURE_COUNT}…`,
+      buttonLabel: request.validationFeedback?.length ? 'Repairing…' : 'Composing…',
+      message: request.validationFeedback?.length
+        ? 'Requesting a repaired draft composition from the planner…'
+        : 'Composing a multi-step camera-path draft…',
+      stage: request.validationFeedback?.length ? 'repairing' : 'composing',
+    });
+    const response = await timeout.runStep(() => this.fetchImpl('/api/path/compose', {
+      body: JSON.stringify(request),
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      method: 'POST',
+      signal: timeout.signal,
+    }), 'waiting for the composition response');
+
+    if (!response.ok) {
+      throw new AgenticPathGenerationError(
+        await timeout.runStep(() => readAgenticPathError(response), 'reading the composition error response'),
+      );
+    }
+
+    return parseComposeResponse(
+      await timeout.runStep(() => response.json() as Promise<unknown>, 'reading the composition response'),
+    );
+  }
+
+  private reportCaptureProgress(
+    captureRound: 1 | 2,
+    captureIndex: number,
+    totalCaptures: number,
+    message: string,
+  ): void {
+    this.reportProgress({
+      buttonLabel: `Capture Round ${captureRound} ${captureIndex}/${totalCaptures}…`,
       captureIndex,
-      message: isCurrentCapture
-        ? 'Capturing the current view (1/5). Viewer controls are temporarily locked.'
-        : `Capturing nearby scout view ${captureIndex - 1}/4 (${captureIndex}/${TOTAL_CAPTURE_COUNT}). Viewer controls are temporarily locked.`,
-      stage: isCurrentCapture ? 'capturing-current' : 'capturing-scout',
-      totalCaptures: TOTAL_CAPTURE_COUNT,
+      captureRound,
+      message: `${message} Viewer controls are temporarily locked.`,
+      stage: captureRound === 1 ? 'capture-round-1' : 'capture-round-2',
+      totalCaptures,
     });
   }
 
@@ -347,46 +646,38 @@ export class AgenticPathGenerator {
   }
 }
 
+export { AgenticPathOrchestrator as AgenticPathGenerator };
+
 export function buildScoutCameraPoses(
   bounds: THREE.Box3,
   camera: THREE.PerspectiveCamera,
 ): InterpolatedPose[] {
-  const center = bounds.getCenter(new THREE.Vector3());
-  const sceneSize = bounds.getSize(new THREE.Vector3());
-  const sceneDiagonal = Math.max(sceneSize.length(), 1);
-  const framedView = computeFramedSceneView(bounds, camera);
-  const framedDistance = framedView ? framedView.position.distanceTo(center) : camera.position.distanceTo(center);
-  const currentDistance = Math.max(camera.position.distanceTo(center), 1);
-  const minRadius = Math.max(Math.min(currentDistance * 0.92, sceneDiagonal * 0.16), 0.75);
-  const maxRadius = Math.max(
-    currentDistance * 1.08,
-    Math.min(framedDistance, currentDistance + sceneDiagonal * 0.14),
-    minRadius + 0.25,
+  return buildCapturePosesAroundTarget(
+    bounds.getCenter(new THREE.Vector3()),
+    bounds,
+    camera,
+    ROUND_ONE_SCOUT_POSE_SPECS,
+    0.92,
+    1.08,
   );
-  const radius = THREE.MathUtils.clamp(currentDistance, minRadius, maxRadius);
-  const baseOffset = resolveScoutBaseOffset(center, camera.position, camera.quaternion, radius);
-  const baseUp = getUpVector(camera.quaternion);
-  const baseRight = getRightVector(camera.quaternion);
-
-  return SCOUT_POSE_SPECS.map(spec => {
-    const rotatedScout = rotateScoutOffset(baseOffset, baseUp, baseRight, spec);
-    const position = center.clone().add(rotatedScout.offset);
-
-    return {
-      fov: camera.fov,
-      position,
-      quaternion: buildLookQuaternion(position, center, rotatedScout.up),
-    };
-  });
 }
 
-export function triangulateSubjectAnchor(
+export function buildTargetedRescanPoses(
+  anchor: THREE.Vector3,
+  bounds: THREE.Box3,
+  camera: THREE.PerspectiveCamera,
+): InterpolatedPose[] {
+  return buildCapturePosesAroundTarget(anchor, bounds, camera, ROUND_TWO_RESCAN_POSE_SPECS, 0.86, 1.02);
+}
+
+export function groundSubjectFromLocalizations(
   localizations: AgenticSubjectLocalization[],
   captures: AgenticPathCapture[],
   sceneBounds: THREE.Box3,
-): THREE.Vector3 {
+  basePose: InterpolatedPose,
+): AgenticGroundedSubject {
   if (localizations.length < 2) {
-    throw new AgenticPathGenerationError('The planner could not localize the requested subject in enough views.');
+    throw new AgenticPathGenerationError('The planner could not localize the requested subject in enough captures.');
   }
 
   const captureById = new Map(captures.map(capture => [capture.id, capture]));
@@ -395,7 +686,6 @@ export function triangulateSubjectAnchor(
     if (!capture) {
       throw new AgenticPathGenerationError(`Planner referenced an unknown capture: ${localization.captureId}`);
     }
-
     return buildRayObservation(capture, localization);
   });
 
@@ -416,61 +706,317 @@ export function triangulateSubjectAnchor(
     throw new AgenticPathGenerationError('The resolved subject anchor falls outside the loaded scene bounds.');
   }
 
-  return solvedPoint;
+  const averageLocalizationConfidence = observations.reduce((sum, observation) => sum + observation.confidence, 0)
+    / observations.length;
+  const residualPenalty = THREE.MathUtils.clamp(meanResidual / Math.max(sceneDiagonal * 0.05, 0.08), 0, 1);
+  const captureFactor = THREE.MathUtils.clamp(observations.length / 4, 0.55, 1.2);
+
+  return {
+    anchor: vectorToSerializable(solvedPoint),
+    basisForward: vectorToSerializable(getForwardVector(basePose.quaternion)),
+    basisUp: vectorToSerializable(getUpVector(basePose.quaternion)),
+    captureCount: observations.length,
+    confidence: THREE.MathUtils.clamp(averageLocalizationConfidence * captureFactor * (1 - residualPenalty * 0.45), 0.05, 0.99),
+    meanResidual,
+    sceneScale: sceneDiagonal,
+  };
 }
 
-export function buildOrbitKeyframes(options: BuildOrbitKeyframesOptions): Keyframe[] {
-  const { anchor, basePose, bounds, shotSpec, startTime } = options;
+export function buildDraftPath(options: BuildDraftPathOptions): BuiltDraftPath {
+  const anchor = vectorFromSerializable(options.groundedSubject.anchor);
+  const axis = normalizedVectorFromSerializable(options.groundedSubject.basisUp, DEFAULT_LOOK_UP);
+  const sceneSize = options.bounds.getSize(new THREE.Vector3());
+  const sceneDiagonal = Math.max(sceneSize.length(), 1);
+  const keyframes: Keyframe[] = [];
+  const windows: SegmentWindow[] = [];
+  let currentPose = clonePose(options.basePose);
+  let currentTime = options.startTime;
+
+  for (const [segmentIndex, segment] of options.segments.entries()) {
+    const sampleCount = SEGMENT_KEYFRAME_COUNT[segment.segmentType];
+    const segmentSamples = buildSegmentSamples(segment, currentPose, anchor, axis, options.bounds, sceneDiagonal, sampleCount);
+    const segmentStartTime = currentTime;
+
+    segmentSamples.forEach((sample, sampleIndex) => {
+      if (segmentIndex > 0 && sampleIndex === 0) {
+        return;
+      }
+
+      const ratio = sampleCount > 1 ? sampleIndex / (sampleCount - 1) : 1;
+      keyframes.push({
+        fov: sample.fov,
+        id: crypto.randomUUID(),
+        position: vectorToSerializable(sample.position),
+        quaternion: quaternionToSerializable(sample.quaternion),
+        time: segmentStartTime + segment.durationSeconds * ratio,
+      });
+    });
+
+    currentTime += segment.durationSeconds;
+    currentPose = clonePose(segmentSamples.at(-1) as InterpolatedPose);
+    windows.push({
+      endTime: currentTime,
+      lookMode: segment.lookMode,
+      segmentType: segment.segmentType,
+      startTime: segmentStartTime,
+    });
+  }
+
+  return {
+    keyframes,
+    windows,
+  };
+}
+
+export function validateDraftPath(
+  builtDraft: BuiltDraftPath,
+  bounds: THREE.Box3,
+  groundedSubject: AgenticGroundedSubject,
+): AgenticDraftValidationResult {
+  if (builtDraft.keyframes.length < 2) {
+    return {
+      feedback: ['The composed draft path did not contain enough keyframes to preview.'],
+      valid: false,
+    };
+  }
+
+  const totalDuration = builtDraft.keyframes.at(-1)?.time ?? 0;
+  const firstTime = builtDraft.keyframes[0]?.time ?? 0;
+  const feedback: string[] = [];
+  const sceneDiagonal = groundedSubject.sceneScale;
+  const expandedBounds = bounds.clone().expandByScalar(sceneDiagonal * 0.15);
+  const minDistanceToSubject = Math.max(0.5, sceneDiagonal * 0.15);
+  const anchor = vectorFromSerializable(groundedSubject.anchor);
+  const pathInterpolator = new PathInterpolator();
+  pathInterpolator.setKeyframes(builtDraft.keyframes);
+
+  if (totalDuration - firstTime < 6 || totalDuration - firstTime > 18) {
+    feedback.push('The draft duration must stay between 6 and 18 seconds.');
+  }
+
+  for (let sampleTime = firstTime; sampleTime <= totalDuration + 1e-6; sampleTime += VALIDATION_SAMPLE_STEP_SECONDS) {
+    const pose = pathInterpolator.evaluate(sampleTime);
+    if (!pose) {
+      feedback.push('The draft path could not be interpolated for validation.');
+      break;
+    }
+
+    if (!expandedBounds.containsPoint(pose.position)) {
+      pushValidationFeedback(feedback, 'The draft camera left the supported scene volume.');
+    }
+
+    if (pose.fov < 25 || pose.fov > 85) {
+      pushValidationFeedback(feedback, 'The draft changed FOV outside the supported 25-85 range.');
+    }
+
+    if (pose.position.distanceTo(anchor) < minDistanceToSubject) {
+      pushValidationFeedback(feedback, 'The draft moved the camera too close to the subject.');
+    }
+
+    const projectedAnchor = projectSubject(anchor, pose);
+    if (!projectedAnchor.visible) {
+      pushValidationFeedback(feedback, 'The subject left the frame during the generated draft.');
+      continue;
+    }
+
+    const window = findSegmentWindow(builtDraft.windows, sampleTime);
+    if (window?.lookMode === 'look-at-subject' && (
+      Math.abs(projectedAnchor.ndcX) > 0.6
+      || Math.abs(projectedAnchor.ndcY) > 0.6
+    )) {
+      pushValidationFeedback(feedback, 'Subject drifted out of the safe frame box.');
+    }
+  }
+
+  return {
+    feedback,
+    valid: feedback.length === 0,
+  };
+}
+
+function assertSupportedGroundResponse(response: AgenticGroundResponse): void {
+  if (response.pathMode !== 'subject-centric') {
+    throw new AgenticPathGenerationError(
+      response.unsupportedReason ?? 'That prompt is not supported in agentic path v1.',
+    );
+  }
+}
+
+function buildCapturePosesAroundTarget(
+  target: THREE.Vector3,
+  bounds: THREE.Box3,
+  camera: THREE.PerspectiveCamera,
+  specs: ScoutPoseSpec[],
+  minDistanceFactor: number,
+  maxDistanceFactor: number,
+): InterpolatedPose[] {
   const sceneSize = bounds.getSize(new THREE.Vector3());
   const sceneDiagonal = Math.max(sceneSize.length(), 1);
-  const orbitFrame = deriveOrbitFrame(anchor, basePose.position, basePose.quaternion);
-  const unclampedRadius = orbitFrame.radius;
-  const minRadius = Math.max(sceneDiagonal * 0.2, 0.75);
-  const maxRadius = Math.max(sceneDiagonal * 1.5, minRadius + 0.5);
-  const radius = THREE.MathUtils.clamp(unclampedRadius || sceneDiagonal * 0.5, minRadius, maxRadius);
-  const sceneHeight = Math.max(computeBoundsExtentAlongAxis(bounds, orbitFrame.axis), sceneDiagonal * 0.25, 1);
-  const heightOffset = resolveHeightOffset(shotSpec.verticalBias, orbitFrame.height, sceneHeight);
-  const durationSeconds = THREE.MathUtils.clamp(
-    shotSpec.durationSeconds ?? DEFAULT_ORBIT_DURATION_SECONDS,
-    2,
-    20,
+  const framedView = computeFramedSceneView(bounds, camera);
+  const framedDistance = framedView ? framedView.position.distanceTo(target) : camera.position.distanceTo(target);
+  const currentDistance = Math.max(camera.position.distanceTo(target), 1);
+  const minRadius = Math.max(Math.min(currentDistance * minDistanceFactor, sceneDiagonal * 0.2), 0.75);
+  const maxRadius = Math.max(
+    currentDistance * maxDistanceFactor,
+    Math.min(framedDistance, currentDistance + sceneDiagonal * 0.18),
+    minRadius + 0.25,
   );
-  const sweepRadians = THREE.MathUtils.degToRad(
-    shotSpec.fullOrbit ? 360 : DEFAULT_ORBIT_SWEEP_DEGREES,
-  );
-  const keyframeCount = shotSpec.fullOrbit ? DEFAULT_FULL_ORBIT_KEYFRAME_COUNT : DEFAULT_PARTIAL_ORBIT_KEYFRAME_COUNT;
-  const direction = resolveOrbitDirection(shotSpec, basePose, orbitFrame);
-  const directionSign = direction === 'counterclockwise' ? 1 : -1;
+  const radius = THREE.MathUtils.clamp(currentDistance, minRadius, maxRadius);
+  const baseOffset = resolveScoutBaseOffset(target, camera.position, camera.quaternion, radius);
+  const baseUp = getUpVector(camera.quaternion);
+  const baseRight = getRightVector(camera.quaternion);
 
-  return Array.from({ length: keyframeCount }, (_, index) => {
-    const ratio = index / (keyframeCount - 1);
-    const angle = directionSign * sweepRadians * ratio;
-    const position = createOrbitPosition(anchor, orbitFrame, radius, heightOffset, angle);
-    const nextRatio = index === keyframeCount - 1 ? ratio : (index + 1) / (keyframeCount - 1);
-    const nextAngle = directionSign * sweepRadians * nextRatio;
-    const lookTarget = index === keyframeCount - 1
-      ? position.clone().add(
-          position.clone().sub(
-            createOrbitPosition(
-              anchor,
-              orbitFrame,
-              radius,
-              heightOffset,
-              directionSign * sweepRadians * Math.max(0, (index - 1) / (keyframeCount - 1)),
-            ),
-          ),
-        )
-      : createOrbitPosition(anchor, orbitFrame, radius, heightOffset, nextAngle);
-    const quaternion = shotSpec.orientationMode === 'look-forward'
-      ? buildLookQuaternion(position, lookTarget, orbitFrame.axis)
-      : buildLookQuaternion(position, anchor, orbitFrame.axis);
+  return specs.map(spec => {
+    const rotatedScout = rotateScoutOffset(baseOffset, baseUp, baseRight, spec);
+    const position = target.clone().add(rotatedScout.offset);
 
     return {
-      fov: basePose.fov,
-      id: crypto.randomUUID(),
-      position: vectorToSerializable(position),
-      quaternion: quaternionToSerializable(quaternion),
-      time: startTime + durationSeconds * ratio,
+      fov: camera.fov,
+      position,
+      quaternion: buildLookQuaternion(position, target, rotatedScout.up),
+    };
+  });
+}
+
+function buildSegmentSamples(
+  segment: AgenticPathSegmentPlan,
+  currentPose: InterpolatedPose,
+  anchor: THREE.Vector3,
+  axis: THREE.Vector3,
+  bounds: THREE.Box3,
+  sceneDiagonal: number,
+  sampleCount: number,
+): InterpolatedPose[] {
+  const orbitFrame = deriveOrbitFrame(anchor, currentPose.position, currentPose.quaternion, axis);
+  const minRadius = Math.max(sceneDiagonal * 0.15, 0.6);
+  const maxRadius = Math.max(sceneDiagonal * 1.6, minRadius + 0.5);
+  const radius = THREE.MathUtils.clamp(orbitFrame.radius || sceneDiagonal * 0.45, minRadius, maxRadius);
+  const sceneHeight = Math.max(computeBoundsExtentAlongAxis(bounds, orbitFrame.axis), sceneDiagonal * 0.25, 1);
+  const startHeight = orbitFrame.height;
+  const endFov = THREE.MathUtils.clamp(currentPose.fov + (segment.fovDelta ?? 0), 25, 85);
+
+  if (segment.segmentType === 'hold') {
+    return finalizeSegmentOrientations(
+      Array.from({ length: sampleCount }, (_, index) => ({
+        fov: THREE.MathUtils.lerp(currentPose.fov, endFov, sampleCount > 1 ? index / (sampleCount - 1) : 1),
+        position: currentPose.position.clone(),
+      })),
+      segment.lookMode,
+      anchor,
+      orbitFrame.axis,
+      currentPose,
+    );
+  }
+
+  if (segment.segmentType === 'arc') {
+    const targetHeight = resolveHeightOffset(segment.verticalBias, startHeight, sceneHeight);
+    const sweepRadians = THREE.MathUtils.degToRad(
+      THREE.MathUtils.clamp(segment.sweepDegrees ?? 110, 35, 210),
+    );
+    const direction = resolveArcDirection(segment, currentPose, orbitFrame);
+    const directionSign = direction === 'counterclockwise' ? 1 : -1;
+
+    return finalizeSegmentOrientations(
+      Array.from({ length: sampleCount }, (_, index) => {
+        const ratio = sampleCount > 1 ? index / (sampleCount - 1) : 1;
+        const angle = directionSign * sweepRadians * ratio;
+        const height = THREE.MathUtils.lerp(startHeight, targetHeight, ratio);
+        return {
+          fov: THREE.MathUtils.lerp(currentPose.fov, endFov, ratio),
+          position: createOrbitPosition(anchor, orbitFrame, radius, height, angle),
+        };
+      }),
+      segment.lookMode,
+      anchor,
+      orbitFrame.axis,
+      currentPose,
+    );
+  }
+
+  if (segment.segmentType === 'dolly') {
+    const targetHeight = resolveHeightOffset(segment.verticalBias, startHeight, sceneHeight);
+    const direction = segment.travelDirection ?? 'in';
+    const distanceAmount = sceneDiagonal * THREE.MathUtils.clamp(segment.distanceScale ?? 0.14, 0.05, 0.35);
+    const endRadius = THREE.MathUtils.clamp(
+      direction === 'in' ? radius - distanceAmount : radius + distanceAmount,
+      minRadius,
+      maxRadius,
+    );
+
+    return finalizeSegmentOrientations(
+      Array.from({ length: sampleCount }, (_, index) => {
+        const ratio = sampleCount > 1 ? index / (sampleCount - 1) : 1;
+        return {
+          fov: THREE.MathUtils.lerp(currentPose.fov, endFov, ratio),
+          position: createOrbitPosition(
+            anchor,
+            orbitFrame,
+            THREE.MathUtils.lerp(radius, endRadius, ratio),
+            THREE.MathUtils.lerp(startHeight, targetHeight, ratio),
+            0,
+          ),
+        };
+      }),
+      segment.lookMode,
+      anchor,
+      orbitFrame.axis,
+      currentPose,
+    );
+  }
+
+  const direction = segment.travelDirection ?? 'up';
+  const heightAmount = sceneDiagonal * THREE.MathUtils.clamp(segment.heightScale ?? 0.14, 0.05, 0.35);
+  const endHeight = direction === 'up' ? startHeight + heightAmount : startHeight - heightAmount;
+
+  return finalizeSegmentOrientations(
+    Array.from({ length: sampleCount }, (_, index) => {
+      const ratio = sampleCount > 1 ? index / (sampleCount - 1) : 1;
+      return {
+        fov: THREE.MathUtils.lerp(currentPose.fov, endFov, ratio),
+        position: createOrbitPosition(anchor, orbitFrame, radius, THREE.MathUtils.lerp(startHeight, endHeight, ratio), 0),
+      };
+    }),
+    segment.lookMode,
+    anchor,
+    orbitFrame.axis,
+    currentPose,
+  );
+}
+
+function finalizeSegmentOrientations(
+  samples: SegmentPoseSample[],
+  lookMode: AgenticOrientationMode,
+  anchor: THREE.Vector3,
+  axis: THREE.Vector3,
+  currentPose: InterpolatedPose,
+): InterpolatedPose[] {
+  return samples.map((sample, index) => {
+    if (index === 0) {
+      return {
+        fov: sample.fov,
+        position: sample.position.clone(),
+        quaternion: currentPose.quaternion.clone(),
+      };
+    }
+
+    if (lookMode === 'look-at-subject') {
+      return {
+        fov: sample.fov,
+        position: sample.position.clone(),
+        quaternion: buildLookQuaternion(sample.position, anchor, axis),
+      };
+    }
+
+    const previousPosition = samples[Math.max(0, index - 1)]?.position ?? currentPose.position;
+    const nextPosition = samples[Math.min(samples.length - 1, index + 1)]?.position ?? sample.position;
+    const tangent = nextPosition.clone().sub(previousPosition);
+
+    return {
+      fov: sample.fov,
+      position: sample.position.clone(),
+      quaternion: tangent.lengthSq() <= MIN_VECTOR_LENGTH_SQUARED
+        ? currentPose.quaternion.clone()
+        : buildLookQuaternion(sample.position, sample.position.clone().add(tangent), axis),
     };
   });
 }
@@ -525,12 +1071,38 @@ function buildLookQuaternion(
   return new THREE.Quaternion().setFromRotationMatrix(matrix);
 }
 
+function clonePose(pose: InterpolatedPose): InterpolatedPose {
+  return {
+    fov: pose.fov,
+    position: pose.position.clone(),
+    quaternion: pose.quaternion.clone(),
+  };
+}
+
 function clonePoseFromCamera(camera: THREE.PerspectiveCamera): InterpolatedPose {
   return {
     fov: camera.fov,
     position: camera.position.clone(),
     quaternion: camera.quaternion.clone(),
   };
+}
+
+function computeBoundsExtentAlongAxis(bounds: THREE.Box3, axis: THREE.Vector3): number {
+  const halfSize = bounds.getSize(new THREE.Vector3()).multiplyScalar(0.5);
+  return 2 * (
+    Math.abs(axis.x) * halfSize.x
+    + Math.abs(axis.y) * halfSize.y
+    + Math.abs(axis.z) * halfSize.z
+  );
+}
+
+function createCameraFromPose(pose: InterpolatedPose): THREE.PerspectiveCamera {
+  const camera = new THREE.PerspectiveCamera(pose.fov, 16 / 9, 0.1, 1000);
+  camera.position.copy(pose.position);
+  camera.quaternion.copy(pose.quaternion);
+  camera.updateProjectionMatrix();
+  camera.updateMatrixWorld(true);
+  return camera;
 }
 
 function createCameraFromSerialized(camera: SerializedCaptureCamera): THREE.PerspectiveCamera {
@@ -552,73 +1124,25 @@ function createCameraFromSerialized(camera: SerializedCaptureCamera): THREE.Pers
   return perspectiveCamera;
 }
 
-function distancePointToRay(
-  point: THREE.Vector3,
-  origin: THREE.Vector3,
-  direction: THREE.Vector3,
-): number {
-  const toPoint = point.clone().sub(origin);
-  const projectionLength = toPoint.dot(direction);
-  const projection = direction.clone().multiplyScalar(projectionLength);
-  return toPoint.sub(projection).length();
-}
-
-function getForwardVector(quaternion: THREE.Quaternion): THREE.Vector3 {
-  return new THREE.Vector3(0, 0, -1).applyQuaternion(quaternion).normalize();
-}
-
-function getRightVector(quaternion: THREE.Quaternion): THREE.Vector3 {
-  return new THREE.Vector3(1, 0, 0).applyQuaternion(quaternion).normalize();
-}
-
-function getUpVector(quaternion: THREE.Quaternion): THREE.Vector3 {
-  return DEFAULT_LOOK_UP.clone().applyQuaternion(quaternion).normalize();
-}
-
-function resolveScoutBaseOffset(
+function createOrbitPosition(
   center: THREE.Vector3,
-  position: THREE.Vector3,
-  quaternion: THREE.Quaternion,
+  orbitFrame: OrbitFrame,
   radius: number,
+  height: number,
+  angle: number,
 ): THREE.Vector3 {
-  const baseOffset = position.clone().sub(center);
-  if (baseOffset.lengthSq() > MIN_VECTOR_LENGTH_SQUARED) {
-    return baseOffset.setLength(radius);
-  }
-
-  const forwardOffset = getForwardVector(quaternion).multiplyScalar(-radius);
-  if (forwardOffset.lengthSq() > MIN_VECTOR_LENGTH_SQUARED) {
-    return forwardOffset;
-  }
-
-  return new THREE.Vector3(0, 0, radius);
-}
-
-function rotateScoutOffset(
-  baseOffset: THREE.Vector3,
-  baseUp: THREE.Vector3,
-  baseRight: THREE.Vector3,
-  spec: ScoutPoseSpec,
-): { offset: THREE.Vector3; up: THREE.Vector3 } {
-  const yawRotation = new THREE.Quaternion().setFromAxisAngle(baseUp, spec.yawRadians);
-  const yawedOffset = baseOffset.clone().applyQuaternion(yawRotation);
-  const yawedRight = baseRight.clone().applyQuaternion(yawRotation).normalize();
-  const yawedUp = baseUp.clone().applyQuaternion(yawRotation).normalize();
-  const pitchRotation = new THREE.Quaternion().setFromAxisAngle(yawedRight, spec.pitchRadians);
-
-  return {
-    offset: yawedOffset.applyQuaternion(pitchRotation),
-    up: yawedUp.applyQuaternion(pitchRotation).normalize(),
-  };
+  const radialOffset = orbitFrame.radialDirection.clone().multiplyScalar(radius).applyAxisAngle(orbitFrame.axis, angle);
+  return center.clone().add(radialOffset).addScaledVector(orbitFrame.axis, height);
 }
 
 function deriveOrbitFrame(
   center: THREE.Vector3,
   position: THREE.Vector3,
   quaternion: THREE.Quaternion,
+  preferredAxis?: THREE.Vector3,
 ): OrbitFrame {
   const relativeOffset = position.clone().sub(center);
-  const axis = getUpVector(quaternion);
+  const axis = preferredAxis?.clone() ?? getUpVector(quaternion);
   if (axis.lengthSq() <= MIN_VECTOR_LENGTH_SQUARED) {
     axis.copy(DEFAULT_LOOK_UP);
   } else {
@@ -644,24 +1168,19 @@ function deriveOrbitFrame(
   };
 }
 
-function createOrbitPosition(
-  center: THREE.Vector3,
-  orbitFrame: OrbitFrame,
-  radius: number,
-  height: number,
-  angle: number,
-): THREE.Vector3 {
-  const radialOffset = orbitFrame.radialDirection.clone().multiplyScalar(radius).applyAxisAngle(orbitFrame.axis, angle);
-  return center.clone().add(radialOffset).addScaledVector(orbitFrame.axis, height);
+function distancePointToRay(
+  point: THREE.Vector3,
+  origin: THREE.Vector3,
+  direction: THREE.Vector3,
+): number {
+  const toPoint = point.clone().sub(origin);
+  const projectionLength = toPoint.dot(direction);
+  const projection = direction.clone().multiplyScalar(projectionLength);
+  return toPoint.sub(projection).length();
 }
 
-function computeBoundsExtentAlongAxis(bounds: THREE.Box3, axis: THREE.Vector3): number {
-  const halfSize = bounds.getSize(new THREE.Vector3()).multiplyScalar(0.5);
-  return 2 * (
-    Math.abs(axis.x) * halfSize.x
-    + Math.abs(axis.y) * halfSize.y
-    + Math.abs(axis.z) * halfSize.z
-  );
+function findSegmentWindow(windows: SegmentWindow[], time: number): SegmentWindow | null {
+  return windows.find(window => window.startTime <= time && time <= window.endTime + 1e-6) ?? null;
 }
 
 function getArbitraryPerpendicular(vector: THREE.Vector3): THREE.Vector3 {
@@ -674,6 +1193,18 @@ function getArbitraryPerpendicular(vector: THREE.Vector3): THREE.Vector3 {
   }
 
   return perpendicular.normalize();
+}
+
+function getForwardVector(quaternion: THREE.Quaternion): THREE.Vector3 {
+  return new THREE.Vector3(0, 0, -1).applyQuaternion(quaternion).normalize();
+}
+
+function getRightVector(quaternion: THREE.Quaternion): THREE.Vector3 {
+  return new THREE.Vector3(1, 0, 0).applyQuaternion(quaternion).normalize();
+}
+
+function getUpVector(quaternion: THREE.Quaternion): THREE.Vector3 {
+  return DEFAULT_LOOK_UP.clone().applyQuaternion(quaternion).normalize();
 }
 
 function invert3x3(matrix: number[]): number[] | null {
@@ -762,30 +1293,72 @@ function multiplyMatrixVector(matrix: number[], vector: THREE.Vector3): THREE.Ve
   );
 }
 
-function parseAgenticPathResponse(input: unknown): AgenticPathResponse {
+function normalizedVectorFromSerializable(vector: SerializableVector3, fallback: THREE.Vector3): THREE.Vector3 {
+  const resolved = vectorFromSerializable(vector);
+  return resolved.lengthSq() <= MIN_VECTOR_LENGTH_SQUARED ? fallback.clone() : resolved.normalize();
+}
+
+function parseComposeResponse(input: unknown): AgenticComposeResponse {
   if (!isRecord(input)) {
-    throw new AgenticPathGenerationError('Planner response was not a JSON object.');
+    throw new AgenticPathGenerationError('Planner composition response was not a JSON object.');
   }
 
-  const shotSpec = parseShotSpec(input['shotSpec']);
-  const rawLocalizations = input['subjectLocalizations'];
-  if (!Array.isArray(rawLocalizations)) {
-    throw new AgenticPathGenerationError('Planner response was missing subjectLocalizations.');
-  }
-
-  const subjectLocalizations = rawLocalizations.map((localization, index) =>
-    parseLocalization(localization, `subjectLocalizations[${index}]`));
-
-  if (subjectLocalizations.length < 2) {
-    throw new AgenticPathGenerationError('The planner could not localize the subject in enough captures.');
+  const rawSegments = input['segments'];
+  if (!Array.isArray(rawSegments) || rawSegments.length === 0) {
+    throw new AgenticPathGenerationError('Planner composition response was missing segments.');
   }
 
   return {
-    shotSpec,
-    subjectLocalizations,
-    warning: typeof input['warning'] === 'string' && input['warning'].trim().length > 0
-      ? input['warning']
-      : undefined,
+    segments: rawSegments.slice(0, 4).map((segment, index) => parseSegment(segment, `segments[${index}]`)),
+    summary: readOptionalString(input, 'summary') ?? 'Generated a multi-step camera-path draft.',
+    warning: readOptionalString(input, 'warning'),
+  };
+}
+
+function parseDirection(value: unknown, context: string): AgenticOrbitDirection {
+  if (value === 'clockwise' || value === 'counterclockwise') {
+    return value;
+  }
+
+  throw new AgenticPathGenerationError(`Planner response field ${context} must be clockwise or counterclockwise.`);
+}
+
+function parseDollyDirection(value: unknown, context: string): AgenticDollyDirection {
+  if (value === 'in' || value === 'out') {
+    return value;
+  }
+
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (normalized.includes('in') || normalized.includes('toward') || normalized.includes('closer')) {
+      return 'in';
+    }
+    if (normalized.includes('out') || normalized.includes('away') || normalized.includes('back')) {
+      return 'out';
+    }
+  }
+
+  throw new AgenticPathGenerationError(`Planner response field ${context} must be in or out.`);
+}
+
+function parseGroundResponse(input: unknown): AgenticGroundResponse {
+  if (!isRecord(input)) {
+    throw new AgenticPathGenerationError('Planner grounding response was not a JSON object.');
+  }
+
+  const rawLocalizations = input['subjectLocalizations'];
+  if (!Array.isArray(rawLocalizations)) {
+    throw new AgenticPathGenerationError('Planner grounding response was missing subjectLocalizations.');
+  }
+
+  const pathMode = parsePathMode(input['pathMode'], 'pathMode');
+  return {
+    intent: parsePromptIntent(input['intent'], 'intent', pathMode),
+    pathMode,
+    subjectLocalizations: rawLocalizations.map((localization, index) =>
+      parseLocalization(localization, `subjectLocalizations[${index}]`)),
+    unsupportedReason: readOptionalString(input, 'unsupportedReason'),
+    warning: readOptionalString(input, 'warning'),
   };
 }
 
@@ -802,56 +1375,238 @@ function parseLocalization(value: unknown, context: string): AgenticSubjectLocal
   };
 }
 
-function parseShotSpec(value: unknown): AgenticShotSpec {
+function parseOrientationMode(value: unknown, context: string): AgenticOrientationMode {
+  if (value === 'look-at-subject' || value === 'look-forward') {
+    return value;
+  }
+
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (normalized.includes('forward') || normalized.includes('along')) {
+      return 'look-forward';
+    }
+    if (normalized.includes('subject') || normalized.includes('focus') || normalized.includes('look-at')) {
+      return 'look-at-subject';
+    }
+  }
+
+  throw new AgenticPathGenerationError(`Planner response field ${context} must be a supported look mode.`);
+}
+
+function parsePathMode(value: unknown, context: string): AgenticPathMode {
+  if (value === 'subject-centric' || value === 'route-following' || value === 'multi-subject' || value === 'ambiguous') {
+    return value;
+  }
+
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (normalized.includes('route') || normalized.includes('weave') || normalized.includes('corridor')) {
+      return 'route-following';
+    }
+    if (normalized.includes('multi')) {
+      return 'multi-subject';
+    }
+    if (normalized.includes('ambig')) {
+      return 'ambiguous';
+    }
+    if (normalized.includes('subject')) {
+      return 'subject-centric';
+    }
+  }
+
+  throw new AgenticPathGenerationError(`Planner response field ${context} must be a supported path mode.`);
+}
+
+function parsePedestalDirection(value: unknown, context: string): AgenticPedestalDirection {
+  if (value === 'up' || value === 'down') {
+    return value;
+  }
+
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (normalized.includes('up') || normalized.includes('rise') || normalized.includes('crane')) {
+      return 'up';
+    }
+    if (normalized.includes('down') || normalized.includes('drop') || normalized.includes('lower')) {
+      return 'down';
+    }
+  }
+
+  throw new AgenticPathGenerationError(`Planner response field ${context} must be up or down.`);
+}
+
+function parsePromptIntent(
+  value: unknown,
+  context: string,
+  fallbackPathMode?: AgenticPathMode,
+): AgenticPromptIntent {
   if (!isRecord(value)) {
-    throw new AgenticPathGenerationError('Planner response was missing shotSpec.');
+    throw new AgenticPathGenerationError(`Planner response field ${context} must be an object.`);
   }
-
-  const pathType = readString(value, 'pathType', 'shotSpec');
-  if (pathType !== 'orbit') {
-    throw new AgenticPathGenerationError(`Planner returned an unsupported path type: ${pathType}`);
-  }
-
-  const orientationMode = readString(value, 'orientationMode', 'shotSpec');
-  if (orientationMode !== 'look-at-subject' && orientationMode !== 'look-forward') {
-    throw new AgenticPathGenerationError(`Planner returned an unsupported orientation mode: ${orientationMode}`);
-  }
-
-  const fullOrbit = readBoolean(value, 'fullOrbit', 'shotSpec');
-  const directionValue = value['direction'];
-  const verticalBiasValue = value['verticalBias'];
-  const durationValue = value['durationSeconds'];
 
   return {
-    direction: directionValue === undefined || directionValue === null
-      ? undefined
-      : parseDirection(directionValue),
-    durationSeconds: durationValue === undefined || durationValue === null
-      ? undefined
-      : readFiniteNumber(value, 'durationSeconds', 'shotSpec'),
-    fullOrbit,
-    orientationMode,
-    pathType: 'orbit',
-    verticalBias: verticalBiasValue === undefined || verticalBiasValue === null
-      ? undefined
-      : parseVerticalBias(verticalBiasValue),
+    continuousPath: true,
+    orientationPreference: parseOrientationMode(
+      value['orientationPreference'] ?? value['lookMode'] ?? 'look-at-subject',
+      `${context}.orientationPreference`,
+    ),
+    pathMode: value['pathMode'] === undefined
+      ? (fallbackPathMode ?? 'subject-centric')
+      : parsePathMode(value['pathMode'], `${context}.pathMode`),
+    requestedMoveTypes: parseRequestedMoveTypes(value['requestedMoveTypes']),
+    subjectHint: readNullableString(value, 'subjectHint'),
+    targetDurationSeconds: readNullableFiniteNumber(value, 'targetDurationSeconds'),
+    tone: readNullableString(value, 'tone'),
   };
 }
 
-function parseDirection(value: unknown): AgenticOrbitDirection {
-  if (value !== 'clockwise' && value !== 'counterclockwise') {
-    throw new AgenticPathGenerationError(`Planner returned an unsupported orbit direction: ${String(value)}`);
+function parseRequestedMoveTypes(value: unknown): AgenticPathSegmentType[] {
+  if (!Array.isArray(value)) {
+    return ['arc'];
   }
 
-  return value;
+  const moves = value
+    .map(entry => coerceSegmentType(entry))
+    .filter((entry): entry is AgenticPathSegmentType => entry !== null);
+
+  return moves.length > 0 ? Array.from(new Set(moves)) : ['arc'];
 }
 
-function parseVerticalBias(value: unknown): AgenticVerticalBias {
-  if (value !== 'low' && value !== 'mid' && value !== 'high') {
-    throw new AgenticPathGenerationError(`Planner returned an unsupported vertical bias: ${String(value)}`);
+function parseSegment(value: unknown, context: string): AgenticPathSegmentPlan {
+  if (!isRecord(value)) {
+    throw new AgenticPathGenerationError(`Planner response field ${context} must be an object.`);
   }
 
-  return value;
+  const segmentType = coerceSegmentType(value['segmentType']);
+  if (!segmentType) {
+    throw new AgenticPathGenerationError(`Planner response field ${context}.segmentType is unsupported.`);
+  }
+
+  const baseSegment: AgenticBaseSegmentPlan = {
+    durationSeconds: readPositiveNumber(value, 'durationSeconds', context),
+    fovDelta: readOptionalFiniteNumber(value, 'fovDelta'),
+    lookMode: parseOrientationMode(value['lookMode'] ?? 'look-at-subject', `${context}.lookMode`),
+    segmentType,
+  };
+
+  if (segmentType === 'hold') {
+    return {
+      ...baseSegment,
+      segmentType,
+    };
+  }
+
+  if (segmentType === 'arc') {
+    return {
+      ...baseSegment,
+      direction: value['direction'] === undefined ? undefined : parseDirection(value['direction'], `${context}.direction`),
+      segmentType,
+      sweepDegrees: readOptionalFiniteNumber(value, 'sweepDegrees'),
+      verticalBias: value['verticalBias'] === undefined
+        ? undefined
+        : parseVerticalBias(value['verticalBias'], `${context}.verticalBias`),
+    };
+  }
+
+  if (segmentType === 'dolly') {
+    return {
+      ...baseSegment,
+      distanceScale: readOptionalFiniteNumber(value, 'distanceScale'),
+      segmentType,
+      travelDirection: value['travelDirection'] === undefined
+        ? undefined
+        : parseDollyDirection(value['travelDirection'], `${context}.travelDirection`),
+      verticalBias: value['verticalBias'] === undefined
+        ? undefined
+        : parseVerticalBias(value['verticalBias'], `${context}.verticalBias`),
+    };
+  }
+
+  return {
+    ...baseSegment,
+    heightScale: readOptionalFiniteNumber(value, 'heightScale'),
+    segmentType,
+    travelDirection: value['travelDirection'] === undefined
+      ? undefined
+      : parsePedestalDirection(value['travelDirection'], `${context}.travelDirection`),
+  };
+}
+
+function parseVerticalBias(value: unknown, context: string): AgenticVerticalBias {
+  if (value === 'low' || value === 'mid' || value === 'high') {
+    return value;
+  }
+
+  if (typeof value === 'string') {
+    const normalized = value.toLowerCase();
+    if (normalized === 'medium' || normalized === 'center' || normalized === 'middle' || normalized === 'neutral') {
+      return 'mid';
+    }
+    if (normalized === 'top' || normalized === 'upper' || normalized === 'elevated' || normalized === 'above') {
+      return 'high';
+    }
+    if (normalized === 'bottom' || normalized === 'lower' || normalized === 'ground' || normalized === 'below') {
+      return 'low';
+    }
+  }
+
+  throw new AgenticPathGenerationError(`Planner response field ${context} must be low, mid, or high.`);
+}
+
+function coerceSegmentType(value: unknown): AgenticPathSegmentType | null {
+  if (value === 'hold' || value === 'arc' || value === 'dolly' || value === 'pedestal') {
+    return value;
+  }
+
+  if (typeof value !== 'string') {
+    return null;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  if (normalized === 'orbit' || normalized === 'turntable' || normalized === 'circle') {
+    return 'arc';
+  }
+  if (normalized === 'push-in' || normalized === 'push in' || normalized === 'pull-back' || normalized === 'pull back') {
+    return 'dolly';
+  }
+  if (normalized === 'crane' || normalized === 'rise' || normalized === 'drop') {
+    return 'pedestal';
+  }
+  if (normalized === 'pause' || normalized === 'linger' || normalized === 'still') {
+    return 'hold';
+  }
+
+  return null;
+}
+
+function projectOntoPlane(vector: THREE.Vector3, normal: THREE.Vector3): THREE.Vector3 {
+  return vector.clone().sub(normal.clone().multiplyScalar(vector.dot(normal)));
+}
+
+function projectSubject(
+  anchor: THREE.Vector3,
+  pose: InterpolatedPose,
+): { ndcX: number; ndcY: number; visible: boolean } {
+  const camera = createCameraFromPose(pose);
+  const projected = anchor.clone().project(camera);
+  return {
+    ndcX: projected.x,
+    ndcY: projected.y,
+    visible: Number.isFinite(projected.x)
+      && Number.isFinite(projected.y)
+      && Number.isFinite(projected.z)
+      && projected.z >= -1
+      && projected.z <= 1
+      && Math.abs(projected.x) <= 1
+      && Math.abs(projected.y) <= 1,
+  };
+}
+
+function pushValidationFeedback(feedback: string[], message: string): void {
+  if (feedback.length >= MAX_VALIDATION_FEEDBACK || feedback.includes(message)) {
+    return;
+  }
+  feedback.push(message);
 }
 
 function quaternionToSerializable(quaternion: THREE.Quaternion): SerializableQuaternion {
@@ -863,19 +1618,67 @@ function quaternionToSerializable(quaternion: THREE.Quaternion): SerializableQua
   };
 }
 
-function readBoolean(record: UnknownRecord, key: string, context: string): boolean {
+function readFiniteNumber(record: UnknownRecord, key: string, context: string): number {
   const value = record[key];
-  if (typeof value !== 'boolean') {
-    throw new AgenticPathGenerationError(`Planner response field ${context}.${key} must be a boolean.`);
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    throw new AgenticPathGenerationError(`Planner response field ${context}.${key} must be a finite number.`);
   }
 
   return value;
 }
 
-function readFiniteNumber(record: UnknownRecord, key: string, context: string): number {
+function readNullableFiniteNumber(record: UnknownRecord, key: string): number | null {
   const value = record[key];
+  if (value === undefined || value === null) {
+    return null;
+  }
+
   if (typeof value !== 'number' || !Number.isFinite(value)) {
-    throw new AgenticPathGenerationError(`Planner response field ${context}.${key} must be a finite number.`);
+    throw new AgenticPathGenerationError(`Planner response field ${key} must be a finite number when provided.`);
+  }
+
+  return value;
+}
+
+function readNullableString(record: UnknownRecord, key: string): string | null {
+  const value = record[key];
+  if (value === undefined || value === null) {
+    return null;
+  }
+
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    throw new AgenticPathGenerationError(`Planner response field ${key} must be a non-empty string when provided.`);
+  }
+
+  return value.trim();
+}
+
+function readOptionalFiniteNumber(record: UnknownRecord, key: string): number | undefined {
+  const value = record[key];
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    throw new AgenticPathGenerationError(`Planner response field ${key} must be a finite number when provided.`);
+  }
+
+  return value;
+}
+
+function readOptionalString(record: UnknownRecord, key: string): string | undefined {
+  const value = record[key];
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    return undefined;
+  }
+
+  return value.trim();
+}
+
+function readPositiveNumber(record: UnknownRecord, key: string, context: string): number {
+  const value = readFiniteNumber(record, key, context);
+  if (!(value > 0)) {
+    throw new AgenticPathGenerationError(`Planner response field ${context}.${key} must be greater than zero.`);
   }
 
   return value;
@@ -900,7 +1703,37 @@ async function readAgenticPathError(response: Response): Promise<string> {
     // Fall through to the generic message.
   }
 
-  return 'Could not generate an agentic camera path from that prompt.';
+  return 'Could not generate an agentic camera-path draft from that prompt.';
+}
+
+function resolveArcDirection(
+  segment: AgenticArcSegmentPlan,
+  currentPose: InterpolatedPose,
+  orbitFrame: OrbitFrame,
+): AgenticOrbitDirection {
+  if (segment.direction) {
+    return segment.direction;
+  }
+
+  if (segment.lookMode !== 'look-forward') {
+    return 'clockwise';
+  }
+
+  const forward = projectOntoPlane(getForwardVector(currentPose.quaternion), orbitFrame.axis);
+  if (forward.lengthSq() <= MIN_VECTOR_LENGTH_SQUARED) {
+    return 'clockwise';
+  }
+  forward.normalize();
+
+  const clockwiseTangent = orbitFrame.radialDirection.clone().applyAxisAngle(orbitFrame.axis, -0.05)
+    .sub(orbitFrame.radialDirection)
+    .normalize();
+  const counterclockwiseTangent = orbitFrame.radialDirection.clone().applyAxisAngle(orbitFrame.axis, 0.05)
+    .sub(orbitFrame.radialDirection)
+    .normalize();
+  return counterclockwiseTangent.dot(forward) > clockwiseTangent.dot(forward)
+    ? 'counterclockwise'
+    : 'clockwise';
 }
 
 function resolveFetchImpl(fetchImpl?: typeof fetch): typeof fetch {
@@ -940,38 +1773,41 @@ function resolveHeightOffset(
   );
 }
 
-function resolveOrbitDirection(
-  shotSpec: AgenticShotSpec,
-  basePose: InterpolatedPose,
-  orbitFrame: OrbitFrame,
-): AgenticOrbitDirection {
-  if (shotSpec.direction) {
-    return shotSpec.direction;
+function resolveScoutBaseOffset(
+  center: THREE.Vector3,
+  position: THREE.Vector3,
+  quaternion: THREE.Quaternion,
+  radius: number,
+): THREE.Vector3 {
+  const baseOffset = position.clone().sub(center);
+  if (baseOffset.lengthSq() > MIN_VECTOR_LENGTH_SQUARED) {
+    return baseOffset.setLength(radius);
   }
 
-  if (shotSpec.orientationMode !== 'look-forward') {
-    return 'clockwise';
+  const forwardOffset = getForwardVector(quaternion).multiplyScalar(-radius);
+  if (forwardOffset.lengthSq() > MIN_VECTOR_LENGTH_SQUARED) {
+    return forwardOffset;
   }
 
-  const forward = projectOntoPlane(getForwardVector(basePose.quaternion), orbitFrame.axis);
-  if (forward.lengthSq() <= MIN_VECTOR_LENGTH_SQUARED) {
-    return 'clockwise';
-  }
-  forward.normalize();
-
-  const clockwiseTangent = orbitFrame.radialDirection.clone().applyAxisAngle(orbitFrame.axis, -0.05)
-    .sub(orbitFrame.radialDirection)
-    .normalize();
-  const counterclockwiseTangent = orbitFrame.radialDirection.clone().applyAxisAngle(orbitFrame.axis, 0.05)
-    .sub(orbitFrame.radialDirection)
-    .normalize();
-  return counterclockwiseTangent.dot(forward) > clockwiseTangent.dot(forward)
-    ? 'counterclockwise'
-    : 'clockwise';
+  return new THREE.Vector3(0, 0, radius);
 }
 
-function projectOntoPlane(vector: THREE.Vector3, normal: THREE.Vector3): THREE.Vector3 {
-  return vector.clone().sub(normal.clone().multiplyScalar(vector.dot(normal)));
+function rotateScoutOffset(
+  baseOffset: THREE.Vector3,
+  baseUp: THREE.Vector3,
+  baseRight: THREE.Vector3,
+  spec: ScoutPoseSpec,
+): { offset: THREE.Vector3; up: THREE.Vector3 } {
+  const yawRotation = new THREE.Quaternion().setFromAxisAngle(baseUp, spec.yawRadians);
+  const yawedOffset = baseOffset.clone().applyQuaternion(yawRotation);
+  const yawedRight = baseRight.clone().applyQuaternion(yawRotation).normalize();
+  const yawedUp = baseUp.clone().applyQuaternion(yawRotation).normalize();
+  const pitchRotation = new THREE.Quaternion().setFromAxisAngle(yawedRight, spec.pitchRadians);
+
+  return {
+    offset: yawedOffset.applyQuaternion(pitchRotation),
+    up: yawedUp.applyQuaternion(pitchRotation).normalize(),
+  };
 }
 
 function serializeBounds(bounds: THREE.Box3): SerializedBounds {
@@ -1001,6 +1837,21 @@ function serializePathTail(keyframe: Keyframe | null): SerializedPathTail | null
     quaternion: { ...keyframe.quaternion },
     time: keyframe.time,
   };
+}
+
+function serializePoseAsCamera(pose: InterpolatedPose, aspect: number): SerializedCaptureCamera {
+  return {
+    aspect: Math.max(aspect, 1e-6),
+    fov: pose.fov,
+    position: vectorToSerializable(pose.position),
+    quaternion: quaternionToSerializable(pose.quaternion),
+  };
+}
+
+function shouldRunTargetedRescan(groundedSubject: AgenticGroundedSubject): boolean {
+  return groundedSubject.captureCount < 3
+    || groundedSubject.confidence < 0.72
+    || groundedSubject.meanResidual > Math.max(0.16, groundedSubject.sceneScale * 0.035);
 }
 
 function solveLeastSquaresPoint(observations: RayObservation[]): THREE.Vector3 {
@@ -1037,6 +1888,10 @@ function solveLeastSquaresPoint(observations: RayObservation[]): THREE.Vector3 {
   }
 
   return multiplyMatrixVector(inverse, vector);
+}
+
+function vectorFromSerializable(vector: SerializableVector3): THREE.Vector3 {
+  return new THREE.Vector3(vector.x, vector.y, vector.z);
 }
 
 function vectorToSerializable(vector: THREE.Vector3): SerializableVector3 {
@@ -1090,7 +1945,7 @@ function createGenerationTimeout(timeoutMs: number): AgenticGenerationTimeout {
   };
 
   return {
-    cancel(message = 'Agentic path generation canceled. Controls restored.'): void {
+    cancel(message = 'Agentic draft generation canceled. Controls restored.'): void {
       abortWith(new AgenticPathGenerationError(message));
     },
     signal: abortController.signal,
@@ -1105,7 +1960,7 @@ function createGenerationTimeout(timeoutMs: number): AgenticGenerationTimeout {
           operation(),
           new Promise<never>((_, reject) => {
             abortListener = () => {
-              reject(abortReason ?? new AgenticPathGenerationError('Agentic path generation canceled. Controls restored.'));
+              reject(abortReason ?? new AgenticPathGenerationError('Agentic draft generation canceled. Controls restored.'));
             };
 
             abortController.signal.addEventListener('abort', abortListener, { once: true });

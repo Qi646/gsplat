@@ -20,6 +20,24 @@ describe('buildAgenticPathFailureFeedback', () => {
     expect(feedback.detail).toMatch(/cleaner angle/i);
   });
 
+  it('maps unsupported route-style prompts to a scope callout', () => {
+    const feedback = buildAgenticPathFailureFeedback(
+      new Error('Route-following prompts like weaving through geometry are not supported in agentic path v1.'),
+    );
+
+    expect(feedback.title).toBe('Prompt Is Outside V1 Scope');
+    expect(feedback.detail).toMatch(/subject-centric/i);
+  });
+
+  it('maps draft validation failures to a validation callout', () => {
+    const feedback = buildAgenticPathFailureFeedback(
+      new Error('Subject drifted out of the safe frame box.'),
+    );
+
+    expect(feedback.title).toBe('Draft Could Not Be Validated');
+    expect(feedback.detail).toMatch(/failed local path validation/i);
+  });
+
   it('falls back to a generic failure callout', () => {
     const feedback = buildAgenticPathFailureFeedback(new Error('Something unexpected happened.'));
 
