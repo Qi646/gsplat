@@ -865,6 +865,9 @@ function buildStepSystemPrompt(): string {
     'Classify the prompt into exactly one pathMode: "subject-centric", "route-following", "multi-subject", or "ambiguous".',
     'Only "subject-centric" and "route-following" are supported. For unsupported modes, set complete=true and explain why in reason.',
     'Choose exactly one next action unless complete is true.',
+    'Base the next-step decision primarily on the current capture image and its camera metadata.',
+    'Use draft keyframes and action history only as compact progress context so you do not repeat or undo prior work.',
+    'Treat memory captures as optional supporting evidence, not the primary basis for the next action.',
     'Action must be either {"type":"capture-image"}, {"type":"create-keyframe"}, {"type":"move","primitive":"..."}, or {"type":"rotate","primitive":"..."}.',
     'Allowed move primitives: forward-short, forward-medium, back-short, strafe-left-short, strafe-right-short, rise-short, lower-short.',
     'Allowed rotate primitives: yaw-left-small, yaw-right-small, yaw-left-medium, yaw-right-medium, pitch-up-small, pitch-down-small.',
@@ -1083,16 +1086,20 @@ function buildVerifyUserContent(request: PathGenerationVerifyRequest): Array<Rec
 }
 
 function buildStepUserContent(request: PathGenerationStepRequest): Array<Record<string, unknown>> {
+  const memorySummary = request.memoryCaptures.length > 0
+    ? `Sending ${request.memoryCaptures.length} remembered capture(s) as optional supporting evidence only.`
+    : 'No remembered captures are being sent for this step.';
   const content: Array<Record<string, unknown>> = [
     {
       text: [
         `Prompt: ${request.prompt}`,
         `Strategy version: ${request.strategyVersion}`,
         `Step index: ${request.stepIndex}`,
+        'Decide the next action from the current capture first. Use prior state only to track progress and avoid repetition.',
         `Draft controls: ${JSON.stringify(request.draftControls)}`,
         `Draft keyframes: ${JSON.stringify(request.draftKeyframes)}`,
         `Action history: ${JSON.stringify(request.actionHistory)}`,
-        `Memory capture count: ${request.memoryCaptures.length}`,
+        memorySummary,
         `Scene bounds: ${JSON.stringify(request.sceneBounds)}`,
       ].join('\n'),
       type: 'text',

@@ -233,4 +233,75 @@ describe('StepwiseAgentOrchestrator', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(5);
     expect(draft.keyframes).toHaveLength(2);
   });
+
+  it('sends only the most recent remembered capture as optional context', async () => {
+    installCaptureStubs();
+    const { viewer } = createViewer();
+    const requestBodies: Array<Record<string, unknown>> = [];
+    const responses = [
+      {
+        action: { type: 'capture-image' },
+        complete: false,
+        pathMode: 'subject-centric',
+        reason: 'Remember the opening subject framing.',
+      },
+      {
+        action: { primitive: 'yaw-left-small', type: 'rotate' },
+        complete: false,
+        pathMode: 'subject-centric',
+        reason: 'Start orbiting the subject.',
+      },
+      {
+        action: { type: 'capture-image' },
+        complete: false,
+        pathMode: 'subject-centric',
+        reason: 'Remember the improved front-quarter view.',
+      },
+      {
+        action: { type: 'create-keyframe' },
+        complete: false,
+        pathMode: 'subject-centric',
+        reason: 'Store this stronger composition.',
+      },
+      {
+        action: { type: 'create-keyframe' },
+        complete: false,
+        pathMode: 'subject-centric',
+        reason: 'Store the ending view.',
+      },
+      {
+        complete: true,
+        pathMode: 'subject-centric',
+        reason: 'The requested move is represented.',
+      },
+    ];
+    const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.body) {
+        requestBodies.push(JSON.parse(String(init.body)) as Record<string, unknown>);
+      }
+      return new Response(JSON.stringify(responses.shift()), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 200,
+      });
+    });
+
+    const orchestrator = new StepwiseAgentOrchestrator({ fetchImpl, viewer });
+    const draft = await orchestrator.generateDraft({
+      controls: {
+        holdPreference: 'brief',
+        requestedDurationSeconds: 10,
+      },
+      existingKeyframes: [],
+      prompt: 'Create one cinematic move around this truck and hold on the front.',
+    });
+
+    expect(draft.keyframes).toHaveLength(2);
+    expect(requestBodies).toHaveLength(6);
+    expect(requestBodies[0]?.memoryCaptures).toEqual([]);
+    expect(requestBodies[1]?.memoryCaptures).toHaveLength(1);
+    expect(requestBodies[2]?.memoryCaptures).toHaveLength(1);
+    expect(requestBodies[3]?.memoryCaptures).toHaveLength(1);
+    expect(requestBodies[4]?.memoryCaptures).toHaveLength(1);
+    expect((requestBodies[4]?.memoryCaptures as Array<{ capturedAtStep: number }>)[0]?.capturedAtStep).toBe(2);
+  });
 });
