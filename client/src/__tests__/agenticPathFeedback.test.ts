@@ -20,13 +20,13 @@ describe('buildAgenticPathFailureFeedback', () => {
     expect(feedback.detail).toMatch(/cleaner angle/i);
   });
 
-  it('maps unsupported route-style prompts to a scope callout', () => {
+  it('maps route grounding failures to a route callout', () => {
     const feedback = buildAgenticPathFailureFeedback(
-      new Error('Route-following prompts like weaving through geometry are not supported in agentic path v1.'),
+      new Error('The grounded route branches too early, so the planner could not choose one unambiguous traverse.'),
     );
 
-    expect(feedback.title).toBe('Prompt Is Outside V1 Scope');
-    expect(feedback.detail).toMatch(/subject-centric/i);
+    expect(feedback.title).toBe('Route Could Not Be Grounded Cleanly');
+    expect(feedback.detail).toMatch(/unbranched route|competing branches|foreground clutter/i);
   });
 
   it('maps draft validation failures to a validation callout', () => {

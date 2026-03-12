@@ -859,7 +859,7 @@
       <div class="panel-section">
         <div class="section-label">Camera Path</div>
         <div class="note" id="agentic-path-note" style="margin-bottom: 10px">
-          Load a scene to enable subject-centric draft generation. It uses the current view plus nearby scout captures and does not support route-style prompts.
+          Load a scene to enable subject-centric and route-following draft generation. It uses the current view plus nearby scout captures and can spend one bounded rescan round when grounding is weak.
         </div>
         <div class="agentic-path-feedback" id="agentic-path-feedback" aria-live="polite" hidden>
           <div class="agentic-path-feedback-title" id="agentic-path-feedback-title"></div>
@@ -908,6 +908,14 @@
             data-agentic-prompt="Create one continuous cinematic push-in toward this truck, then rise slightly while keeping the camera on it."
             style="flex: 1 1 180px;"
           >Push in + rise</button>
+          <button
+            class="btn"
+            type="button"
+            data-agentic-duration="12"
+            data-agentic-hold="brief"
+            data-agentic-prompt="Follow one continuous route through these trees, keep moving forward cleanly, then hold for a beat at the end."
+            style="flex: 1 1 180px;"
+          >Route traverse</button>
         </div>
         <div class="path-primary-action">
           <button class="btn path-generate-btn" id="btn-generate-path" disabled>✨ Generate Draft</button>

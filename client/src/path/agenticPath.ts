@@ -1,5 +1,11 @@
 import * as THREE from 'three';
-import type { InterpolatedPose, Keyframe, SerializableQuaternion, SerializableVector3 } from '../types';
+import type {
+  InterpolatedPose,
+  Keyframe,
+  ScenePointSample,
+  SerializableQuaternion,
+  SerializableVector3,
+} from '../types';
 import { computeFramedSceneView } from '../viewer/sceneFraming';
 import type { ViewerAdapter } from '../viewer/ViewerAdapter';
 import { PathInterpolator } from './PathInterpolator';
@@ -8,9 +14,10 @@ export type AgenticOrientationMode = 'look-at-subject' | 'look-forward';
 export type AgenticOrbitDirection = 'clockwise' | 'counterclockwise';
 export type AgenticVerticalBias = 'low' | 'mid' | 'high';
 export type AgenticPathMode = 'subject-centric' | 'route-following' | 'multi-subject' | 'ambiguous';
-export type AgenticPathSegmentType = 'hold' | 'arc' | 'dolly' | 'pedestal';
+export type AgenticPathSegmentType = 'hold' | 'arc' | 'dolly' | 'pedestal' | 'traverse';
 export type AgenticDollyDirection = 'in' | 'out';
 export type AgenticPedestalDirection = 'up' | 'down';
+export type AgenticLateralBias = 'left' | 'center' | 'right';
 export type AgenticHoldPreference = 'auto' | 'none' | 'brief' | 'linger';
 export type AgenticVerifyCaptureKind = 'draft-sample' | 'active-probe';
 export type AgenticVerifyProbeReason =
@@ -51,9 +58,25 @@ export interface AgenticPromptIntent {
 export interface AgenticGroundResponse {
   intent: AgenticPromptIntent;
   pathMode: AgenticPathMode;
+  routeObservations?: AgenticRouteObservation[];
   subjectLocalizations: AgenticSubjectLocalization[];
   unsupportedReason?: string;
   warning?: string;
+}
+
+export interface AgenticRoutePixelPoint {
+  x: number;
+  y: number;
+}
+
+export interface AgenticRouteObservation {
+  captureId: string;
+  centerlinePixels: AgenticRoutePixelPoint[];
+  confidence: number;
+  entryPixel: AgenticRoutePixelPoint;
+  exitPixel: AgenticRoutePixelPoint;
+  routeKind: string | null;
+  widthPixels: number | null;
 }
 
 export interface AgenticGroundedSubject {
@@ -64,6 +87,15 @@ export interface AgenticGroundedSubject {
   confidence: number;
   meanResidual: number;
   sceneScale: number;
+}
+
+export interface AgenticGroundedRoute {
+  averageClearance: number;
+  confidence: number;
+  length: number;
+  maxTurnDegrees: number;
+  routeId: string;
+  waypoints: SerializableVector3[];
 }
 
 export interface AgenticPathStatus {
@@ -79,7 +111,7 @@ export interface AgenticPathStatus {
     unsupportedPathModes: AgenticPathMode[];
   };
   model: string | null;
-  plannerVersion: 'multistep-v1';
+  plannerVersion: 'multistep-v2';
   reason: string | null;
 }
 
@@ -114,11 +146,19 @@ export interface AgenticPedestalSegmentPlan extends AgenticBaseSegmentPlan {
   travelDirection?: AgenticPedestalDirection;
 }
 
+export interface AgenticTraverseSegmentPlan extends AgenticBaseSegmentPlan {
+  distanceRatio?: number;
+  lateralBias?: AgenticLateralBias;
+  segmentType: 'traverse';
+  verticalBias?: AgenticVerticalBias;
+}
+
 export type AgenticPathSegmentPlan =
   | AgenticHoldSegmentPlan
   | AgenticArcSegmentPlan
   | AgenticDollySegmentPlan
-  | AgenticPedestalSegmentPlan;
+  | AgenticPedestalSegmentPlan
+  | AgenticTraverseSegmentPlan;
 
 export interface AgenticComposeResponse {
   segments: AgenticPathSegmentPlan[];
@@ -128,7 +168,8 @@ export interface AgenticComposeResponse {
 
 export interface AgenticPathDraft {
   draftId: string;
-  groundedSubject: AgenticGroundedSubject;
+  groundedRoute: AgenticGroundedRoute | null;
+  groundedSubject: AgenticGroundedSubject | null;
   keyframes: Keyframe[];
   segments: AgenticPathSegmentPlan[];
   summary: string;
@@ -178,6 +219,14 @@ export interface BuildDraftPathOptions {
   startTime: number;
 }
 
+export interface BuildRouteDraftPathOptions {
+  basePose: InterpolatedPose;
+  bounds: THREE.Box3;
+  groundedRoute: AgenticGroundedRoute;
+  segments: AgenticPathSegmentPlan[];
+  startTime: number;
+}
+
 export interface AgenticDraftValidationResult {
   feedback: string[];
   valid: boolean;
@@ -195,7 +244,8 @@ interface AgenticGroundRequest {
 interface AgenticComposeRequest {
   currentCamera: SerializedCaptureCamera;
   draftControls: AgenticDraftControls;
-  groundedSubject: AgenticGroundedSubject;
+  groundedRoute: AgenticGroundedRoute | null;
+  groundedSubject: AgenticGroundedSubject | null;
   intent: AgenticPromptIntent;
   pathTail: SerializedPathTail | null;
   sceneBounds: SerializedBounds;
@@ -209,7 +259,13 @@ interface AgenticVerifyCapture {
   id: string;
   imageDataUrl: string;
   probeReason: AgenticVerifyProbeReason;
-  projectedSubject: {
+  projectedRoute?: {
+    centerNdcX: number;
+    clearanceMargin: number;
+    headingErrorDegrees: number;
+    visibleFraction: number;
+  };
+  projectedSubject?: {
     ndcX: number;
     ndcY: number;
     visible: boolean;
@@ -222,7 +278,8 @@ interface AgenticVerifyRequest {
   captures: AgenticVerifyCapture[];
   currentCamera: SerializedCaptureCamera;
   draftControls: AgenticDraftControls;
-  groundedSubject: AgenticGroundedSubject;
+  groundedRoute: AgenticGroundedRoute | null;
+  groundedSubject: AgenticGroundedSubject | null;
   intent: AgenticPromptIntent;
   prompt: string;
   sceneBounds: SerializedBounds;
@@ -268,6 +325,41 @@ interface VerificationProbeCandidate {
     ndcY: number;
     visible: boolean;
   };
+  reason: AgenticVerifyProbeReason;
+  score: number;
+  timeSeconds: number;
+}
+
+interface RouteWaypointMatch {
+  confidence: number;
+  point: THREE.Vector3;
+  progress: number;
+}
+
+interface RouteWaypointCluster {
+  confidence: number;
+  memberCount: number;
+  point: THREE.Vector3;
+  progress: number;
+}
+
+interface RoutePolylineSample {
+  distance: number;
+  point: THREE.Vector3;
+  segmentIndex: number;
+  tangent: THREE.Vector3;
+}
+
+interface RouteProjectionSummary {
+  centerNdcX: number;
+  clearanceMargin: number;
+  headingErrorDegrees: number;
+  visibleFraction: number;
+}
+
+interface RouteVerificationProbeCandidate {
+  pose: InterpolatedPose;
+  projectedRoute: RouteProjectionSummary;
   reason: AgenticVerifyProbeReason;
   score: number;
   timeSeconds: number;
@@ -346,7 +438,15 @@ const SEGMENT_KEYFRAME_COUNT: Record<AgenticPathSegmentType, number> = {
   dolly: 3,
   hold: 2,
   pedestal: 3,
+  traverse: 6,
 };
+const MAX_ROUTE_SCENE_POINT_SAMPLES = 8192;
+const ROUTE_CLUSTER_RADIUS_MIN = 0.12;
+const ROUTE_MIN_LENGTH = 1.75;
+const ROUTE_MIN_WAYPOINTS = 3;
+const ROUTE_MIN_CONFIDENCE = 0.6;
+const ROUTE_RESCAN_CONFIDENCE = 0.72;
+const ROUTE_MAX_ALLOWED_HEADING_ERROR_DEGREES = 78;
 const VALIDATION_SAMPLE_STEP_SECONDS = 0.25;
 const VERIFICATION_BASELINE_SAMPLE_COUNT = 4;
 const VERIFICATION_ANALYSIS_STEP_SECONDS = 0.5;
@@ -427,7 +527,7 @@ export class AgenticPathOrchestrator {
 
     try {
       const roundOneCaptures = await this.captureRoundOne(bounds, livePose, camera, timeout);
-      let groundResponse = await this.requestGround({
+      const groundResponse = await this.requestGround({
         captureRound: 1,
         captures: roundOneCaptures,
         currentCamera: serializedCurrentCamera,
@@ -437,73 +537,207 @@ export class AgenticPathOrchestrator {
       }, timeout);
       assertSupportedGroundResponse(groundResponse);
 
-      let captures = [...roundOneCaptures];
-      let localizations = [...groundResponse.subjectLocalizations];
-      let roundTwoUsed = false;
-
-      if (localizations.length < 2) {
-        const roundTwoCaptures = await this.captureRoundTwo(
+      return groundResponse.pathMode === 'route-following'
+        ? await this.generateRouteFollowingDraft({
+          basePose,
+          bounds,
+          camera,
+          draftControls,
           fallbackRescanTarget,
-          bounds,
+          groundResponse,
           livePose,
-          camera,
-          timeout,
-          'current-view subject area',
-        );
-        captures = [...captures, ...roundTwoCaptures];
-
-        const roundTwoGroundResponse = await this.requestGround({
-          captureRound: 2,
-          captures: roundTwoCaptures,
-          currentCamera: serializedCurrentCamera,
-          pathTail: serializedPathTail,
           prompt,
-          sceneBounds: serializedBounds,
-        }, timeout);
-        assertSupportedGroundResponse(roundTwoGroundResponse);
-        groundResponse = roundTwoGroundResponse;
-        localizations = [...localizations, ...roundTwoGroundResponse.subjectLocalizations];
-        roundTwoUsed = true;
-      }
-
-      let groundedSubject = groundSubjectFromLocalizations(localizations, captures, bounds, basePose);
-
-      if (!roundTwoUsed && shouldRunTargetedRescan(groundedSubject)) {
-        const roundTwoCaptures = await this.captureRoundTwo(
-          vectorFromSerializable(groundedSubject.anchor),
+          roundOneCaptures,
+          serializedBounds,
+          serializedCurrentCamera,
+          serializedPathTail,
+          startTime,
+          timeout,
+        })
+        : await this.generateSubjectCentricDraft({
+          basePose,
           bounds,
-          livePose,
           camera,
-          timeout,
-          'provisional subject anchor',
-        );
-        captures = [...captures, ...roundTwoCaptures];
-
-        const roundTwoGroundResponse = await this.requestGround({
-          captureRound: 2,
-          captures: roundTwoCaptures,
-          currentCamera: serializedCurrentCamera,
-          pathTail: serializedPathTail,
+          draftControls,
+          fallbackRescanTarget,
+          groundResponse,
+          livePose,
           prompt,
-          sceneBounds: serializedBounds,
-        }, timeout);
-        assertSupportedGroundResponse(roundTwoGroundResponse);
-        groundResponse = roundTwoGroundResponse;
-        localizations = [...localizations, ...roundTwoGroundResponse.subjectLocalizations];
-        groundedSubject = groundSubjectFromLocalizations(localizations, captures, bounds, basePose);
+          roundOneCaptures,
+          serializedBounds,
+          serializedCurrentCamera,
+          serializedPathTail,
+          startTime,
+          timeout,
+        });
+    } finally {
+      this.generating = false;
+      this.generationTimeout = null;
+      this.viewer.applyCameraPose(livePose);
+      this.viewer.renderNow();
+    }
+  }
+
+  private async generateSubjectCentricDraft(options: {
+    basePose: InterpolatedPose;
+    bounds: THREE.Box3;
+    camera: THREE.PerspectiveCamera;
+    draftControls: AgenticDraftControls;
+    fallbackRescanTarget: THREE.Vector3;
+    groundResponse: AgenticGroundResponse;
+    livePose: InterpolatedPose;
+    prompt: string;
+    roundOneCaptures: AgenticPathCapture[];
+    serializedBounds: SerializedBounds;
+    serializedCurrentCamera: SerializedCaptureCamera;
+    serializedPathTail: SerializedPathTail | null;
+    startTime: number;
+    timeout: AgenticGenerationTimeout;
+  }): Promise<AgenticPathDraft> {
+    const {
+      basePose,
+      bounds,
+      camera,
+      draftControls,
+      fallbackRescanTarget,
+      groundResponse,
+      livePose,
+      prompt,
+      roundOneCaptures,
+      serializedBounds,
+      serializedCurrentCamera,
+      serializedPathTail,
+      startTime,
+      timeout,
+    } = options;
+
+    let captures = [...roundOneCaptures];
+    let localizations = [...groundResponse.subjectLocalizations];
+    let roundTwoUsed = false;
+
+    if (localizations.length < 2) {
+      const roundTwoCaptures = await this.captureRoundTwo(
+        fallbackRescanTarget,
+        bounds,
+        livePose,
+        camera,
+        timeout,
+        'current-view subject area',
+      );
+      captures = [...captures, ...roundTwoCaptures];
+
+      const roundTwoGroundResponse = await this.requestGround({
+        captureRound: 2,
+        captures: roundTwoCaptures,
+        currentCamera: serializedCurrentCamera,
+        pathTail: serializedPathTail,
+        prompt,
+        sceneBounds: serializedBounds,
+      }, timeout);
+      assertSupportedGroundResponse(roundTwoGroundResponse);
+      if (roundTwoGroundResponse.pathMode !== 'subject-centric') {
+        throw new AgenticPathGenerationError(
+          roundTwoGroundResponse.unsupportedReason ?? 'The planner lost the primary subject during rescans.',
+        );
       }
+      localizations = [...localizations, ...roundTwoGroundResponse.subjectLocalizations];
+      roundTwoUsed = true;
+    }
 
-      const resolvedIntent = applyDraftControlsToIntent(groundResponse.intent, draftControls);
+    let groundedSubject = groundSubjectFromLocalizations(localizations, captures, bounds, basePose);
 
-      let composeResponse = await this.requestCompose({
+    if (!roundTwoUsed && shouldRunTargetedRescan(groundedSubject)) {
+      const roundTwoCaptures = await this.captureRoundTwo(
+        vectorFromSerializable(groundedSubject.anchor),
+        bounds,
+        livePose,
+        camera,
+        timeout,
+        'provisional subject anchor',
+      );
+      captures = [...captures, ...roundTwoCaptures];
+
+      const roundTwoGroundResponse = await this.requestGround({
+        captureRound: 2,
+        captures: roundTwoCaptures,
+        currentCamera: serializedCurrentCamera,
+        pathTail: serializedPathTail,
+        prompt,
+        sceneBounds: serializedBounds,
+      }, timeout);
+      assertSupportedGroundResponse(roundTwoGroundResponse);
+      if (roundTwoGroundResponse.pathMode !== 'subject-centric') {
+        throw new AgenticPathGenerationError(
+          roundTwoGroundResponse.unsupportedReason ?? 'The planner lost the primary subject during rescans.',
+        );
+      }
+      localizations = [...localizations, ...roundTwoGroundResponse.subjectLocalizations];
+      groundedSubject = groundSubjectFromLocalizations(localizations, captures, bounds, basePose);
+    }
+
+    const resolvedIntent = applyDraftControlsToIntent(groundResponse.intent, draftControls);
+
+    let composeResponse = await this.requestCompose({
+      currentCamera: serializedCurrentCamera,
+      draftControls,
+      groundedRoute: null,
+      groundedSubject,
+      intent: resolvedIntent,
+      pathTail: serializedPathTail,
+      sceneBounds: serializedBounds,
+    }, timeout);
+    let builtDraft = buildDraftPath({
+      basePose,
+      bounds,
+      groundedSubject,
+      segments: composeResponse.segments,
+      startTime,
+    });
+    this.reportProgress({
+      buttonLabel: 'Validating…',
+      message: 'Validating the generated camera-path draft…',
+      stage: 'validating',
+    });
+    let validation = validateDraftPath(builtDraft, bounds, groundedSubject, draftControls, composeResponse.segments);
+    let verification = validation.valid
+      ? await this.requestVerify({
+        captures: await this.captureVerificationSamplesForSubject(
+          builtDraft,
+          bounds,
+          groundedSubject,
+          draftControls,
+          livePose,
+          timeout,
+        ),
         currentCamera: serializedCurrentCamera,
         draftControls,
+        groundedRoute: null,
+        groundedSubject,
+        intent: resolvedIntent,
+        prompt,
+        sceneBounds: serializedBounds,
+        segments: composeResponse.segments,
+        summary: composeResponse.summary,
+      }, timeout)
+      : null;
+    const repairFeedback = validation.valid
+      ? verification?.approved === false
+        ? verification.issues
+        : []
+      : validation.feedback;
+
+    if (repairFeedback.length > 0) {
+      composeResponse = await this.requestCompose({
+        currentCamera: serializedCurrentCamera,
+        draftControls,
+        groundedRoute: null,
         groundedSubject,
         intent: resolvedIntent,
         pathTail: serializedPathTail,
         sceneBounds: serializedBounds,
+        validationFeedback: repairFeedback,
       }, timeout);
-      let builtDraft = buildDraftPath({
+      builtDraft = buildDraftPath({
         basePose,
         bounds,
         groundedSubject,
@@ -512,99 +746,232 @@ export class AgenticPathOrchestrator {
       });
       this.reportProgress({
         buttonLabel: 'Validating…',
-        message: 'Validating the generated camera-path draft…',
+        message: 'Re-validating the repaired camera-path draft…',
         stage: 'validating',
       });
-      let validation = validateDraftPath(builtDraft, bounds, groundedSubject, draftControls, composeResponse.segments);
-      let verification = validation.valid
-        ? await this.requestVerify({
-          captures: await this.captureVerificationSamples(
-            builtDraft,
-            bounds,
-            groundedSubject,
-            draftControls,
-            livePose,
-            timeout,
-          ),
-          currentCamera: serializedCurrentCamera,
-          draftControls,
-          groundedSubject,
-          intent: resolvedIntent,
-          prompt,
-          sceneBounds: serializedBounds,
-          segments: composeResponse.segments,
-          summary: composeResponse.summary,
-        }, timeout)
-        : null;
-      const repairFeedback = validation.valid
-        ? verification?.approved === false
-          ? verification.issues
-          : []
-        : validation.feedback;
-
-      if (repairFeedback.length > 0) {
-        composeResponse = await this.requestCompose({
-          currentCamera: serializedCurrentCamera,
-          draftControls,
-          groundedSubject,
-          intent: resolvedIntent,
-          pathTail: serializedPathTail,
-          sceneBounds: serializedBounds,
-          validationFeedback: repairFeedback,
-        }, timeout);
-        builtDraft = buildDraftPath({
-          basePose,
+      validation = validateDraftPath(builtDraft, bounds, groundedSubject, draftControls, composeResponse.segments);
+      if (!validation.valid) {
+        throw new AgenticPathGenerationError(validation.feedback[0] ?? 'The draft path could not be validated.');
+      }
+      verification = await this.requestVerify({
+        captures: await this.captureVerificationSamplesForSubject(
+          builtDraft,
           bounds,
           groundedSubject,
-          segments: composeResponse.segments,
-          startTime,
-        });
-        this.reportProgress({
-          buttonLabel: 'Validating…',
-          message: 'Re-validating the repaired camera-path draft…',
-          stage: 'validating',
-        });
-        validation = validateDraftPath(builtDraft, bounds, groundedSubject, draftControls, composeResponse.segments);
-        if (!validation.valid) {
-          throw new AgenticPathGenerationError(validation.feedback[0] ?? 'The draft path could not be validated.');
-        }
-        verification = await this.requestVerify({
-          captures: await this.captureVerificationSamples(
-            builtDraft,
-            bounds,
-            groundedSubject,
-            draftControls,
-            livePose,
-            timeout,
-          ),
-          currentCamera: serializedCurrentCamera,
           draftControls,
-          groundedSubject,
-          intent: resolvedIntent,
-          prompt,
-          sceneBounds: serializedBounds,
-          segments: composeResponse.segments,
-          summary: composeResponse.summary,
-        }, timeout);
-        if (!verification.approved) {
-          throw new AgenticPathGenerationError(verification.issues[0] ?? 'The draft path did not pass planner verification.');
-        }
-      }
-
-      return {
-        draftId: crypto.randomUUID(),
+          livePose,
+          timeout,
+        ),
+        currentCamera: serializedCurrentCamera,
+        draftControls,
+        groundedRoute: null,
         groundedSubject,
-        keyframes: builtDraft.keyframes,
+        intent: resolvedIntent,
+        prompt,
+        sceneBounds: serializedBounds,
         segments: composeResponse.segments,
         summary: composeResponse.summary,
-        warning: composeResponse.warning ?? verification?.warning ?? groundResponse.warning,
-      };
-    } finally {
-      this.generating = false;
-      this.generationTimeout = null;
-      this.viewer.applyCameraPose(livePose);
-      this.viewer.renderNow();
+      }, timeout);
+      if (!verification.approved) {
+        throw new AgenticPathGenerationError(verification.issues[0] ?? 'The draft path did not pass planner verification.');
+      }
     }
+
+    return {
+      draftId: crypto.randomUUID(),
+      groundedRoute: null,
+      groundedSubject,
+      keyframes: builtDraft.keyframes,
+      segments: composeResponse.segments,
+      summary: composeResponse.summary,
+      warning: composeResponse.warning ?? verification?.warning ?? groundResponse.warning,
+    };
+  }
+
+  private async generateRouteFollowingDraft(options: {
+    basePose: InterpolatedPose;
+    bounds: THREE.Box3;
+    camera: THREE.PerspectiveCamera;
+    draftControls: AgenticDraftControls;
+    fallbackRescanTarget: THREE.Vector3;
+    groundResponse: AgenticGroundResponse;
+    livePose: InterpolatedPose;
+    prompt: string;
+    roundOneCaptures: AgenticPathCapture[];
+    serializedBounds: SerializedBounds;
+    serializedCurrentCamera: SerializedCaptureCamera;
+    serializedPathTail: SerializedPathTail | null;
+    startTime: number;
+    timeout: AgenticGenerationTimeout;
+  }): Promise<AgenticPathDraft> {
+    const {
+      basePose,
+      bounds,
+      camera,
+      draftControls,
+      fallbackRescanTarget,
+      groundResponse,
+      livePose,
+      prompt,
+      roundOneCaptures,
+      serializedBounds,
+      serializedCurrentCamera,
+      serializedPathTail,
+      startTime,
+      timeout,
+    } = options;
+    const scenePointSamples = this.viewer.sampleScenePoints(MAX_ROUTE_SCENE_POINT_SAMPLES);
+    if (scenePointSamples.length < 16) {
+      throw new AgenticPathGenerationError('Route-following needs scene point samples, but the viewer did not expose enough geometry.');
+    }
+
+    let captures = [...roundOneCaptures];
+    let routeObservations = [...(groundResponse.routeObservations ?? [])];
+    let groundedRoute = tryGroundRoute(routeObservations, captures, bounds, basePose, scenePointSamples);
+
+    if (!groundedRoute || shouldRunRouteRescan(groundedRoute, routeObservations.length, bounds)) {
+      const roundTwoCaptures = await this.captureRouteRoundTwo(
+        groundedRoute ? getRouteMidpoint(groundedRoute) : fallbackRescanTarget,
+        bounds,
+        livePose,
+        camera,
+        timeout,
+      );
+      captures = [...captures, ...roundTwoCaptures];
+
+      const roundTwoGroundResponse = await this.requestGround({
+        captureRound: 2,
+        captures: roundTwoCaptures,
+        currentCamera: serializedCurrentCamera,
+        pathTail: serializedPathTail,
+        prompt,
+        sceneBounds: serializedBounds,
+      }, timeout);
+      assertSupportedGroundResponse(roundTwoGroundResponse);
+      if (roundTwoGroundResponse.pathMode !== 'route-following') {
+        throw new AgenticPathGenerationError(
+          roundTwoGroundResponse.unsupportedReason ?? 'The planner could not keep one route grounded during rescans.',
+        );
+      }
+      routeObservations = [...routeObservations, ...(roundTwoGroundResponse.routeObservations ?? [])];
+      groundedRoute = tryGroundRoute(routeObservations, captures, bounds, basePose, scenePointSamples);
+    }
+
+    if (!groundedRoute) {
+      throw new AgenticPathGenerationError('The planner could not resolve one stable route through the scene.');
+    }
+
+    const resolvedIntent = applyDraftControlsToIntent(groundResponse.intent, draftControls);
+
+    let composeResponse = await this.requestCompose({
+      currentCamera: serializedCurrentCamera,
+      draftControls,
+      groundedRoute,
+      groundedSubject: null,
+      intent: resolvedIntent,
+      pathTail: serializedPathTail,
+      sceneBounds: serializedBounds,
+    }, timeout);
+    let builtDraft = buildRouteDraftPath({
+      basePose,
+      bounds,
+      groundedRoute,
+      segments: composeResponse.segments,
+      startTime,
+    });
+    this.reportProgress({
+      buttonLabel: 'Validating…',
+      message: 'Validating the generated route-following draft…',
+      stage: 'validating',
+    });
+    let validation = validateRouteDraftPath(builtDraft, bounds, groundedRoute, draftControls, composeResponse.segments);
+    let verification = validation.valid
+      ? await this.requestVerify({
+        captures: await this.captureVerificationSamplesForRoute(
+          builtDraft,
+          bounds,
+          groundedRoute,
+          draftControls,
+          livePose,
+          timeout,
+        ),
+        currentCamera: serializedCurrentCamera,
+        draftControls,
+        groundedRoute,
+        groundedSubject: null,
+        intent: resolvedIntent,
+        prompt,
+        sceneBounds: serializedBounds,
+        segments: composeResponse.segments,
+        summary: composeResponse.summary,
+      }, timeout)
+      : null;
+    const repairFeedback = validation.valid
+      ? verification?.approved === false
+        ? verification.issues
+        : []
+      : validation.feedback;
+
+    if (repairFeedback.length > 0) {
+      composeResponse = await this.requestCompose({
+        currentCamera: serializedCurrentCamera,
+        draftControls,
+        groundedRoute,
+        groundedSubject: null,
+        intent: resolvedIntent,
+        pathTail: serializedPathTail,
+        sceneBounds: serializedBounds,
+        validationFeedback: repairFeedback,
+      }, timeout);
+      builtDraft = buildRouteDraftPath({
+        basePose,
+        bounds,
+        groundedRoute,
+        segments: composeResponse.segments,
+        startTime,
+      });
+      this.reportProgress({
+        buttonLabel: 'Validating…',
+        message: 'Re-validating the repaired route-following draft…',
+        stage: 'validating',
+      });
+      validation = validateRouteDraftPath(builtDraft, bounds, groundedRoute, draftControls, composeResponse.segments);
+      if (!validation.valid) {
+        throw new AgenticPathGenerationError(validation.feedback[0] ?? 'The route-following draft could not be validated.');
+      }
+      verification = await this.requestVerify({
+        captures: await this.captureVerificationSamplesForRoute(
+          builtDraft,
+          bounds,
+          groundedRoute,
+          draftControls,
+          livePose,
+          timeout,
+        ),
+        currentCamera: serializedCurrentCamera,
+        draftControls,
+        groundedRoute,
+        groundedSubject: null,
+        intent: resolvedIntent,
+        prompt,
+        sceneBounds: serializedBounds,
+        segments: composeResponse.segments,
+        summary: composeResponse.summary,
+      }, timeout);
+      if (!verification.approved) {
+        throw new AgenticPathGenerationError(verification.issues[0] ?? 'The route-following draft did not pass planner verification.');
+      }
+    }
+
+    return {
+      draftId: crypto.randomUUID(),
+      groundedRoute,
+      groundedSubject: null,
+      keyframes: builtDraft.keyframes,
+      segments: composeResponse.segments,
+      summary: composeResponse.summary,
+      warning: composeResponse.warning ?? verification?.warning ?? groundResponse.warning,
+    };
   }
 
   private async captureRoundOne(
@@ -691,6 +1058,48 @@ export class AgenticPathOrchestrator {
           activeCamera,
           timeout,
           'capturing round 2 targeted rescans',
+        ));
+      }
+    } finally {
+      this.viewer.applyCameraPose(livePose);
+      this.viewer.renderNow();
+    }
+
+    return captures;
+  }
+
+  private async captureRouteRoundTwo(
+    routeMidpoint: THREE.Vector3,
+    bounds: THREE.Box3,
+    livePose: InterpolatedPose,
+    camera: THREE.PerspectiveCamera,
+    timeout: AgenticGenerationTimeout,
+  ): Promise<AgenticPathCapture[]> {
+    const captures: AgenticPathCapture[] = [];
+
+    try {
+      const rescanPoses = buildRouteRescanPoses(routeMidpoint, bounds, camera);
+      for (const [index, rescanPose] of rescanPoses.entries()) {
+        timeout.throwIfAborted('capturing round 2 route rescans');
+        this.reportCaptureProgress(
+          2,
+          index + 1,
+          ROUND_TWO_TOTAL_CAPTURE_COUNT,
+          `Capturing route rescan ${index + 1}/4 around the provisional route midpoint.`,
+        );
+        this.viewer.applyCameraPose(rescanPose);
+        await this.renderFrame(timeout, 'capturing round 2 route rescans');
+        const activeCamera = this.viewer.getCamera();
+        if (!activeCamera) {
+          throw new AgenticPathGenerationError('Viewer camera became unavailable during route rescans.');
+        }
+
+        captures.push(await this.captureCurrentView(
+          `capture-round-2-route-${index + 1}`,
+          'scout',
+          activeCamera,
+          timeout,
+          'capturing round 2 route rescans',
         ));
       }
     } finally {
@@ -819,7 +1228,7 @@ export class AgenticPathOrchestrator {
     );
   }
 
-  private async captureVerificationSamples(
+  private async captureVerificationSamplesForSubject(
     builtDraft: BuiltDraftPath,
     bounds: THREE.Box3,
     groundedSubject: AgenticGroundedSubject,
@@ -889,6 +1298,76 @@ export class AgenticPathOrchestrator {
     return captures;
   }
 
+  private async captureVerificationSamplesForRoute(
+    builtDraft: BuiltDraftPath,
+    bounds: THREE.Box3,
+    groundedRoute: AgenticGroundedRoute,
+    draftControls: AgenticDraftControls,
+    livePose: InterpolatedPose,
+    timeout: AgenticGenerationTimeout,
+  ): Promise<AgenticVerifyCapture[]> {
+    if (!this.viewer.getCamera()) {
+      throw new AgenticPathGenerationError('Viewer camera became unavailable during draft verification.');
+    }
+
+    const capturePlans = buildRouteVerificationCapturePlans(builtDraft, bounds, groundedRoute, draftControls);
+    const captures: AgenticVerifyCapture[] = [];
+
+    try {
+      for (const [index, capturePlan] of capturePlans.entries()) {
+        timeout.throwIfAborted('capturing route verification views');
+        this.reportProgress({
+          buttonLabel: 'Verifying…',
+          message: buildVerificationCaptureProgressMessage(capturePlan, index, capturePlans.length),
+          stage: 'verifying',
+        });
+
+        this.viewer.applyCameraPose(capturePlan.pose);
+        await this.renderFrame(timeout, 'capturing route verification views');
+        const activeCamera = this.viewer.getCamera();
+        if (!activeCamera) {
+          throw new AgenticPathGenerationError('Viewer camera became unavailable during route verification.');
+        }
+
+        const projectedRoute = projectRoute(groundedRoute, capturePlan.pose);
+        captures.push({
+          captureKind: capturePlan.captureKind,
+          camera: serializeCamera(activeCamera),
+          height: 0,
+          id: capturePlan.id,
+          imageDataUrl: '',
+          probeReason: capturePlan.probeReason,
+          projectedRoute,
+          timeSeconds: capturePlan.timeSeconds,
+          width: 0,
+        });
+        const image = await this.captureCurrentView(
+          capturePlan.id,
+          'scout',
+          activeCamera,
+          timeout,
+          'capturing route verification views',
+        );
+        captures[index] = {
+          camera: image.camera,
+          captureKind: capturePlan.captureKind,
+          height: image.height,
+          id: image.id,
+          imageDataUrl: image.imageDataUrl,
+          probeReason: capturePlan.probeReason,
+          projectedRoute,
+          timeSeconds: capturePlan.timeSeconds,
+          width: image.width,
+        };
+      }
+    } finally {
+      this.viewer.applyCameraPose(livePose);
+      this.viewer.renderNow();
+    }
+
+    return captures;
+  }
+
   private reportCaptureProgress(
     captureRound: 1 | 2,
     captureIndex: number,
@@ -932,6 +1411,36 @@ export function buildTargetedRescanPoses(
   camera: THREE.PerspectiveCamera,
 ): InterpolatedPose[] {
   return buildCapturePosesAroundTarget(anchor, bounds, camera, ROUND_TWO_RESCAN_POSE_SPECS, 0.95, 1.01);
+}
+
+export function buildRouteRescanPoses(
+  routeMidpoint: THREE.Vector3,
+  bounds: THREE.Box3,
+  camera: THREE.PerspectiveCamera,
+): InterpolatedPose[] {
+  const sceneDiagonal = Math.max(bounds.getSize(new THREE.Vector3()).length(), 1);
+  const up = getUpVector(camera.quaternion);
+  const forward = getForwardVector(camera.quaternion);
+  const right = getRightVector(camera.quaternion);
+  const lateralStep = Math.max(sceneDiagonal * 0.05, 0.22);
+  const forwardStep = Math.max(sceneDiagonal * 0.06, 0.28);
+  const elevatedStep = Math.max(sceneDiagonal * 0.04, 0.18);
+  const expandedBounds = bounds.clone().expandByScalar(Math.max(sceneDiagonal * 0.08, 0.25));
+  const positions = [
+    camera.position.clone().addScaledVector(right, -lateralStep),
+    camera.position.clone().addScaledVector(right, lateralStep),
+    camera.position.clone().addScaledVector(forward, forwardStep),
+    camera.position.clone().addScaledVector(forward, -forwardStep * 0.8).addScaledVector(up, elevatedStep),
+  ];
+
+  return positions.map(position => {
+    const clampedPosition = position.clamp(expandedBounds.min, expandedBounds.max);
+    return {
+      fov: camera.fov,
+      position: clampedPosition.clone(),
+      quaternion: buildLookQuaternion(clampedPosition, routeMidpoint, up),
+    };
+  });
 }
 
 export function groundSubjectFromLocalizations(
@@ -986,6 +1495,115 @@ export function groundSubjectFromLocalizations(
   };
 }
 
+export function groundRouteFromObservations(
+  routeObservations: AgenticRouteObservation[],
+  captures: AgenticPathCapture[],
+  sceneBounds: THREE.Box3,
+  basePose: InterpolatedPose,
+  scenePointSamples: ScenePointSample[],
+): AgenticGroundedRoute {
+  if (routeObservations.length === 0) {
+    throw new AgenticPathGenerationError('The planner did not identify a visible route in the scout captures.');
+  }
+
+  const scenePoints = scenePointSamples
+    .filter(sample => Number.isFinite(sample.opacity) && sample.opacity > 0.01)
+    .map(sample => vectorFromSerializable(sample.position));
+  if (scenePoints.length < 16) {
+    throw new AgenticPathGenerationError('The viewer did not expose enough stable scene points to ground a route.');
+  }
+
+  const sceneDiagonal = Math.max(sceneBounds.getSize(new THREE.Vector3()).length(), 1);
+  const captureById = new Map(captures.map(capture => [capture.id, capture]));
+  const matches: RouteWaypointMatch[] = [];
+
+  routeObservations.forEach(observation => {
+    const capture = captureById.get(observation.captureId);
+    if (!capture) {
+      throw new AgenticPathGenerationError(`Planner referenced an unknown route capture: ${observation.captureId}`);
+    }
+
+    const orderedPixels = dedupeRoutePixels([
+      observation.entryPixel,
+      ...observation.centerlinePixels,
+      observation.exitPixel,
+    ]);
+    const projectedScenePoints = projectScenePointsToCapture(scenePoints, capture);
+    const pixelTolerance = Math.max(observation.widthPixels ?? 0, 18);
+
+    orderedPixels.forEach((pixel, index) => {
+      const match = findNearestScenePointForPixel(projectedScenePoints, pixel, pixelTolerance);
+      if (!match) {
+        return;
+      }
+      matches.push({
+        confidence: THREE.MathUtils.clamp(observation.confidence * (1 - match.pixelDistance / (pixelTolerance * 1.25)), 0.05, 1),
+        point: match.point.clone(),
+        progress: orderedPixels.length <= 1 ? 0 : index / (orderedPixels.length - 1),
+      });
+    });
+  });
+
+  if (matches.length < ROUTE_MIN_WAYPOINTS) {
+    throw new AgenticPathGenerationError('The route was visible, but not enough stable 3D route points could be grounded from the scout views.');
+  }
+
+  const clusterRadius = Math.max(ROUTE_CLUSTER_RADIUS_MIN, sceneDiagonal * 0.035);
+  const clusters = clusterRouteWaypointMatches(matches, clusterRadius);
+  const branchConflict = hasAmbiguousRouteBranch(clusters, clusterRadius);
+  let orderedWaypoints = clusters
+    .sort((left, right) => left.progress - right.progress)
+    .map(cluster => cluster.point.clone());
+  orderedWaypoints = condenseRouteWaypoints(orderedWaypoints, Math.max(0.15, sceneDiagonal * 0.03));
+
+  if (orderedWaypoints.length < ROUTE_MIN_WAYPOINTS) {
+    throw new AgenticPathGenerationError('The grounded route was too short to form a stable traversal path.');
+  }
+
+  const baseForward = getForwardVector(basePose.quaternion);
+  const routeStart = orderedWaypoints[0] ?? new THREE.Vector3();
+  const routeEnd = orderedWaypoints.at(-1) ?? routeStart;
+  const routeDelta = routeEnd.clone().sub(routeStart);
+  if (routeDelta.lengthSq() > MIN_VECTOR_LENGTH_SQUARED && routeDelta.dot(baseForward) < 0) {
+    orderedWaypoints = orderedWaypoints.reverse();
+  }
+
+  const length = computeRouteLength(orderedWaypoints);
+  if (length < Math.max(ROUTE_MIN_LENGTH, sceneDiagonal * 0.18)) {
+    throw new AgenticPathGenerationError('The grounded route is too short to support a continuous traverse draft.');
+  }
+
+  const maxTurnDegrees = computeRouteMaxTurnDegrees(orderedWaypoints);
+  if (branchConflict) {
+    throw new AgenticPathGenerationError('The grounded route branches too early, so the planner could not choose one unambiguous traverse.');
+  }
+  if (maxTurnDegrees > 135) {
+    throw new AgenticPathGenerationError('The grounded route turned too sharply to synthesize one smooth traverse.');
+  }
+
+  const meanConfidence = matches.reduce((sum, match) => sum + match.confidence, 0) / matches.length;
+  const observationCoverage = THREE.MathUtils.clamp(routeObservations.length / 3, 0.45, 1);
+  const waypointCoverage = THREE.MathUtils.clamp(orderedWaypoints.length / 6, 0.5, 1);
+  const confidence = THREE.MathUtils.clamp(meanConfidence * observationCoverage * waypointCoverage, 0.05, 0.99);
+  if (confidence < ROUTE_MIN_CONFIDENCE) {
+    throw new AgenticPathGenerationError('The route grounding confidence was too low to commit to a route-following draft.');
+  }
+
+  const inflatedBounds = sceneBounds.clone().expandByScalar(Math.max(sceneDiagonal * 0.1, 0.25));
+  if (!orderedWaypoints.every(point => inflatedBounds.containsPoint(point))) {
+    throw new AgenticPathGenerationError('The grounded route falls outside the loaded scene bounds.');
+  }
+
+  return {
+    averageClearance: Math.max(0.35, sceneDiagonal * 0.06),
+    confidence,
+    length,
+    maxTurnDegrees,
+    routeId: crypto.randomUUID(),
+    waypoints: downsampleRouteWaypoints(orderedWaypoints).map(vectorToSerializable),
+  };
+}
+
 export function buildDraftPath(options: BuildDraftPathOptions): BuiltDraftPath {
   const anchor = vectorFromSerializable(options.groundedSubject.anchor);
   const axis = normalizedVectorFromSerializable(options.groundedSubject.basisUp, DEFAULT_LOOK_UP);
@@ -1030,6 +1648,80 @@ export function buildDraftPath(options: BuildDraftPathOptions): BuiltDraftPath {
     keyframes,
     windows,
   };
+}
+
+export function buildRouteDraftPath(options: BuildRouteDraftPathOptions): BuiltDraftPath {
+  const routeWaypoints = options.groundedRoute.waypoints.map(vectorFromSerializable);
+  if (routeWaypoints.length < 2) {
+    throw new AgenticPathGenerationError('The grounded route did not contain enough waypoints to synthesize a traverse.');
+  }
+
+  const axis = getUpVector(options.basePose.quaternion);
+  const sceneDiagonal = Math.max(options.bounds.getSize(new THREE.Vector3()).length(), 1);
+  const keyframes: Keyframe[] = [];
+  const windows: SegmentWindow[] = [];
+  let currentPose = clonePose(options.basePose);
+  let currentTime = options.startTime;
+  let traverseCount = 0;
+
+  for (const [segmentIndex, segment] of options.segments.entries()) {
+    let segmentSamples: InterpolatedPose[];
+    if (segment.segmentType === 'traverse') {
+      traverseCount += 1;
+      segmentSamples = buildTraverseSegmentSamples(
+        segment,
+        currentPose,
+        routeWaypoints,
+        axis,
+        options.bounds,
+        sceneDiagonal,
+        options.groundedRoute,
+      );
+    } else if (segment.segmentType === 'hold' || segment.segmentType === 'pedestal') {
+      segmentSamples = buildRouteAuxiliarySegmentSamples(
+        segment,
+        currentPose,
+        routeWaypoints,
+        axis,
+        options.bounds,
+        sceneDiagonal,
+      );
+    } else {
+      throw new AgenticPathGenerationError('Route-following drafts currently support hold, pedestal, and traverse segments only.');
+    }
+
+    const sampleCount = segmentSamples.length;
+    const segmentStartTime = currentTime;
+    segmentSamples.forEach((sample, sampleIndex) => {
+      if (segmentIndex > 0 && sampleIndex === 0) {
+        return;
+      }
+
+      const ratio = sampleCount > 1 ? sampleIndex / (sampleCount - 1) : 1;
+      keyframes.push({
+        fov: sample.fov,
+        id: crypto.randomUUID(),
+        position: vectorToSerializable(sample.position),
+        quaternion: quaternionToSerializable(sample.quaternion),
+        time: segmentStartTime + segment.durationSeconds * ratio,
+      });
+    });
+
+    currentTime += segment.durationSeconds;
+    currentPose = clonePose(segmentSamples.at(-1) as InterpolatedPose);
+    windows.push({
+      endTime: currentTime,
+      lookMode: segment.lookMode,
+      segmentType: segment.segmentType,
+      startTime: segmentStartTime,
+    });
+  }
+
+  if (traverseCount !== 1) {
+    throw new AgenticPathGenerationError('Route-following drafts must include exactly one traverse segment.');
+  }
+
+  return { keyframes, windows };
 }
 
 export function validateDraftPath(
@@ -1109,10 +1801,81 @@ export function validateDraftPath(
   };
 }
 
+export function validateRouteDraftPath(
+  builtDraft: BuiltDraftPath,
+  bounds: THREE.Box3,
+  groundedRoute: AgenticGroundedRoute,
+  draftControls?: AgenticDraftControls,
+  segments: AgenticPathSegmentPlan[] = [],
+): AgenticDraftValidationResult {
+  if (builtDraft.keyframes.length < 2) {
+    return {
+      feedback: ['The composed route-following draft did not contain enough keyframes to preview.'],
+      valid: false,
+    };
+  }
+
+  const totalDuration = builtDraft.keyframes.at(-1)?.time ?? 0;
+  const firstTime = builtDraft.keyframes[0]?.time ?? 0;
+  const feedback: string[] = [];
+  const sceneDiagonal = Math.max(bounds.getSize(new THREE.Vector3()).length(), 1);
+  const expandedBounds = bounds.clone().expandByScalar(sceneDiagonal * 0.15);
+  const pathInterpolator = new PathInterpolator();
+  pathInterpolator.setKeyframes(builtDraft.keyframes);
+
+  if (!segments.some(segment => segment.segmentType === 'traverse')) {
+    feedback.push('The route-following draft did not include a traverse segment.');
+  }
+  if (totalDuration - firstTime < 6 || totalDuration - firstTime > 18) {
+    feedback.push('The draft duration must stay between 6 and 18 seconds.');
+  }
+
+  pushSegmentControlFeedback(feedback, totalDuration - firstTime, draftControls, segments);
+
+  for (let sampleTime = firstTime; sampleTime <= totalDuration + 1e-6; sampleTime += VALIDATION_SAMPLE_STEP_SECONDS) {
+    const pose = pathInterpolator.evaluate(sampleTime);
+    if (!pose) {
+      feedback.push('The draft path could not be interpolated for validation.');
+      break;
+    }
+
+    if (!expandedBounds.containsPoint(pose.position)) {
+      pushValidationFeedback(feedback, 'The draft camera left the supported scene volume.');
+    }
+
+    if (pose.fov < 25 || pose.fov > 85) {
+      pushValidationFeedback(feedback, 'The draft changed FOV outside the supported 25-85 range.');
+    }
+
+    const routeProjection = projectRoute(groundedRoute, pose);
+    const window = findSegmentWindow(builtDraft.windows, sampleTime);
+    const inTraverseWindow = window?.segmentType === 'traverse';
+    if (
+      inTraverseWindow
+      && sampleTime > (window?.startTime ?? sampleTime) + 0.35
+      && routeProjection.headingErrorDegrees > ROUTE_MAX_ALLOWED_HEADING_ERROR_DEGREES
+    ) {
+      pushValidationFeedback(feedback, 'The draft stopped following the route direction cleanly.');
+    }
+    if (
+      inTraverseWindow
+      && sampleTime > (window?.startTime ?? sampleTime) + 0.35
+      && routeProjection.clearanceMargin < -Math.max(sceneDiagonal * 0.03, 0.18)
+    ) {
+      pushValidationFeedback(feedback, 'The draft drifted too far away from the grounded route.');
+    }
+  }
+
+  return {
+    feedback,
+    valid: feedback.length === 0,
+  };
+}
+
 function assertSupportedGroundResponse(response: AgenticGroundResponse): void {
-  if (response.pathMode !== 'subject-centric') {
+  if (response.pathMode === 'multi-subject' || response.pathMode === 'ambiguous') {
     throw new AgenticPathGenerationError(
-      response.unsupportedReason ?? 'That prompt is not supported in agentic path v1.',
+      response.unsupportedReason ?? 'That prompt is not supported in the current agentic path planner.',
     );
   }
 }
@@ -1252,6 +2015,10 @@ function buildSegmentSamples(
     );
   }
 
+  if (segment.segmentType === 'traverse') {
+    throw new AgenticPathGenerationError('Traverse segments are not supported for subject-centric draft synthesis.');
+  }
+
   const direction = segment.travelDirection ?? 'up';
   const heightAmount = sceneDiagonal * THREE.MathUtils.clamp(segment.heightScale ?? 0.14, 0.05, 0.35);
   const endHeight = clampHeightToSafetyWindow(
@@ -1278,6 +2045,87 @@ function buildSegmentSamples(
     orbitFrame.axis,
     currentPose,
   );
+}
+
+function buildRouteAuxiliarySegmentSamples(
+  segment: AgenticHoldSegmentPlan | AgenticPedestalSegmentPlan,
+  currentPose: InterpolatedPose,
+  routeWaypoints: THREE.Vector3[],
+  axis: THREE.Vector3,
+  bounds: THREE.Box3,
+  sceneDiagonal: number,
+): InterpolatedPose[] {
+  const endFov = THREE.MathUtils.clamp(currentPose.fov + (segment.fovDelta ?? 0), 25, 85);
+  if (segment.segmentType === 'hold') {
+    return Array.from({ length: 2 }, (_, index) => ({
+      fov: THREE.MathUtils.lerp(currentPose.fov, endFov, index),
+      position: currentPose.position.clone(),
+      quaternion: currentPose.quaternion.clone(),
+    }));
+  }
+
+  const direction = segment.travelDirection ?? 'up';
+  const heightAmount = sceneDiagonal * THREE.MathUtils.clamp(segment.heightScale ?? 0.12, 0.05, 0.25);
+  const endPosition = clampPointToExpandedBounds(
+    currentPose.position.clone().addScaledVector(axis, direction === 'up' ? heightAmount : -heightAmount),
+    bounds,
+    sceneDiagonal,
+  );
+  const lookTarget = routeWaypoints[0] ?? currentPose.position.clone().add(getForwardVector(currentPose.quaternion));
+
+  return Array.from({ length: 3 }, (_, index) => {
+    const ratio = index / 2;
+    const position = currentPose.position.clone().lerp(endPosition, ratio);
+    return {
+      fov: THREE.MathUtils.lerp(currentPose.fov, endFov, ratio),
+      position,
+      quaternion: segment.lookMode === 'look-forward'
+        ? buildLookQuaternion(position, lookTarget, axis)
+        : buildLookQuaternion(position, lookTarget, axis),
+    };
+  });
+}
+
+function buildTraverseSegmentSamples(
+  segment: AgenticTraverseSegmentPlan,
+  currentPose: InterpolatedPose,
+  routeWaypoints: THREE.Vector3[],
+  axis: THREE.Vector3,
+  bounds: THREE.Box3,
+  sceneDiagonal: number,
+  groundedRoute: AgenticGroundedRoute,
+): InterpolatedPose[] {
+  const distanceRatio = THREE.MathUtils.clamp(segment.distanceRatio ?? 1, 0.35, 1);
+  const traverseLength = Math.max(groundedRoute.length * distanceRatio, Math.min(groundedRoute.length, ROUTE_MIN_LENGTH));
+  const routeHeight = Math.max(sceneDiagonal * 0.035, 0.2);
+  const lateralBias = resolveRouteLateralBias(segment.lateralBias, sceneDiagonal);
+  const sampleCount = Math.max(SEGMENT_KEYFRAME_COUNT.traverse, Math.min(12, routeWaypoints.length + 2));
+  const samples: InterpolatedPose[] = [clonePose(currentPose)];
+
+  for (let index = 1; index < sampleCount; index += 1) {
+    const ratio = index / (sampleCount - 1);
+    const sample = sampleRoutePolyline(routeWaypoints, traverseLength * ratio);
+    const right = new THREE.Vector3().crossVectors(sample.tangent, axis);
+    if (right.lengthSq() <= MIN_VECTOR_LENGTH_SQUARED) {
+      right.copy(getArbitraryPerpendicular(axis));
+    } else {
+      right.normalize();
+    }
+    const routePosition = sample.point.clone()
+      .addScaledVector(axis, routeHeight)
+      .addScaledVector(right, lateralBias);
+    const clampedPosition = clampPointToExpandedBounds(routePosition, bounds, sceneDiagonal);
+    const lookTarget = sample.point.clone()
+      .addScaledVector(sample.tangent, Math.max(sceneDiagonal * 0.08, 0.35));
+
+    samples.push({
+      fov: currentPose.fov,
+      position: clampedPosition,
+      quaternion: buildLookQuaternion(clampedPosition, lookTarget, axis),
+    });
+  }
+
+  return samples;
 }
 
 function finalizeSegmentOrientations(
@@ -1603,6 +2451,515 @@ function pushSegmentControlFeedback(
       pushValidationFeedback(feedback, 'The draft added a hold even though hold was turned off.');
     }
   }
+}
+
+function tryGroundRoute(
+  routeObservations: AgenticRouteObservation[],
+  captures: AgenticPathCapture[],
+  sceneBounds: THREE.Box3,
+  basePose: InterpolatedPose,
+  scenePointSamples: ScenePointSample[],
+): AgenticGroundedRoute | null {
+  try {
+    return groundRouteFromObservations(routeObservations, captures, sceneBounds, basePose, scenePointSamples);
+  } catch (error) {
+    if (error instanceof AgenticPathGenerationError) {
+      return null;
+    }
+    throw error;
+  }
+}
+
+function shouldRunRouteRescan(
+  groundedRoute: AgenticGroundedRoute,
+  observationCount: number,
+  bounds: THREE.Box3,
+): boolean {
+  const sceneDiagonal = Math.max(bounds.getSize(new THREE.Vector3()).length(), 1);
+  return observationCount < 2
+    || groundedRoute.waypoints.length < 4
+    || groundedRoute.confidence < ROUTE_RESCAN_CONFIDENCE
+    || groundedRoute.length < Math.max(ROUTE_MIN_LENGTH, sceneDiagonal * 0.2);
+}
+
+function dedupeRoutePixels(points: AgenticRoutePixelPoint[]): AgenticRoutePixelPoint[] {
+  return points.filter((point, index) =>
+    index === 0
+    || Math.abs(point.x - points[index - 1].x) > 1
+    || Math.abs(point.y - points[index - 1].y) > 1);
+}
+
+function projectScenePointsToCapture(
+  scenePoints: THREE.Vector3[],
+  capture: AgenticPathCapture,
+): Array<{ pixelX: number; pixelY: number; point: THREE.Vector3; visible: boolean }> {
+  const camera = createCameraFromSerialized(capture.camera);
+  return scenePoints.map(point => {
+    const projected = point.clone().project(camera);
+    const visible = Number.isFinite(projected.x)
+      && Number.isFinite(projected.y)
+      && Number.isFinite(projected.z)
+      && projected.z >= -1
+      && projected.z <= 1
+      && Math.abs(projected.x) <= 1.05
+      && Math.abs(projected.y) <= 1.05;
+    return {
+      pixelX: ((projected.x + 1) / 2) * capture.width,
+      pixelY: ((1 - projected.y) / 2) * capture.height,
+      point,
+      visible,
+    };
+  });
+}
+
+function findNearestScenePointForPixel(
+  projectedPoints: Array<{ pixelX: number; pixelY: number; point: THREE.Vector3; visible: boolean }>,
+  pixel: AgenticRoutePixelPoint,
+  tolerancePixels: number,
+): { pixelDistance: number; point: THREE.Vector3 } | null {
+  let bestMatch: { pixelDistance: number; point: THREE.Vector3 } | null = null;
+  for (const projectedPoint of projectedPoints) {
+    if (!projectedPoint.visible) {
+      continue;
+    }
+    const pixelDistance = Math.hypot(projectedPoint.pixelX - pixel.x, projectedPoint.pixelY - pixel.y);
+    if (pixelDistance > tolerancePixels) {
+      continue;
+    }
+    if (!bestMatch || pixelDistance < bestMatch.pixelDistance) {
+      bestMatch = {
+        pixelDistance,
+        point: projectedPoint.point,
+      };
+    }
+  }
+  return bestMatch;
+}
+
+function clusterRouteWaypointMatches(matches: RouteWaypointMatch[], clusterRadius: number): RouteWaypointCluster[] {
+  const clusters: RouteWaypointCluster[] = [];
+  matches.forEach(match => {
+    const existing = clusters.find(cluster =>
+      cluster.point.distanceTo(match.point) <= clusterRadius
+      && Math.abs(cluster.progress - match.progress) <= 0.25);
+    if (!existing) {
+      clusters.push({
+        confidence: match.confidence,
+        memberCount: 1,
+        point: match.point.clone(),
+        progress: match.progress,
+      });
+      return;
+    }
+
+    const nextCount = existing.memberCount + 1;
+    existing.point.multiplyScalar(existing.memberCount / nextCount).addScaledVector(match.point, 1 / nextCount);
+    existing.progress = (existing.progress * existing.memberCount + match.progress) / nextCount;
+    existing.confidence = (existing.confidence * existing.memberCount + match.confidence) / nextCount;
+    existing.memberCount = nextCount;
+  });
+  return clusters;
+}
+
+function hasAmbiguousRouteBranch(clusters: RouteWaypointCluster[], clusterRadius: number): boolean {
+  for (let index = 0; index < clusters.length; index += 1) {
+    for (let otherIndex = index + 1; otherIndex < clusters.length; otherIndex += 1) {
+      if (
+        Math.abs(clusters[index].progress - clusters[otherIndex].progress) < 0.16
+        && clusters[index].point.distanceTo(clusters[otherIndex].point) > clusterRadius * 3
+        && Math.abs(clusters[index].confidence - clusters[otherIndex].confidence) < 0.18
+      ) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+function condenseRouteWaypoints(points: THREE.Vector3[], minSpacing: number): THREE.Vector3[] {
+  const condensed: THREE.Vector3[] = [];
+  points.forEach(point => {
+    const lastPoint = condensed.at(-1) ?? null;
+    if (!lastPoint || lastPoint.distanceTo(point) > minSpacing) {
+      condensed.push(point.clone());
+      return;
+    }
+    lastPoint.lerp(point, 0.5);
+  });
+  return condensed;
+}
+
+function computeRouteLength(points: THREE.Vector3[]): number {
+  let length = 0;
+  for (let index = 1; index < points.length; index += 1) {
+    length += points[index].distanceTo(points[index - 1]);
+  }
+  return length;
+}
+
+function computeRouteMaxTurnDegrees(points: THREE.Vector3[]): number {
+  let maxTurnDegrees = 0;
+  for (let index = 1; index < points.length - 1; index += 1) {
+    const prev = points[index].clone().sub(points[index - 1]).normalize();
+    const next = points[index + 1].clone().sub(points[index]).normalize();
+    if (prev.lengthSq() <= MIN_VECTOR_LENGTH_SQUARED || next.lengthSq() <= MIN_VECTOR_LENGTH_SQUARED) {
+      continue;
+    }
+    maxTurnDegrees = Math.max(maxTurnDegrees, THREE.MathUtils.radToDeg(prev.angleTo(next)));
+  }
+  return maxTurnDegrees;
+}
+
+function downsampleRouteWaypoints(points: THREE.Vector3[]): THREE.Vector3[] {
+  if (points.length <= 12) {
+    return points.map(point => point.clone());
+  }
+
+  const sampled: THREE.Vector3[] = [];
+  for (let index = 0; index < 12; index += 1) {
+    const ratio = index / 11;
+    const pointIndex = Math.round(ratio * (points.length - 1));
+    sampled.push(points[pointIndex].clone());
+  }
+  return sampled;
+}
+
+function getRouteMidpoint(groundedRoute: AgenticGroundedRoute): THREE.Vector3 {
+  const waypoints = groundedRoute.waypoints.map(vectorFromSerializable);
+  return waypoints[Math.floor((waypoints.length - 1) * 0.5)]?.clone() ?? new THREE.Vector3();
+}
+
+function resolveRouteLateralBias(lateralBias: AgenticLateralBias | undefined, sceneDiagonal: number): number {
+  const baseOffset = Math.max(sceneDiagonal * 0.018, 0.08);
+  if (lateralBias === 'left') {
+    return -baseOffset;
+  }
+  if (lateralBias === 'right') {
+    return baseOffset;
+  }
+  return 0;
+}
+
+function sampleRoutePolyline(points: THREE.Vector3[], distance: number): RoutePolylineSample {
+  if (points.length < 2) {
+    const point = points[0]?.clone() ?? new THREE.Vector3();
+    return {
+      distance: 0,
+      point,
+      segmentIndex: 0,
+      tangent: new THREE.Vector3(0, 0, -1),
+    };
+  }
+
+  let traversed = 0;
+  for (let index = 1; index < points.length; index += 1) {
+    const start = points[index - 1];
+    const end = points[index];
+    const segmentLength = start.distanceTo(end);
+    if (segmentLength <= MIN_VECTOR_LENGTH_SQUARED) {
+      continue;
+    }
+    if (traversed + segmentLength >= distance) {
+      const ratio = THREE.MathUtils.clamp((distance - traversed) / segmentLength, 0, 1);
+      return {
+        distance,
+        point: start.clone().lerp(end, ratio),
+        segmentIndex: index - 1,
+        tangent: end.clone().sub(start).normalize(),
+      };
+    }
+    traversed += segmentLength;
+  }
+
+  const lastIndex = points.length - 2;
+  const lastPoint = points.at(-1) ?? points[lastIndex] ?? new THREE.Vector3();
+  const lastTangent = lastPoint.clone().sub(points[lastIndex] ?? new THREE.Vector3());
+  return {
+    distance: traversed,
+    point: lastPoint.clone(),
+    segmentIndex: Math.max(lastIndex, 0),
+    tangent: lastTangent.lengthSq() <= MIN_VECTOR_LENGTH_SQUARED ? new THREE.Vector3(0, 0, -1) : lastTangent.normalize(),
+  };
+}
+
+function projectRoute(
+  groundedRoute: AgenticGroundedRoute,
+  pose: InterpolatedPose,
+): RouteProjectionSummary {
+  const waypoints = groundedRoute.waypoints.map(vectorFromSerializable);
+  const nearestSample = findNearestRouteSample(waypoints, pose.position);
+  const windowStart = Math.max(0, nearestSample.segmentIndex - 1);
+  const windowEnd = Math.min(waypoints.length, nearestSample.segmentIndex + 4);
+  const visibleWaypoints = waypoints.slice(windowStart, windowEnd);
+  const camera = createCameraFromPose(pose);
+  let visibleCount = 0;
+  let visibleCenterX = 0;
+
+  visibleWaypoints.forEach(point => {
+    const projected = point.clone().project(camera);
+    const visible = Number.isFinite(projected.x)
+      && Number.isFinite(projected.y)
+      && Number.isFinite(projected.z)
+      && projected.z >= -1
+      && projected.z <= 1
+      && Math.abs(projected.x) <= 1
+      && Math.abs(projected.y) <= 1;
+    if (!visible) {
+      return;
+    }
+    visibleCount += 1;
+    visibleCenterX += projected.x;
+  });
+
+  const forward = getForwardVector(pose.quaternion);
+  const headingErrorDegrees = nearestSample.tangent.lengthSq() <= MIN_VECTOR_LENGTH_SQUARED
+    ? 0
+    : THREE.MathUtils.radToDeg(forward.angleTo(nearestSample.tangent));
+
+  return {
+    centerNdcX: visibleCount > 0 ? visibleCenterX / visibleCount : 0,
+    clearanceMargin: groundedRoute.averageClearance - pose.position.distanceTo(nearestSample.point),
+    headingErrorDegrees,
+    visibleFraction: visibleWaypoints.length > 0 ? visibleCount / visibleWaypoints.length : 0,
+  };
+}
+
+function findNearestRouteSample(points: THREE.Vector3[], position: THREE.Vector3): RoutePolylineSample {
+  if (points.length < 2) {
+    return {
+      distance: 0,
+      point: points[0]?.clone() ?? new THREE.Vector3(),
+      segmentIndex: 0,
+      tangent: new THREE.Vector3(0, 0, -1),
+    };
+  }
+
+  let traversed = 0;
+  let bestSample: RoutePolylineSample | null = null;
+  let bestDistance = Number.POSITIVE_INFINITY;
+
+  for (let index = 1; index < points.length; index += 1) {
+    const start = points[index - 1];
+    const end = points[index];
+    const segment = end.clone().sub(start);
+    const segmentLengthSquared = segment.lengthSq();
+    if (segmentLengthSquared <= MIN_VECTOR_LENGTH_SQUARED) {
+      continue;
+    }
+    const ratio = THREE.MathUtils.clamp(position.clone().sub(start).dot(segment) / segmentLengthSquared, 0, 1);
+    const point = start.clone().lerp(end, ratio);
+    const distance = point.distanceTo(position);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      bestSample = {
+        distance: traversed + Math.sqrt(segmentLengthSquared) * ratio,
+        point,
+        segmentIndex: index - 1,
+        tangent: segment.normalize(),
+      };
+    }
+    traversed += Math.sqrt(segmentLengthSquared);
+  }
+
+  return bestSample ?? sampleRoutePolyline(points, 0);
+}
+
+function buildRouteVerificationCapturePlans(
+  builtDraft: BuiltDraftPath,
+  bounds: THREE.Box3,
+  groundedRoute: AgenticGroundedRoute,
+  draftControls: AgenticDraftControls,
+): VerificationCapturePlan[] {
+  const pathInterpolator = new PathInterpolator();
+  pathInterpolator.setKeyframes(builtDraft.keyframes);
+
+  const baselinePlans = chooseVerificationSampleTimes(builtDraft).map((timeSeconds, index) => {
+    const pose = pathInterpolator.evaluate(timeSeconds);
+    if (!pose) {
+      throw new AgenticPathGenerationError('The route draft could not be sampled for planner verification.');
+    }
+
+    return {
+      captureKind: 'draft-sample' as const,
+      id: `verify-sample-${index + 1}`,
+      pose,
+      probeReason: resolveVerificationBaselineReason(builtDraft, draftControls, timeSeconds),
+      timeSeconds,
+    };
+  });
+  const activeProbePlans = chooseRouteVerificationProbePlans(
+    builtDraft,
+    bounds,
+    groundedRoute,
+    draftControls,
+    pathInterpolator,
+  );
+
+  return [...baselinePlans, ...activeProbePlans]
+    .sort((left, right) => {
+      if (Math.abs(left.timeSeconds - right.timeSeconds) > 1e-6) {
+        return left.timeSeconds - right.timeSeconds;
+      }
+      if (left.captureKind === right.captureKind) {
+        return left.id.localeCompare(right.id);
+      }
+      return left.captureKind === 'draft-sample' ? -1 : 1;
+    });
+}
+
+function chooseRouteVerificationProbePlans(
+  builtDraft: BuiltDraftPath,
+  bounds: THREE.Box3,
+  groundedRoute: AgenticGroundedRoute,
+  draftControls: AgenticDraftControls,
+  pathInterpolator: PathInterpolator,
+): VerificationCapturePlan[] {
+  const firstTime = builtDraft.keyframes[0]?.time ?? 0;
+  const lastTime = builtDraft.keyframes.at(-1)?.time ?? firstTime;
+  const sceneDiagonal = Math.max(bounds.getSize(new THREE.Vector3()).length(), 1);
+  const candidates: RouteVerificationProbeCandidate[] = [];
+
+  for (let sampleTime = firstTime; sampleTime <= lastTime + 1e-6; sampleTime += VERIFICATION_ANALYSIS_STEP_SECONDS) {
+    const pose = pathInterpolator.evaluate(sampleTime);
+    if (!pose) {
+      continue;
+    }
+
+    const projectedRoute = projectRoute(groundedRoute, pose);
+    if (projectedRoute.clearanceMargin < Math.max(groundedRoute.averageClearance * 0.35, sceneDiagonal * 0.02)) {
+      pushRouteVerificationCandidate(candidates, {
+        pose,
+        projectedRoute,
+        reason: 'floor-clearance',
+        score: 0.68 + (1 - THREE.MathUtils.clamp(projectedRoute.clearanceMargin / Math.max(groundedRoute.averageClearance, 0.01), 0, 1)) * 0.22,
+        timeSeconds: sampleTime,
+      });
+    }
+    if (projectedRoute.headingErrorDegrees > 26) {
+      pushRouteVerificationCandidate(candidates, {
+        pose,
+        projectedRoute,
+        reason: 'segment-transition',
+        score: 0.6 + THREE.MathUtils.clamp(projectedRoute.headingErrorDegrees / 90, 0, 1) * 0.24,
+        timeSeconds: sampleTime,
+      });
+    }
+    if (projectedRoute.visibleFraction < 0.65) {
+      pushRouteVerificationCandidate(candidates, {
+        pose,
+        projectedRoute,
+        reason: 'long-path-lookahead',
+        score: 0.58 + (1 - projectedRoute.visibleFraction) * 0.25,
+        timeSeconds: sampleTime,
+      });
+    }
+  }
+
+  if (draftControls.holdPreference === 'brief' || draftControls.holdPreference === 'linger') {
+    const holdWindow = [...builtDraft.windows].reverse().find(window => window.segmentType === 'hold') ?? null;
+    if (holdWindow && holdWindow.endTime - holdWindow.startTime >= 2.5) {
+      const timeSeconds = THREE.MathUtils.lerp(holdWindow.startTime, holdWindow.endTime, 0.7);
+      const pose = pathInterpolator.evaluate(timeSeconds);
+      if (pose) {
+        pushRouteVerificationCandidate(candidates, {
+          pose,
+          projectedRoute: projectRoute(groundedRoute, pose),
+          reason: 'hold-read',
+          score: 0.53,
+          timeSeconds,
+        });
+      }
+    }
+  }
+
+  const selectedCandidates: RouteVerificationProbeCandidate[] = [];
+  const sortedCandidates = [...candidates].sort((left, right) => {
+    if (Math.abs(left.score - right.score) > 1e-6) {
+      return right.score - left.score;
+    }
+    return left.timeSeconds - right.timeSeconds;
+  });
+
+  for (const candidate of sortedCandidates) {
+    if (selectedCandidates.length >= MAX_ACTIVE_VERIFICATION_PROBES) {
+      break;
+    }
+    if (selectedCandidates.some(existing =>
+      Math.abs(existing.timeSeconds - candidate.timeSeconds) < MIN_VERIFICATION_PROBE_TIME_GAP_SECONDS
+      && existing.reason === candidate.reason
+    )) {
+      continue;
+    }
+    selectedCandidates.push(candidate);
+  }
+
+  return selectedCandidates.map((candidate, index) => ({
+    captureKind: 'active-probe' as const,
+    id: `verify-probe-${index + 1}`,
+    pose: buildRouteVerificationProbePose(candidate, bounds, groundedRoute),
+    probeReason: candidate.reason,
+    timeSeconds: Number(candidate.timeSeconds.toFixed(3)),
+  }));
+}
+
+function pushRouteVerificationCandidate(
+  candidates: RouteVerificationProbeCandidate[],
+  candidate: RouteVerificationProbeCandidate,
+): void {
+  if (!Number.isFinite(candidate.timeSeconds) || candidate.score <= 0) {
+    return;
+  }
+
+  const existingCandidate = candidates.find(existing =>
+    existing.reason === candidate.reason
+    && Math.abs(existing.timeSeconds - candidate.timeSeconds) < VERIFICATION_ANALYSIS_STEP_SECONDS * 0.5
+  );
+  if (!existingCandidate) {
+    candidates.push(candidate);
+    return;
+  }
+
+  if (candidate.score > existingCandidate.score) {
+    existingCandidate.pose = candidate.pose;
+    existingCandidate.projectedRoute = candidate.projectedRoute;
+    existingCandidate.score = candidate.score;
+    existingCandidate.timeSeconds = candidate.timeSeconds;
+  }
+}
+
+function buildRouteVerificationProbePose(
+  candidate: RouteVerificationProbeCandidate,
+  bounds: THREE.Box3,
+  groundedRoute: AgenticGroundedRoute,
+): InterpolatedPose {
+  const axis = getUpVector(candidate.pose.quaternion);
+  const forward = getForwardVector(candidate.pose.quaternion);
+  const right = getRightVector(candidate.pose.quaternion);
+  const sceneDiagonal = Math.max(bounds.getSize(new THREE.Vector3()).length(), 1);
+  const position = candidate.pose.position.clone();
+
+  if (candidate.reason === 'floor-clearance') {
+    position.addScaledVector(axis, Math.max(sceneDiagonal * 0.05, 0.18));
+  } else if (candidate.reason === 'segment-transition') {
+    position.addScaledVector(right, Math.max(sceneDiagonal * 0.04, 0.16));
+  } else if (candidate.reason === 'long-path-lookahead') {
+    position.addScaledVector(forward, -Math.max(sceneDiagonal * 0.05, 0.2));
+    position.addScaledVector(right, Math.max(sceneDiagonal * 0.03, 0.12));
+  } else if (candidate.reason === 'hold-read') {
+    position.addScaledVector(axis, Math.max(sceneDiagonal * 0.03, 0.1));
+  }
+
+  const nearestRoute = findNearestRouteSample(groundedRoute.waypoints.map(vectorFromSerializable), position);
+  const clampedPosition = clampPointToExpandedBounds(position, bounds, sceneDiagonal);
+  return {
+    fov: candidate.pose.fov,
+    position: clampedPosition,
+    quaternion: buildLookQuaternion(
+      clampedPosition,
+      nearestRoute.point.clone().addScaledVector(nearestRoute.tangent, Math.max(sceneDiagonal * 0.08, 0.35)),
+      axis,
+    ),
+  };
 }
 
 function buildVerificationCapturePlans(
@@ -2074,7 +3431,7 @@ function applyDraftControlsToIntent(
 
   const nextRequestedMoveTypes = Array.from(requestedMoveTypes);
   if (nextRequestedMoveTypes.length === 0) {
-    nextRequestedMoveTypes.push('arc');
+    nextRequestedMoveTypes.push(intent.pathMode === 'route-following' ? 'traverse' : 'arc');
   }
 
   return {
@@ -2161,6 +3518,9 @@ function parseGroundResponse(input: unknown): AgenticGroundResponse {
   return {
     intent: parsePromptIntent(input['intent'], 'intent', pathMode),
     pathMode,
+    routeObservations: pathMode === 'route-following'
+      ? parseRouteObservationArray(input['routeObservations'])
+      : undefined,
     subjectLocalizations: rawLocalizations.map((localization, index) =>
       parseLocalization(localization, `subjectLocalizations[${index}]`)),
     unsupportedReason: readOptionalString(input, 'unsupportedReason'),
@@ -2202,6 +3562,49 @@ function parseLocalization(value: unknown, context: string): AgenticSubjectLocal
     confidence: THREE.MathUtils.clamp(readFiniteNumber(value, 'confidence', context), 0, 1),
     pixelX: readFiniteNumber(value, 'pixelX', context),
     pixelY: readFiniteNumber(value, 'pixelY', context),
+  };
+}
+
+function parseRouteObservationArray(value: unknown): AgenticRouteObservation[] {
+  if (!Array.isArray(value)) {
+    throw new AgenticPathGenerationError('Planner grounding response was missing routeObservations.');
+  }
+
+  return value.map((entry, index) => parseRouteObservation(entry, `routeObservations[${index}]`));
+}
+
+function parseRouteObservation(value: unknown, context: string): AgenticRouteObservation {
+  if (!isRecord(value)) {
+    throw new AgenticPathGenerationError(`Planner response field ${context} must be an object.`);
+  }
+
+  return {
+    captureId: readString(value, 'captureId', context),
+    centerlinePixels: parseRoutePixelPointArray(value['centerlinePixels'], `${context}.centerlinePixels`),
+    confidence: THREE.MathUtils.clamp(readFiniteNumber(value, 'confidence', context), 0, 1),
+    entryPixel: parseRoutePixelPoint(value['entryPixel'], `${context}.entryPixel`),
+    exitPixel: parseRoutePixelPoint(value['exitPixel'], `${context}.exitPixel`),
+    routeKind: readNullableString(value, 'routeKind'),
+    widthPixels: readNullableFiniteNumber(value, 'widthPixels'),
+  };
+}
+
+function parseRoutePixelPointArray(value: unknown, context: string): AgenticRoutePixelPoint[] {
+  if (!Array.isArray(value) || value.length < 3) {
+    throw new AgenticPathGenerationError(`Planner response field ${context} must contain at least three ordered points.`);
+  }
+
+  return value.slice(0, 12).map((entry, index) => parseRoutePixelPoint(entry, `${context}[${index}]`));
+}
+
+function parseRoutePixelPoint(value: unknown, context: string): AgenticRoutePixelPoint {
+  if (!isRecord(value)) {
+    throw new AgenticPathGenerationError(`Planner response field ${context} must be an object.`);
+  }
+
+  return {
+    x: readFiniteNumber(value, 'x', context),
+    y: readFiniteNumber(value, 'y', context),
   };
 }
 
@@ -2283,23 +3686,29 @@ function parsePromptIntent(
     pathMode: value['pathMode'] === undefined
       ? (fallbackPathMode ?? 'subject-centric')
       : parsePathMode(value['pathMode'], `${context}.pathMode`),
-    requestedMoveTypes: parseRequestedMoveTypes(value['requestedMoveTypes']),
+    requestedMoveTypes: parseRequestedMoveTypes(
+      value['requestedMoveTypes'],
+      value['pathMode'] === undefined ? fallbackPathMode : parsePathMode(value['pathMode'], `${context}.pathMode`),
+    ),
     subjectHint: readNullableString(value, 'subjectHint'),
     targetDurationSeconds: readNullableFiniteNumber(value, 'targetDurationSeconds'),
     tone: readNullableString(value, 'tone'),
   };
 }
 
-function parseRequestedMoveTypes(value: unknown): AgenticPathSegmentType[] {
+function parseRequestedMoveTypes(
+  value: unknown,
+  pathMode: AgenticPathMode = 'subject-centric',
+): AgenticPathSegmentType[] {
   if (!Array.isArray(value)) {
-    return ['arc'];
+    return [pathMode === 'route-following' ? 'traverse' : 'arc'];
   }
 
   const moves = value
     .map(entry => coerceSegmentType(entry))
     .filter((entry): entry is AgenticPathSegmentType => entry !== null);
 
-  return moves.length > 0 ? Array.from(new Set(moves)) : ['arc'];
+  return moves.length > 0 ? Array.from(new Set(moves)) : [pathMode === 'route-following' ? 'traverse' : 'arc'];
 }
 
 function parseSegment(value: unknown, context: string): AgenticPathSegmentPlan {
@@ -2350,6 +3759,24 @@ function parseSegment(value: unknown, context: string): AgenticPathSegmentPlan {
         ? undefined
         : parseVerticalBias(value['verticalBias'], `${context}.verticalBias`),
     };
+  }
+
+  if (segmentType === 'traverse') {
+    return {
+      ...baseSegment,
+      distanceRatio: readOptionalFiniteNumber(value, 'distanceRatio'),
+      lateralBias: value['lateralBias'] === undefined
+        ? undefined
+        : parseLateralBias(value['lateralBias'], `${context}.lateralBias`),
+      segmentType,
+      verticalBias: value['verticalBias'] === undefined
+        ? undefined
+        : parseVerticalBias(value['verticalBias'], `${context}.verticalBias`),
+    };
+  }
+
+  if (segmentType !== 'pedestal') {
+    throw new AgenticPathGenerationError('Traverse segments are not supported for subject-centric draft synthesis.');
   }
 
   return {
@@ -2415,8 +3842,29 @@ function parseVerticalBias(value: unknown, context: string): AgenticVerticalBias
   throw new AgenticPathGenerationError(`Planner response field ${context} must be low, mid, or high.`);
 }
 
+function parseLateralBias(value: unknown, context: string): AgenticLateralBias {
+  if (value === 'left' || value === 'center' || value === 'right') {
+    return value;
+  }
+
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (normalized.includes('left')) {
+      return 'left';
+    }
+    if (normalized.includes('right')) {
+      return 'right';
+    }
+    if (normalized.includes('center') || normalized.includes('middle') || normalized.includes('neutral')) {
+      return 'center';
+    }
+  }
+
+  throw new AgenticPathGenerationError(`Planner response field ${context} must be left, center, or right.`);
+}
+
 function coerceSegmentType(value: unknown): AgenticPathSegmentType | null {
-  if (value === 'hold' || value === 'arc' || value === 'dolly' || value === 'pedestal') {
+  if (value === 'hold' || value === 'arc' || value === 'dolly' || value === 'pedestal' || value === 'traverse') {
     return value;
   }
 
@@ -2433,6 +3881,9 @@ function coerceSegmentType(value: unknown): AgenticPathSegmentType | null {
   }
   if (normalized === 'crane' || normalized === 'rise' || normalized === 'drop') {
     return 'pedestal';
+  }
+  if (normalized === 'traverse' || normalized === 'follow' || normalized === 'route' || normalized === 'travel') {
+    return 'traverse';
   }
   if (normalized === 'pause' || normalized === 'linger' || normalized === 'still') {
     return 'hold';

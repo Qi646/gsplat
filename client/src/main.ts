@@ -104,12 +104,12 @@ function parseAgenticPathStatus(input: unknown): AgenticPathStatus {
         maxCaptureRounds: 2,
         maxSegments: 4,
         maxVerificationCaptures: 8,
-        segmentTypes: ['hold', 'arc', 'dolly', 'pedestal'],
-        supportedPathModes: ['subject-centric'],
-        unsupportedPathModes: ['route-following', 'multi-subject', 'ambiguous'],
+        segmentTypes: ['hold', 'arc', 'dolly', 'pedestal', 'traverse'],
+        supportedPathModes: ['subject-centric', 'route-following'],
+        unsupportedPathModes: ['multi-subject', 'ambiguous'],
       },
       model: null,
-      plannerVersion: 'multistep-v1',
+      plannerVersion: 'multistep-v2',
       reason: 'Agentic path generation is unavailable because the server capability check returned invalid data.',
     };
   }
@@ -118,6 +118,28 @@ function parseAgenticPathStatus(input: unknown): AgenticPathStatus {
   const capabilities = typeof record['capabilities'] === 'object' && record['capabilities'] !== null
     ? record['capabilities'] as Record<string, unknown>
     : null;
+  const segmentTypes = Array.isArray(capabilities?.['segmentTypes'])
+    ? capabilities?.['segmentTypes'].filter((entry): entry is AgenticPathStatus['capabilities']['segmentTypes'][number] =>
+      entry === 'hold'
+      || entry === 'arc'
+      || entry === 'dolly'
+      || entry === 'pedestal'
+      || entry === 'traverse')
+    : [];
+  const supportedPathModes = Array.isArray(capabilities?.['supportedPathModes'])
+    ? capabilities?.['supportedPathModes'].filter((entry): entry is AgenticPathStatus['capabilities']['supportedPathModes'][number] =>
+      entry === 'subject-centric'
+      || entry === 'route-following'
+      || entry === 'multi-subject'
+      || entry === 'ambiguous')
+    : [];
+  const unsupportedPathModes = Array.isArray(capabilities?.['unsupportedPathModes'])
+    ? capabilities?.['unsupportedPathModes'].filter((entry): entry is AgenticPathStatus['capabilities']['unsupportedPathModes'][number] =>
+      entry === 'subject-centric'
+      || entry === 'route-following'
+      || entry === 'multi-subject'
+      || entry === 'ambiguous')
+    : [];
   return {
     available: record['available'] === true,
     capabilities: {
@@ -128,12 +150,12 @@ function parseAgenticPathStatus(input: unknown): AgenticPathStatus {
       maxVerificationCaptures: typeof capabilities?.['maxVerificationCaptures'] === 'number'
         ? capabilities['maxVerificationCaptures'] as number
         : 8,
-      segmentTypes: ['hold', 'arc', 'dolly', 'pedestal'],
-      supportedPathModes: ['subject-centric'],
-      unsupportedPathModes: ['route-following', 'multi-subject', 'ambiguous'],
+      segmentTypes: segmentTypes.length > 0 ? segmentTypes : ['hold', 'arc', 'dolly', 'pedestal', 'traverse'],
+      supportedPathModes: supportedPathModes.length > 0 ? supportedPathModes : ['subject-centric', 'route-following'],
+      unsupportedPathModes: unsupportedPathModes.length > 0 ? unsupportedPathModes : ['multi-subject', 'ambiguous'],
     },
     model: typeof record['model'] === 'string' ? record['model'] : null,
-    plannerVersion: 'multistep-v1',
+    plannerVersion: 'multistep-v2',
     reason: typeof record['reason'] === 'string' ? record['reason'] : null,
   };
 }
@@ -301,12 +323,12 @@ async function main(): Promise<void> {
       maxCaptureRounds: 2,
       maxSegments: 4,
       maxVerificationCaptures: 8,
-      segmentTypes: ['hold', 'arc', 'dolly', 'pedestal'],
-      supportedPathModes: ['subject-centric'],
-      unsupportedPathModes: ['route-following', 'multi-subject', 'ambiguous'],
+      segmentTypes: ['hold', 'arc', 'dolly', 'pedestal', 'traverse'],
+      supportedPathModes: ['subject-centric', 'route-following'],
+      unsupportedPathModes: ['multi-subject', 'ambiguous'],
     },
     model: null,
-    plannerVersion: 'multistep-v1',
+    plannerVersion: 'multistep-v2',
     reason: 'Checking whether agentic path generation is available on the server…',
   };
   const isSceneLoaded = () => !sceneLoadInProgress && viewer.isSceneLoaded();
@@ -613,13 +635,13 @@ async function main(): Promise<void> {
 
     if (!isSceneLoaded()) {
       agenticPathNote.textContent =
-        'Load a scene to enable subject-centric draft generation. It captures the current view plus nearby scouts and does not support route-following prompts.';
+        'Load a scene to enable subject-centric and route-following draft generation. It captures the current view plus nearby scouts, and can add one bounded rescan round when grounding is weak.';
       return;
     }
 
     const modelLabel = agenticPathStatus.model ? ` Using ${agenticPathStatus.model}.` : '';
     agenticPathNote.textContent =
-      `Prompt one continuous subject-centric camera move. The planner uses nearby scout captures, your timing/hold options, and active verification probes around risky draft moments before accepting the draft.${modelLabel}`;
+      `Prompt one continuous subject-centric move or one route-following traverse. The planner uses nearby scout captures, your timing/hold options, and active verification probes around risky draft moments before accepting the draft.${modelLabel}`;
   };
 
   const updateAgenticPathBlocker = () => {
@@ -762,7 +784,7 @@ async function main(): Promise<void> {
         available: false,
         capabilities: agenticPathStatus.capabilities,
         model: null,
-        plannerVersion: 'multistep-v1',
+        plannerVersion: 'multistep-v2',
         reason: 'Agentic path generation is unavailable because the server capability check failed.',
       };
     }

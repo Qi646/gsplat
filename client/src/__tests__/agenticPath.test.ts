@@ -3,14 +3,19 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   AgenticPathOrchestrator,
   buildDraftPath,
+  buildRouteDraftPath,
+  buildRouteRescanPoses,
   buildScoutCameraPoses,
   buildTargetedRescanPoses,
   groundSubjectFromLocalizations,
+  groundRouteFromObservations,
+  validateRouteDraftPath,
   validateDraftPath,
   type AgenticDraftControls,
   type AgenticGroundResponse,
   type AgenticPathCapture,
   type AgenticPathSegmentPlan,
+  type AgenticRouteObservation,
   type AgenticSubjectLocalization,
 } from '../path/agenticPath';
 import type { ViewerAdapter } from '../viewer/ViewerAdapter';
@@ -82,20 +87,24 @@ function projectPoint(point: THREE.Vector3, capture: AgenticPathCapture): Agenti
 function createGroundResponse(
   pathMode: AgenticGroundResponse['pathMode'],
   localizations: AgenticSubjectLocalization[],
+  routeObservations?: AgenticRouteObservation[],
 ): AgenticGroundResponse {
   return {
     intent: {
       continuousPath: true,
-      orientationPreference: 'look-at-subject',
+      orientationPreference: pathMode === 'route-following' ? 'look-forward' : 'look-at-subject',
       pathMode,
-      requestedMoveTypes: ['arc', 'hold'],
-      subjectHint: 'truck',
+      requestedMoveTypes: pathMode === 'route-following' ? ['traverse', 'hold'] : ['arc', 'hold'],
+      subjectHint: pathMode === 'route-following' ? 'route through trees' : 'truck',
       targetDurationSeconds: 10,
       tone: 'cinematic',
     },
     pathMode,
+    routeObservations,
     subjectLocalizations: localizations,
-    unsupportedReason: pathMode === 'subject-centric' ? undefined : 'Unsupported prompt class.',
+    unsupportedReason: pathMode === 'multi-subject' || pathMode === 'ambiguous'
+      ? 'Unsupported prompt class.'
+      : undefined,
   };
 }
 
@@ -121,6 +130,7 @@ function createMockViewer(options: {
   bounds?: THREE.Box3;
   captureFrame?: () => Promise<Blob>;
   initialCamera?: THREE.PerspectiveCamera;
+  sampleScenePoints?: ViewerAdapter['sampleScenePoints'];
 } = {}): {
   camera: THREE.PerspectiveCamera;
   viewer: ViewerAdapter;
@@ -144,10 +154,62 @@ function createMockViewer(options: {
     getSceneBounds: () => bounds.clone(),
     isSceneLoaded: () => true,
     renderNow: () => {},
-    sampleScenePoints: () => [],
+    sampleScenePoints: options.sampleScenePoints ?? (() => []),
   } as unknown as ViewerAdapter;
 
   return { camera, viewer };
+}
+
+function createRouteObservation(
+  capture: AgenticPathCapture,
+  sceneSamples = createRouteSceneSamples(),
+): AgenticRouteObservation {
+  const camera = createCamera(
+    new THREE.Vector3(
+      capture.camera.position.x,
+      capture.camera.position.y,
+      capture.camera.position.z,
+    ),
+    new THREE.Vector3(0, 0, 0),
+    capture.camera.aspect,
+  );
+  camera.quaternion.set(
+    capture.camera.quaternion.x,
+    capture.camera.quaternion.y,
+    capture.camera.quaternion.z,
+    capture.camera.quaternion.w,
+  );
+  camera.updateProjectionMatrix();
+  camera.updateMatrixWorld(true);
+  const routePoints = sceneSamples.slice(2, 13).filter((_, index) => index % 2 === 0);
+  const projectedPoints = routePoints.map(sample => {
+    const projected = new THREE.Vector3(sample.position.x, sample.position.y, sample.position.z).project(camera);
+    return {
+      x: ((projected.x + 1) / 2) * capture.width,
+      y: ((1 - projected.y) / 2) * capture.height,
+    };
+  });
+
+  return {
+    captureId: capture.id,
+    centerlinePixels: projectedPoints.slice(1, -1),
+    confidence: 0.9,
+    entryPixel: projectedPoints[0] as { x: number; y: number },
+    exitPixel: projectedPoints.at(-1) as { x: number; y: number },
+    routeKind: 'corridor',
+    widthPixels: 28,
+  };
+}
+
+function createRouteSceneSamples(): Array<{ opacity: number; position: { x: number; y: number; z: number } }> {
+  return Array.from({ length: 18 }, (_, index) => ({
+    opacity: 0.9,
+    position: {
+      x: -0.2 + index * 0.12,
+      y: 0.05,
+      z: -2.8 + index * 0.42,
+    },
+  }));
 }
 
 function installCapturePipelineStubs(): void {
@@ -235,6 +297,24 @@ describe('buildTargetedRescanPoses', () => {
   });
 });
 
+describe('buildRouteRescanPoses', () => {
+  it('creates four bounded rescans around a provisional route midpoint', () => {
+    const bounds = new THREE.Box3(
+      new THREE.Vector3(-4, -4, -6),
+      new THREE.Vector3(4, 4, 6),
+    );
+    const routeMidpoint = new THREE.Vector3(0, 0.4, 0);
+    const camera = createCamera(new THREE.Vector3(0, 1.2, 4), routeMidpoint);
+
+    const poses = buildRouteRescanPoses(routeMidpoint, bounds, camera);
+
+    expect(poses).toHaveLength(4);
+    poses.forEach(pose => {
+      expect(pose.position.distanceTo(camera.position)).toBeGreaterThan(0.1);
+    });
+  });
+});
+
 describe('groundSubjectFromLocalizations', () => {
   it('reconstructs a grounded subject with confidence and residual data', () => {
     const subject = new THREE.Vector3(1.5, 0.75, -0.5);
@@ -265,6 +345,39 @@ describe('groundSubjectFromLocalizations', () => {
     expect(solvedAnchor.distanceTo(subject)).toBeLessThan(0.05);
     expect(grounded.confidence).toBeGreaterThan(0.5);
     expect(grounded.meanResidual).toBeLessThan(0.05);
+  });
+});
+
+describe('groundRouteFromObservations', () => {
+  it('grounds an ordered route polyline from route observations and scene samples', () => {
+    const bounds = new THREE.Box3(
+      new THREE.Vector3(-4, -2, -4),
+      new THREE.Vector3(4, 4, 4),
+    );
+    const captureA = createCapture('capture-route-a', createCamera(new THREE.Vector3(0, 1, -3.8), new THREE.Vector3(0, 0.4, 0.2)));
+    const captureB = createCapture('capture-route-b', createCamera(new THREE.Vector3(-1.8, 1.1, -2.5), new THREE.Vector3(0.1, 0.3, 0.8)));
+    const captureC = createCapture('capture-route-c', createCamera(new THREE.Vector3(1.6, 1.2, -1.8), new THREE.Vector3(0.2, 0.3, 1.4)));
+    const sceneSamples = createRouteSceneSamples();
+
+    const groundedRoute = groundRouteFromObservations(
+      [
+        createRouteObservation(captureA, sceneSamples),
+        createRouteObservation(captureB, sceneSamples),
+        createRouteObservation(captureC, sceneSamples),
+      ],
+      [captureA, captureB, captureC],
+      bounds,
+      {
+        fov: 60,
+        position: new THREE.Vector3(0, 1, -3.8),
+        quaternion: createCamera(new THREE.Vector3(0, 1, -3.8), new THREE.Vector3(0, 0.4, 0.2)).quaternion.clone(),
+      },
+      sceneSamples,
+    );
+
+    expect(groundedRoute.confidence).toBeGreaterThan(0.6);
+    expect(groundedRoute.length).toBeGreaterThan(1.75);
+    expect(groundedRoute.waypoints.length).toBeGreaterThanOrEqual(3);
   });
 });
 
@@ -500,6 +613,83 @@ describe('buildDraftPath and validateDraftPath', () => {
     builtDraft.keyframes.forEach(keyframe => {
       expect(keyframe.position.y).toBeGreaterThanOrEqual(floorThreshold);
     });
+  });
+});
+
+describe('buildRouteDraftPath and validateRouteDraftPath', () => {
+  it('builds and validates a route-following draft with one traverse segment', () => {
+    const bounds = new THREE.Box3(
+      new THREE.Vector3(-4, -2, -4),
+      new THREE.Vector3(4, 4, 4),
+    );
+    const baseCamera = createCamera(new THREE.Vector3(0, 1, -3.8), new THREE.Vector3(0, 0.4, 0.2));
+    const groundedRoute = {
+      averageClearance: 0.45,
+      confidence: 0.88,
+      length: 4.2,
+      maxTurnDegrees: 18,
+      routeId: 'route-a',
+      waypoints: createRouteSceneSamples().slice(0, 8).map(sample => sample.position),
+    };
+
+    const builtDraft = buildRouteDraftPath({
+      basePose: {
+        fov: baseCamera.fov,
+        position: baseCamera.position.clone(),
+        quaternion: baseCamera.quaternion.clone(),
+      },
+      bounds,
+      groundedRoute,
+      segments: [
+        {
+          durationSeconds: 2,
+          lookMode: 'look-forward',
+          segmentType: 'hold',
+        },
+        {
+          distanceRatio: 1,
+          durationSeconds: 8,
+          lateralBias: 'center',
+          lookMode: 'look-forward',
+          segmentType: 'traverse',
+        },
+        {
+          durationSeconds: 2,
+          lookMode: 'look-forward',
+          segmentType: 'hold',
+        },
+      ],
+      startTime: 0,
+    });
+
+    const validation = validateRouteDraftPath(
+      builtDraft,
+      bounds,
+      groundedRoute,
+      createDraftControls({ holdPreference: 'brief', requestedDurationSeconds: 12 }),
+      [
+        {
+          durationSeconds: 2,
+          lookMode: 'look-forward',
+          segmentType: 'hold',
+        },
+        {
+          distanceRatio: 1,
+          durationSeconds: 8,
+          lateralBias: 'center',
+          lookMode: 'look-forward',
+          segmentType: 'traverse',
+        },
+        {
+          durationSeconds: 2,
+          lookMode: 'look-forward',
+          segmentType: 'hold',
+        },
+      ],
+    );
+
+    expect(builtDraft.keyframes.length).toBeGreaterThan(4);
+    expect(validation.valid).toBe(true);
   });
 });
 
@@ -857,7 +1047,113 @@ describe('AgenticPathOrchestrator', () => {
     )).toBe(true);
   });
 
-  it('stops on unsupported route-following prompts', async () => {
+  it('generates a route-following draft with route verification metadata', async () => {
+    installCapturePipelineStubs();
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      callback(0);
+      return 1;
+    });
+
+    const { viewer } = createMockViewer({
+      initialCamera: createCamera(new THREE.Vector3(0, 1, -3.8), new THREE.Vector3(0, 0.4, 0.2)),
+      sampleScenePoints: () => createRouteSceneSamples(),
+    });
+    const verifyRequests: Array<{
+      captures: Array<{
+        captureKind: string;
+        projectedRoute?: {
+          centerNdcX: number;
+          clearanceMargin: number;
+          headingErrorDegrees: number;
+          visibleFraction: number;
+        };
+      }>;
+      groundedRoute: {
+        routeId: string;
+      };
+    }> = [];
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith('/api/path/ground')) {
+        const request = JSON.parse(String(init?.body ?? '{}')) as { captures: AgenticPathCapture[] };
+        return new Response(JSON.stringify(createGroundResponse(
+          'route-following',
+          [],
+          request.captures.map(capture => createRouteObservation(capture)),
+        )), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        });
+      }
+
+      if (url.endsWith('/api/path/verify')) {
+        verifyRequests.push(JSON.parse(String(init?.body ?? '{}')) as {
+          captures: Array<{
+            captureKind: string;
+            projectedRoute?: {
+              centerNdcX: number;
+              clearanceMargin: number;
+              headingErrorDegrees: number;
+              visibleFraction: number;
+            };
+          }>;
+          groundedRoute: {
+            routeId: string;
+          };
+        });
+        return new Response(JSON.stringify({
+          approved: true,
+          issues: [],
+        }), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        });
+      }
+
+      return new Response(JSON.stringify({
+        segments: [
+          {
+            durationSeconds: 2,
+            lookMode: 'look-forward',
+            segmentType: 'hold',
+          },
+          {
+            distanceRatio: 1,
+            durationSeconds: 8,
+            lateralBias: 'center',
+            lookMode: 'look-forward',
+            segmentType: 'traverse',
+          },
+          {
+            durationSeconds: 2,
+            lookMode: 'look-forward',
+            segmentType: 'hold',
+          },
+        ],
+        summary: 'Follow the route and settle into a hold.',
+      }), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 200,
+      });
+    }) as unknown as typeof fetch;
+
+    const orchestrator = new AgenticPathOrchestrator({ fetchImpl, viewer });
+
+    const draft = await orchestrator.generateDraft({
+      controls: createDraftControls({ holdPreference: 'brief', requestedDurationSeconds: 12 }),
+      existingKeyframes: [],
+      prompt: 'Weave through these trees.',
+    });
+
+    expect(draft.groundedRoute?.routeId).toBeTruthy();
+    expect(draft.groundedSubject).toBeNull();
+    expect(draft.segments.some(segment => segment.segmentType === 'traverse')).toBe(true);
+    expect(verifyRequests).toHaveLength(1);
+    expect(verifyRequests[0]?.groundedRoute.routeId).toBe(draft.groundedRoute?.routeId);
+    expect(verifyRequests[0]?.captures.some(capture => capture.projectedRoute !== undefined)).toBe(true);
+  });
+
+  it('stops on unsupported ambiguous prompts', async () => {
     installCapturePipelineStubs();
     vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
       callback(0);
@@ -868,7 +1164,7 @@ describe('AgenticPathOrchestrator', () => {
     const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url.endsWith('/api/path/ground')) {
-        return new Response(JSON.stringify(createGroundResponse('route-following', [])), {
+        return new Response(JSON.stringify(createGroundResponse('ambiguous', [])), {
           headers: { 'Content-Type': 'application/json' },
           status: 200,
         });
@@ -882,7 +1178,7 @@ describe('AgenticPathOrchestrator', () => {
     await expect(orchestrator.generateDraft({
       controls: createDraftControls(),
       existingKeyframes: [],
-      prompt: 'Weave through these trees.',
+      prompt: 'Show me the truck, then the tree, then weave through the gap.',
     })).rejects.toThrow(/unsupported/i);
   });
 

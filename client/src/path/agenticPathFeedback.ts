@@ -37,19 +37,28 @@ export function buildAgenticPathFailureFeedback(error: unknown): AgenticPathFail
     };
   }
 
-  if (matchesAny(message, [/route-following/i, /weav(e|ing) through/i, /multi-subject/i, /ambiguous/i])) {
+  if (matchesAny(message, [/route/i, /traverse/i, /branch/i, /clearance/i])) {
     return {
       detail:
-        'Agentic path v1 only supports one continuous subject-centric move. Rewrite the prompt around one primary subject instead of a route through geometry.',
+        'Route-following works best when one continuous path is already partly visible from the current view. Retry from a cleaner angle with fewer competing branches or tighter foreground clutter.',
       message,
-      title: 'Prompt Is Outside V1 Scope',
+      title: 'Route Could Not Be Grounded Cleanly',
+    };
+  }
+
+  if (matchesAny(message, [/multi-subject/i, /ambiguous/i])) {
+    return {
+      detail:
+        'Keep the prompt to one primary subject or one single unbranched route. Multi-subject tours and ambiguous prompts are still out of scope.',
+      message,
+      title: 'Prompt Is Outside Current Scope',
     };
   }
 
   if (matchesAny(message, [/safe frame box/i, /supported scene volume/i, /too close to the subject/i, /fov outside/i])) {
     return {
       detail:
-        'The draft was composed, but it failed local path validation. Retry with a simpler subject-centric move or reframe the scene before regenerating.',
+        'The draft was composed, but it failed local path validation. Retry with a simpler move, or reframe the scene before regenerating.',
       message,
       title: 'Draft Could Not Be Validated',
     };
