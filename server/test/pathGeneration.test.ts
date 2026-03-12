@@ -1167,6 +1167,66 @@ describe('OpenAIVisionPathPlanner request compatibility', () => {
     expect(requestBodies[1]?.['max_completion_tokens']).toBeUndefined();
   });
 
+  it('constrains grounding orientationPreference to the exact enum values in the system prompt', async () => {
+    const requestBodies: Array<Record<string, unknown>> = [];
+    const fetchImpl = vi.fn(async (_input: unknown, init?: RequestInit) => {
+      requestBodies.push(JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>);
+      return new Response(JSON.stringify({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                intent: {
+                  continuousPath: true,
+                  orientationPreference: 'look-at-subject',
+                  pathMode: 'subject-centric',
+                  requestedMoveTypes: ['arc'],
+                  subjectHint: 'truck',
+                  targetDurationSeconds: 10,
+                  tone: 'cinematic',
+                },
+                pathMode: 'subject-centric',
+                subjectLocalizations: [
+                  { captureId: 'capture-current', confidence: 0.96, pixelX: 320, pixelY: 240 },
+                  { captureId: 'capture-scout-1', confidence: 0.91, pixelX: 300, pixelY: 220 },
+                ],
+              }),
+            },
+          },
+        ],
+      }), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 200,
+      });
+    }) as unknown as typeof fetch;
+    const planner = new OpenAIVisionPathPlanner({
+      apiKey: 'test-key',
+      fetchImpl,
+      model: 'gpt-5-mini-2025-08-07',
+    });
+
+    await planner.groundPathIntent(createGroundRequest());
+
+    expect(requestBodies).toHaveLength(1);
+    const messages = requestBodies[0]?.['messages'];
+    expect(Array.isArray(messages)).toBe(true);
+    const systemMessage = Array.isArray(messages)
+      ? messages.find((entry): entry is { content: string; role: string } =>
+        typeof entry === 'object'
+        && entry !== null
+        && 'role' in entry
+        && 'content' in entry
+        && (entry as { role?: unknown }).role === 'system'
+        && typeof (entry as { content?: unknown }).content === 'string')
+      : undefined;
+    expect(systemMessage?.content).toContain(
+      'intent.orientationPreference must be exactly one of these strings: "look-at-subject" or "look-forward".',
+    );
+    expect(systemMessage?.content).toContain(
+      'Do not use synonyms such as "frontal", "front-facing", "focused", or "forward-facing".',
+    );
+  });
+
   it('omits custom temperature and adds minimal reasoning effort for GPT-5 family models when composing', async () => {
     const requestBodies: Array<Record<string, unknown>> = [];
     const fetchImpl = vi.fn(async (_input: unknown, init?: RequestInit) => {

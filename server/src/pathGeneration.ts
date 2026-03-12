@@ -940,6 +940,7 @@ function buildGroundSystemPrompt(): string {
     'Ambiguous means there is not one clear primary subject or movement request.',
     'Return JSON only with keys pathMode, intent, subjectLocalizations, routeObservations, warning, unsupportedReason.',
     'intent must contain pathMode, continuousPath, subjectHint, tone, orientationPreference, targetDurationSeconds, requestedMoveTypes.',
+    'intent.orientationPreference must be exactly one of these strings: "look-at-subject" or "look-forward". Do not use synonyms such as "frontal", "front-facing", "focused", or "forward-facing".',
     'For subject-centric prompts, subjectLocalizations should include every capture where the primary subject is visible.',
     'For route-following prompts, routeObservations should include every capture where the route is visible.',
     'Every subjectLocalizations entry must include captureId, pixelX, pixelY, confidence.',
