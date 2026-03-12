@@ -1772,30 +1772,103 @@ function parseStepActionHistoryEntry(value: unknown, context: string): PathGener
 }
 
 function parseStepAction(value: unknown, context: string): PathGenerationStepAction {
-  if (!isRecord(value)) {
-    throw new PathGenerationError(502, `${context} must be an object.`);
-  }
-
-  const type = readString(value, 'type', context);
+  const type = inferStepActionType(value, context);
+  const record = isRecord(value) ? value : null;
   if (type === 'capture-image' || type === 'create-keyframe') {
     return { type };
   }
 
   if (type === 'move') {
     return {
-      primitive: parseMovePrimitive(value['primitive'], `${context}.primitive`),
+      primitive: parseMovePrimitive(readStepActionPrimitive(record, value), `${context}.primitive`),
       type,
     };
   }
 
   if (type === 'rotate') {
     return {
-      primitive: parseRotatePrimitive(value['primitive'], `${context}.primitive`),
+      primitive: parseRotatePrimitive(readStepActionPrimitive(record, value), `${context}.primitive`),
       type,
     };
   }
 
   throw new PathGenerationError(502, `${context}.type must be move, rotate, capture-image, or create-keyframe.`);
+}
+
+function inferStepActionType(value: unknown, context: string): PathGenerationStepAction['type'] {
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (normalized.length === 0) {
+      throw new PathGenerationError(502, `${context} must define an action type.`);
+    }
+    if (normalized.includes('capture')) {
+      return 'capture-image';
+    }
+    if (normalized.includes('keyframe') || normalized.includes('store')) {
+      return 'create-keyframe';
+    }
+    if (
+      normalized.includes('yaw')
+      || normalized.includes('pitch')
+      || normalized.includes('rotate')
+      || normalized.includes('turn')
+      || normalized.includes('look')
+    ) {
+      return 'rotate';
+    }
+    return 'move';
+  }
+
+  if (!isRecord(value)) {
+    throw new PathGenerationError(502, `${context} must be an object or shorthand action string.`);
+  }
+
+  const rawType = value['type'] ?? value['actionType'] ?? value['kind'] ?? value['name'] ?? value['action'];
+  if (rawType === 'capture-image' || rawType === 'create-keyframe' || rawType === 'move' || rawType === 'rotate') {
+    return rawType;
+  }
+
+  if (typeof rawType === 'string') {
+    const normalized = rawType.trim().toLowerCase();
+    if (normalized.includes('capture')) {
+      return 'capture-image';
+    }
+    if (normalized.includes('keyframe') || normalized.includes('store')) {
+      return 'create-keyframe';
+    }
+    if (normalized.includes('rotate') || normalized.includes('turn') || normalized.includes('yaw') || normalized.includes('pitch')) {
+      return 'rotate';
+    }
+    if (normalized.includes('move') || normalized.includes('advance') || normalized.includes('strafe') || normalized.includes('rise')) {
+      return 'move';
+    }
+  }
+
+  const primitive = readStepActionPrimitive(value, undefined);
+  if (isRotatePrimitiveAlias(primitive)) {
+    return 'rotate';
+  }
+  if (isMovePrimitiveAlias(primitive)) {
+    return 'move';
+  }
+
+  throw new PathGenerationError(502, `${context}.type must be move, rotate, capture-image, or create-keyframe.`);
+}
+
+function readStepActionPrimitive(record: UnknownRecord | null, fallbackValue: unknown): unknown {
+  if (record) {
+    const candidate = record['primitive']
+      ?? record['movePrimitive']
+      ?? record['rotatePrimitive']
+      ?? record['motion']
+      ?? record['direction']
+      ?? record['value'];
+    if (candidate !== undefined) {
+      return candidate;
+    }
+  }
+
+  return fallbackValue;
 }
 
 function coerceSegmentType(value: unknown): PathGenerationSegmentType | null {
@@ -1964,6 +2037,31 @@ function parseMovePrimitive(value: unknown, context: string): PathGenerationStep
     return value;
   }
 
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (normalized.includes('forward') && normalized.includes('medium')) {
+      return 'forward-medium';
+    }
+    if (normalized.includes('forward') || normalized.includes('advance')) {
+      return 'forward-short';
+    }
+    if (normalized.includes('back') || normalized.includes('reverse')) {
+      return 'back-short';
+    }
+    if (normalized.includes('strafe') && normalized.includes('left')) {
+      return 'strafe-left-short';
+    }
+    if (normalized.includes('strafe') && normalized.includes('right')) {
+      return 'strafe-right-short';
+    }
+    if (normalized.includes('rise') || normalized.includes('up')) {
+      return 'rise-short';
+    }
+    if (normalized.includes('lower') || normalized.includes('down')) {
+      return 'lower-short';
+    }
+  }
+
   throw new PathGenerationError(502, `${context} must be a supported move primitive.`);
 }
 
@@ -1979,7 +2077,60 @@ function parseRotatePrimitive(value: unknown, context: string): PathGenerationSt
     return value;
   }
 
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if ((normalized.includes('yaw') || normalized.includes('turn')) && normalized.includes('left') && normalized.includes('medium')) {
+      return 'yaw-left-medium';
+    }
+    if ((normalized.includes('yaw') || normalized.includes('turn')) && normalized.includes('right') && normalized.includes('medium')) {
+      return 'yaw-right-medium';
+    }
+    if ((normalized.includes('yaw') || normalized.includes('turn') || normalized.includes('look')) && normalized.includes('left')) {
+      return 'yaw-left-small';
+    }
+    if ((normalized.includes('yaw') || normalized.includes('turn') || normalized.includes('look')) && normalized.includes('right')) {
+      return 'yaw-right-small';
+    }
+    if ((normalized.includes('pitch') || normalized.includes('tilt') || normalized.includes('look')) && normalized.includes('up')) {
+      return 'pitch-up-small';
+    }
+    if ((normalized.includes('pitch') || normalized.includes('tilt') || normalized.includes('look')) && normalized.includes('down')) {
+      return 'pitch-down-small';
+    }
+  }
+
   throw new PathGenerationError(502, `${context} must be a supported rotate primitive.`);
+}
+
+function isMovePrimitiveAlias(value: unknown): boolean {
+  if (typeof value !== 'string') {
+    return false;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  return normalized.includes('forward')
+    || normalized.includes('advance')
+    || normalized.includes('back')
+    || normalized.includes('reverse')
+    || normalized.includes('strafe')
+    || normalized.includes('rise')
+    || normalized.includes('lower')
+    || normalized === 'up'
+    || normalized === 'down';
+}
+
+function isRotatePrimitiveAlias(value: unknown): boolean {
+  if (typeof value !== 'string') {
+    return false;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  return normalized.includes('yaw')
+    || normalized.includes('pitch')
+    || normalized.includes('rotate')
+    || normalized.includes('turn')
+    || normalized.includes('tilt')
+    || normalized.includes('look');
 }
 
 function parseVector3(value: unknown, context: string): PathGenerationVector3 {

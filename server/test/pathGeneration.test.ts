@@ -602,6 +602,48 @@ describe('pathGeneration model-response parsing', () => {
     });
   });
 
+  it('normalizes shorthand stepwise string actions', () => {
+    const parsed = parsePathGenerationStepModelResponse({
+      action: 'create keyframe',
+      complete: false,
+      pathMode: 'subject-centric',
+      reason: 'Preserve the current framing before moving again.',
+    });
+
+    expect(parsed).toEqual({
+      action: {
+        type: 'create-keyframe',
+      },
+      complete: false,
+      pathMode: 'subject-centric',
+      reason: 'Preserve the current framing before moving again.',
+      warning: undefined,
+    });
+  });
+
+  it('normalizes shorthand stepwise action objects with alias keys', () => {
+    const parsed = parsePathGenerationStepModelResponse({
+      action: {
+        actionType: 'turn right',
+        rotatePrimitive: 'turn right medium',
+      },
+      complete: false,
+      pathMode: 'route-following',
+      reason: 'Yaw to stay aligned with the corridor.',
+    });
+
+    expect(parsed).toEqual({
+      action: {
+        primitive: 'yaw-right-medium',
+        type: 'rotate',
+      },
+      complete: false,
+      pathMode: 'route-following',
+      reason: 'Yaw to stay aligned with the corridor.',
+      warning: undefined,
+    });
+  });
+
   it('normalizes loose arc direction labels', () => {
     const parsed = parsePathGenerationComposeModelResponse({
       segments: [
