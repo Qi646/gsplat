@@ -33,6 +33,10 @@ function createViewer(): { camera: THREE.PerspectiveCamera; viewer: ViewerAdapte
   return { camera, viewer };
 }
 
+function sceneScale(): number {
+  return new THREE.Vector3(16, 6, 16).length();
+}
+
 function installCaptureStubs(): void {
   vi.stubGlobal('createImageBitmap', vi.fn(async () => ({
     close: vi.fn(),
@@ -401,5 +405,229 @@ describe('StepwiseAgentOrchestrator', () => {
         }),
       }),
     ]));
+  });
+
+  it('yaws around camera-local up for rolled cameras', async () => {
+    installCaptureStubs();
+    const { camera, viewer } = createViewer();
+    camera.quaternion.setFromAxisAngle(new THREE.Vector3(0, 0, 1), Math.PI / 2);
+    camera.updateMatrixWorld(true);
+    const startingQuaternion = camera.quaternion.clone();
+    const startingUp = new THREE.Vector3(0, 1, 0).applyQuaternion(startingQuaternion).normalize();
+    const expectedQuaternion = startingQuaternion.clone()
+      .premultiply(new THREE.Quaternion().setFromAxisAngle(startingUp, THREE.MathUtils.degToRad(6)))
+      .normalize();
+    const responses = [
+      {
+        chosenAction: { type: 'create-keyframe' },
+        complete: false,
+        pathMode: 'subject-centric',
+        reason: 'Store the opening composition.',
+      },
+      {
+        chosenAction: { primitive: 'yaw-left-small', type: 'rotate' },
+        complete: false,
+        pathMode: 'subject-centric',
+        reason: 'Yaw left to re-center the subject.',
+      },
+      {
+        chosenAction: { type: 'create-keyframe' },
+        complete: false,
+        pathMode: 'subject-centric',
+        reason: 'Store the updated composition.',
+      },
+      {
+        complete: true,
+        pathMode: 'subject-centric',
+        reason: 'The requested move is represented.',
+      },
+    ];
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify(responses.shift()), {
+      headers: { 'Content-Type': 'application/json' },
+      status: 200,
+    }));
+
+    const orchestrator = new StepwiseAgentOrchestrator({ fetchImpl, viewer });
+    const draft = await orchestrator.generateDraft({
+      controls: {
+        holdPreference: 'none',
+        requestedDurationSeconds: 6,
+      },
+      existingKeyframes: [],
+      prompt: 'Turn slightly left while staying on this framing.',
+    });
+
+    const rotatedQuaternion = draft.keyframes[1]?.quaternion;
+    expect(rotatedQuaternion).toBeDefined();
+    expect(rotatedQuaternion?.x).toBeCloseTo(expectedQuaternion.x, 6);
+    expect(rotatedQuaternion?.y).toBeCloseTo(expectedQuaternion.y, 6);
+    expect(rotatedQuaternion?.z).toBeCloseTo(expectedQuaternion.z, 6);
+    expect(rotatedQuaternion?.w).toBeCloseTo(expectedQuaternion.w, 6);
+  });
+
+  it('moves rise and lower along camera-local up for rolled cameras', async () => {
+    installCaptureStubs();
+    const { camera, viewer } = createViewer();
+    camera.quaternion.setFromAxisAngle(new THREE.Vector3(0, 0, 1), Math.PI / 2);
+    camera.updateMatrixWorld(true);
+    const startingPosition = camera.position.clone();
+    const expectedOffset = new THREE.Vector3(0, 1, 0)
+      .applyQuaternion(camera.quaternion)
+      .multiplyScalar(sceneScale() * 0.06);
+    const responses = [
+      {
+        chosenAction: { type: 'create-keyframe' },
+        complete: false,
+        pathMode: 'subject-centric',
+        reason: 'Store the opening composition.',
+      },
+      {
+        chosenAction: { primitive: 'rise-short', type: 'move' },
+        complete: false,
+        pathMode: 'subject-centric',
+        reason: 'Move upward while keeping the view orientation.',
+      },
+      {
+        chosenAction: { type: 'create-keyframe' },
+        complete: false,
+        pathMode: 'subject-centric',
+        reason: 'Store the raised composition.',
+      },
+      {
+        complete: true,
+        pathMode: 'subject-centric',
+        reason: 'The requested move is represented.',
+      },
+    ];
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify(responses.shift()), {
+      headers: { 'Content-Type': 'application/json' },
+      status: 200,
+    }));
+
+    const orchestrator = new StepwiseAgentOrchestrator({ fetchImpl, viewer });
+    const draft = await orchestrator.generateDraft({
+      controls: {
+        holdPreference: 'none',
+        requestedDurationSeconds: 6,
+      },
+      existingKeyframes: [],
+      prompt: 'Rise slightly without changing the framing direction.',
+    });
+
+    expect(draft.keyframes[1]?.position.x).toBeCloseTo(startingPosition.x + expectedOffset.x, 6);
+    expect(draft.keyframes[1]?.position.y).toBeCloseTo(startingPosition.y + expectedOffset.y, 6);
+    expect(draft.keyframes[1]?.position.z).toBeCloseTo(startingPosition.z + expectedOffset.z, 6);
+  });
+
+  it('moves forward along camera-local forward for upside-down cameras', async () => {
+    installCaptureStubs();
+    const { camera, viewer } = createViewer();
+    camera.quaternion.setFromAxisAngle(new THREE.Vector3(0, 0, 1), Math.PI);
+    camera.updateMatrixWorld(true);
+    const startingPosition = camera.position.clone();
+    const expectedOffset = new THREE.Vector3(0, 0, -1)
+      .applyQuaternion(camera.quaternion)
+      .multiplyScalar(sceneScale() * 0.09);
+    const responses = [
+      {
+        chosenAction: { type: 'create-keyframe' },
+        complete: false,
+        pathMode: 'subject-centric',
+        reason: 'Store the opening composition.',
+      },
+      {
+        chosenAction: { primitive: 'forward-short', type: 'move' },
+        complete: false,
+        pathMode: 'subject-centric',
+        reason: 'Move forward along the current view direction.',
+      },
+      {
+        chosenAction: { type: 'create-keyframe' },
+        complete: false,
+        pathMode: 'subject-centric',
+        reason: 'Store the advanced composition.',
+      },
+      {
+        complete: true,
+        pathMode: 'subject-centric',
+        reason: 'The requested move is represented.',
+      },
+    ];
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify(responses.shift()), {
+      headers: { 'Content-Type': 'application/json' },
+      status: 200,
+    }));
+
+    const orchestrator = new StepwiseAgentOrchestrator({ fetchImpl, viewer });
+    const draft = await orchestrator.generateDraft({
+      controls: {
+        holdPreference: 'none',
+        requestedDurationSeconds: 6,
+      },
+      existingKeyframes: [],
+      prompt: 'Move slightly forward while staying upside down.',
+    });
+
+    expect(draft.keyframes[1]?.position.x).toBeCloseTo(startingPosition.x + expectedOffset.x, 6);
+    expect(draft.keyframes[1]?.position.y).toBeCloseTo(startingPosition.y + expectedOffset.y, 6);
+    expect(draft.keyframes[1]?.position.z).toBeCloseTo(startingPosition.z + expectedOffset.z, 6);
+  });
+
+  it('pitches around camera-local right for upside-down cameras', async () => {
+    installCaptureStubs();
+    const { camera, viewer } = createViewer();
+    camera.quaternion.setFromAxisAngle(new THREE.Vector3(0, 0, 1), Math.PI);
+    camera.updateMatrixWorld(true);
+    const startingQuaternion = camera.quaternion.clone();
+    const startingRight = new THREE.Vector3(1, 0, 0).applyQuaternion(startingQuaternion).normalize();
+    const expectedQuaternion = startingQuaternion.clone()
+      .premultiply(new THREE.Quaternion().setFromAxisAngle(startingRight, THREE.MathUtils.degToRad(-6)))
+      .normalize();
+    const responses = [
+      {
+        chosenAction: { type: 'create-keyframe' },
+        complete: false,
+        pathMode: 'subject-centric',
+        reason: 'Store the opening composition.',
+      },
+      {
+        chosenAction: { primitive: 'pitch-down-small', type: 'rotate' },
+        complete: false,
+        pathMode: 'subject-centric',
+        reason: 'Tilt downward slightly.',
+      },
+      {
+        chosenAction: { type: 'create-keyframe' },
+        complete: false,
+        pathMode: 'subject-centric',
+        reason: 'Store the pitched composition.',
+      },
+      {
+        complete: true,
+        pathMode: 'subject-centric',
+        reason: 'The requested move is represented.',
+      },
+    ];
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify(responses.shift()), {
+      headers: { 'Content-Type': 'application/json' },
+      status: 200,
+    }));
+
+    const orchestrator = new StepwiseAgentOrchestrator({ fetchImpl, viewer });
+    const draft = await orchestrator.generateDraft({
+      controls: {
+        holdPreference: 'none',
+        requestedDurationSeconds: 6,
+      },
+      existingKeyframes: [],
+      prompt: 'Tilt slightly downward while upside down.',
+    });
+
+    const rotatedQuaternion = draft.keyframes[1]?.quaternion;
+    expect(rotatedQuaternion).toBeDefined();
+    expect(rotatedQuaternion?.x).toBeCloseTo(expectedQuaternion.x, 6);
+    expect(rotatedQuaternion?.y).toBeCloseTo(expectedQuaternion.y, 6);
+    expect(rotatedQuaternion?.z).toBeCloseTo(expectedQuaternion.z, 6);
+    expect(rotatedQuaternion?.w).toBeCloseTo(expectedQuaternion.w, 6);
   });
 });

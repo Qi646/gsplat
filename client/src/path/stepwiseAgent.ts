@@ -471,7 +471,7 @@ function buildCandidateActions(
     },
   );
 
-  const motionCandidates: Array<StepwiseAction> = [
+  const motionCandidates: Array<Extract<StepwiseAction, { type: 'move' | 'rotate' }>> = [
     { primitive: 'forward-short', type: 'move' },
     { primitive: 'forward-medium', type: 'move' },
     { primitive: 'back-short', type: 'move' },
@@ -609,26 +609,26 @@ function applyDeterministicAction(
   const nextPosition = camera.position.clone();
   const nextQuaternion = camera.quaternion.clone();
   const sceneScale = Math.max(bounds.getSize(new THREE.Vector3()).length(), 1);
+  const localForward = new THREE.Vector3(0, 0, -1).applyQuaternion(nextQuaternion).normalize();
+  const localRight = new THREE.Vector3(1, 0, 0).applyQuaternion(nextQuaternion).normalize();
+  const localUp = new THREE.Vector3(0, 1, 0).applyQuaternion(nextQuaternion).normalize();
 
   if (action.type === 'move') {
-    const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(nextQuaternion).normalize();
-    const right = new THREE.Vector3(1, 0, 0).applyQuaternion(nextQuaternion).normalize();
-    const up = new THREE.Vector3(0, 1, 0);
     const distance = sceneScale * Math.abs(MOVE_DISTANCE_MULTIPLIERS[action.primitive]);
 
     switch (action.primitive) {
       case 'forward-short':
       case 'forward-medium':
       case 'back-short':
-        nextPosition.addScaledVector(forward, sceneScale * MOVE_DISTANCE_MULTIPLIERS[action.primitive]);
+        nextPosition.addScaledVector(localForward, sceneScale * MOVE_DISTANCE_MULTIPLIERS[action.primitive]);
         break;
       case 'strafe-left-short':
       case 'strafe-right-short':
-        nextPosition.addScaledVector(right, sceneScale * MOVE_DISTANCE_MULTIPLIERS[action.primitive]);
+        nextPosition.addScaledVector(localRight, sceneScale * MOVE_DISTANCE_MULTIPLIERS[action.primitive]);
         break;
       case 'rise-short':
       case 'lower-short':
-        nextPosition.addScaledVector(up, sceneScale * MOVE_DISTANCE_MULTIPLIERS[action.primitive]);
+        nextPosition.addScaledVector(localUp, sceneScale * MOVE_DISTANCE_MULTIPLIERS[action.primitive]);
         break;
     }
 
@@ -638,8 +638,8 @@ function applyDeterministicAction(
   } else {
     const angle = ROTATE_ANGLE_RADIANS[action.primitive];
     const rotationAxis = action.primitive.startsWith('yaw')
-      ? new THREE.Vector3(0, 1, 0)
-      : new THREE.Vector3(1, 0, 0).applyQuaternion(nextQuaternion).normalize();
+      ? localUp
+      : localRight;
     const rotation = new THREE.Quaternion().setFromAxisAngle(rotationAxis, angle);
     nextQuaternion.premultiply(rotation).normalize();
   }
