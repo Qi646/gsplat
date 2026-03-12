@@ -418,6 +418,7 @@ const DEFAULT_CHAT_COMPLETION_REQUEST_COMPATIBILITY: ChatCompletionRequestCompat
   tokenBudgetParameter: 'max_completion_tokens',
 };
 const MAX_CHAT_COMPLETION_COMPATIBILITY_ATTEMPTS = 4;
+const PATH_PLANNER_DEBUG_LOG_LIMIT = 4000;
 const PLANNER_COMPLETION_TOKEN_LIMIT = 1800;
 const STATUS_CAPABILITIES = {
   includesActiveVerificationProbes: true,
@@ -479,9 +480,10 @@ export class OpenAIVisionPathPlanner implements PathGenerationPlanner {
       buildGroundChatCompletionRequestBody(parsedRequest, this.resolveModel()),
       apiKey,
     );
-    const response = parsePathGenerationGroundModelResponse(
-      JSON.parse(stripJsonFences(extractCompletionText(completion))) as unknown,
-      parsedRequest.captures,
+    const response = this.parsePlannerCompletion(
+      'ground',
+      completion,
+      parsed => parsePathGenerationGroundModelResponse(parsed, parsedRequest.captures),
     );
 
     if (STATUS_CAPABILITIES.unsupportedPathModes.includes(response.pathMode) && !response.unsupportedReason) {
@@ -506,8 +508,10 @@ export class OpenAIVisionPathPlanner implements PathGenerationPlanner {
       buildComposeChatCompletionRequestBody(parsedRequest, this.resolveModel()),
       apiKey,
     );
-    return parsePathGenerationComposeModelResponse(
-      JSON.parse(stripJsonFences(extractCompletionText(completion))) as unknown,
+    return this.parsePlannerCompletion(
+      'compose',
+      completion,
+      parsePathGenerationComposeModelResponse,
     );
   }
 
@@ -518,8 +522,10 @@ export class OpenAIVisionPathPlanner implements PathGenerationPlanner {
       buildVerifyChatCompletionRequestBody(parsedRequest, this.resolveModel()),
       apiKey,
     );
-    return parsePathGenerationVerifyModelResponse(
-      JSON.parse(stripJsonFences(extractCompletionText(completion))) as unknown,
+    return this.parsePlannerCompletion(
+      'verify',
+      completion,
+      parsePathGenerationVerifyModelResponse,
     );
   }
 
@@ -530,8 +536,10 @@ export class OpenAIVisionPathPlanner implements PathGenerationPlanner {
       buildStepChatCompletionRequestBody(parsedRequest, this.resolveModel()),
       apiKey,
     );
-    return parsePathGenerationStepModelResponse(
-      JSON.parse(stripJsonFences(extractCompletionText(completion))) as unknown,
+    return this.parsePlannerCompletion(
+      'step',
+      completion,
+      parsePathGenerationStepModelResponse,
     );
   }
 
@@ -596,6 +604,85 @@ export class OpenAIVisionPathPlanner implements PathGenerationPlanner {
       },
     );
   }
+
+  private parsePlannerCompletion<T>(
+    phase: 'ground' | 'compose' | 'verify' | 'step',
+    completion: ChatCompletionResponse,
+    parseResponse: (parsed: unknown) => T,
+  ): T {
+    const rawCompletion = extractCompletionText(completion);
+    const normalizedCompletion = stripJsonFences(rawCompletion);
+
+    try {
+      return parseResponse(JSON.parse(normalizedCompletion) as unknown);
+    } catch (error) {
+      this.logPlannerParseFailure(phase, error, rawCompletion);
+      throw error;
+    }
+  }
+
+  private logPlannerParseFailure(
+    phase: 'ground' | 'compose' | 'verify' | 'step',
+    error: unknown,
+    rawCompletion: string,
+  ): void {
+    if (!isPlannerDebugEnabled()) {
+      return;
+    }
+
+    const parsedCompletion = tryParseJson(stripJsonFences(rawCompletion));
+    console.error(
+      `[path-planner-debug] Failed to parse ${phase} completion`,
+      {
+        errorMessage: error instanceof Error ? error.message : String(error),
+        intentLookMode: tryReadNestedProperty(parsedCompletion, ['intent', 'lookMode']),
+        intentOrientationPreference: tryReadNestedProperty(parsedCompletion, ['intent', 'orientationPreference']),
+        model: this.resolveModel(),
+        pathMode: tryReadNestedProperty(parsedCompletion, ['pathMode']),
+        phase,
+        timestamp: new Date().toISOString(),
+      },
+      truncateDebugText(rawCompletion),
+    );
+  }
+}
+
+function isPlannerDebugEnabled(): boolean {
+  const value = process.env['PATH_PLANNER_DEBUG'];
+  if (!value) {
+    return false;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  return normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on';
+}
+
+function truncateDebugText(value: string, limit = PATH_PLANNER_DEBUG_LOG_LIMIT): string {
+  if (value.length <= limit) {
+    return value;
+  }
+
+  return `${value.slice(0, limit)}… [truncated ${value.length - limit} chars]`;
+}
+
+function tryParseJson(value: string): unknown | null {
+  try {
+    return JSON.parse(value) as unknown;
+  } catch {
+    return null;
+  }
+}
+
+function tryReadNestedProperty(value: unknown, path: string[]): unknown {
+  let current = value;
+  for (const key of path) {
+    if (!isRecord(current) || !(key in current)) {
+      return undefined;
+    }
+    current = current[key];
+  }
+
+  return current;
 }
 
 function buildStrategyStatuses(available: boolean, reason: string | null): PathGenerationStrategyStatus[] {

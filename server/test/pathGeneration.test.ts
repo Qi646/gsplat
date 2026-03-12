@@ -1007,6 +1007,104 @@ describe('OpenAIVisionPathPlanner status', () => {
 });
 
 describe('OpenAIVisionPathPlanner request compatibility', () => {
+  it('logs raw planner grounding output when debug logging is enabled and parsing fails', async () => {
+    const originalDebug = process.env['PATH_PLANNER_DEBUG'];
+    process.env['PATH_PLANNER_DEBUG'] = '1';
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({
+      choices: [
+        {
+          message: {
+            content: JSON.stringify({
+              intent: {
+                continuousPath: true,
+                orientationPreference: 'sideways',
+                pathMode: 'subject-centric',
+                requestedMoveTypes: ['arc'],
+                subjectHint: 'truck',
+                targetDurationSeconds: 10,
+                tone: 'cinematic',
+              },
+              pathMode: 'subject-centric',
+              subjectLocalizations: [
+                { captureId: 'capture-current', confidence: 0.96, pixelX: 320, pixelY: 240 },
+                { captureId: 'capture-scout-1', confidence: 0.91, pixelX: 300, pixelY: 220 },
+              ],
+            }),
+          },
+        },
+      ],
+    }), {
+      headers: { 'Content-Type': 'application/json' },
+      status: 200,
+    })) as unknown as typeof fetch;
+    const planner = new OpenAIVisionPathPlanner({
+      apiKey: 'test-key',
+      fetchImpl,
+      model: 'gpt-5-mini',
+    });
+
+    try {
+      await expect(planner.groundPathIntent(createGroundRequest())).rejects.toThrow(
+        'intent.orientationPreference must be "look-at-subject" or "look-forward".',
+      );
+      expect(consoleErrorSpy).toHaveBeenCalledTimes(1);
+      expect(consoleErrorSpy).toHaveBeenCalledWith(
+        '[path-planner-debug] Failed to parse ground completion',
+        expect.objectContaining({
+          errorMessage: 'intent.orientationPreference must be "look-at-subject" or "look-forward".',
+          intentOrientationPreference: 'sideways',
+          model: 'gpt-5-mini',
+          pathMode: 'subject-centric',
+          phase: 'ground',
+        }),
+        expect.stringContaining('"orientationPreference":"sideways"'),
+      );
+    } finally {
+      consoleErrorSpy.mockRestore();
+      if (originalDebug === undefined) {
+        delete process.env['PATH_PLANNER_DEBUG'];
+      } else {
+        process.env['PATH_PLANNER_DEBUG'] = originalDebug;
+      }
+    }
+  });
+
+  it('keeps planner parse failures quiet when debug logging is disabled', async () => {
+    const originalDebug = process.env['PATH_PLANNER_DEBUG'];
+    delete process.env['PATH_PLANNER_DEBUG'];
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({
+      choices: [
+        {
+          message: {
+            content: '{"intent":{"orientationPreference":"sideways"',
+          },
+        },
+      ],
+    }), {
+      headers: { 'Content-Type': 'application/json' },
+      status: 200,
+    })) as unknown as typeof fetch;
+    const planner = new OpenAIVisionPathPlanner({
+      apiKey: 'test-key',
+      fetchImpl,
+      model: 'gpt-5-mini',
+    });
+
+    try {
+      await expect(planner.groundPathIntent(createGroundRequest())).rejects.toThrow();
+      expect(consoleErrorSpy).not.toHaveBeenCalled();
+    } finally {
+      consoleErrorSpy.mockRestore();
+      if (originalDebug === undefined) {
+        delete process.env['PATH_PLANNER_DEBUG'];
+      } else {
+        process.env['PATH_PLANNER_DEBUG'] = originalDebug;
+      }
+    }
+  });
+
   it('uses max_completion_tokens by default and falls back to max_tokens when grounding', async () => {
     const requestBodies: Array<Record<string, unknown>> = [];
     const fetchImpl = vi.fn(async (_input: unknown, init?: RequestInit) => {
