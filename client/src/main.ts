@@ -24,6 +24,8 @@ import {
   type AgenticDraftControls,
   type AgenticPathDraft,
   type AgenticPathProgress,
+  type AgenticPathStrategyStatus,
+  type AgenticPathStrategyVersion,
   type AgenticPathStatus,
 } from './path/agenticPath';
 import {
@@ -33,6 +35,7 @@ import {
 import { CameraPathOverlay } from './path/CameraPathOverlay';
 import { KeyframeManager } from './path/KeyframeManager';
 import { PathPreviewPlayer } from './path/PathPreviewPlayer';
+import { StepwiseAgentOrchestrator } from './path/stepwiseAgent';
 import {
   AdaptiveRenderBudgetController,
   buildAdaptiveRenderBudgetNote,
@@ -111,6 +114,7 @@ function parseAgenticPathStatus(input: unknown): AgenticPathStatus {
       model: null,
       plannerVersion: 'multistep-v2',
       reason: 'Agentic path generation is unavailable because the server capability check returned invalid data.',
+      strategies: defaultAgenticStrategies(false, 'Agentic path generation is unavailable because the server capability check returned invalid data.'),
     };
   }
 
@@ -140,8 +144,15 @@ function parseAgenticPathStatus(input: unknown): AgenticPathStatus {
       || entry === 'multi-subject'
       || entry === 'ambiguous')
     : [];
+  const strategyEntries = Array.isArray(record['strategies'])
+    ? record['strategies']
+      .map(entry => parseAgenticStrategyStatus(entry))
+      .filter((entry): entry is AgenticPathStrategyStatus => entry !== null)
+    : [];
+  const reason = typeof record['reason'] === 'string' ? record['reason'] : null;
+  const available = record['available'] === true;
   return {
-    available: record['available'] === true,
+    available,
     capabilities: {
       includesActiveVerificationProbes: capabilities?.['includesActiveVerificationProbes'] !== false,
       includesPlannerVerification: capabilities?.['includesPlannerVerification'] !== false,
@@ -156,6 +167,48 @@ function parseAgenticPathStatus(input: unknown): AgenticPathStatus {
     },
     model: typeof record['model'] === 'string' ? record['model'] : null,
     plannerVersion: 'multistep-v2',
+    reason,
+    strategies: strategyEntries.length > 0 ? strategyEntries : defaultAgenticStrategies(available, reason),
+  };
+}
+
+function defaultAgenticStrategies(available: boolean, reason: string | null): AgenticPathStrategyStatus[] {
+  return [
+    {
+      available,
+      experimental: false,
+      id: 'multistep-v2',
+      label: 'Planner Draft',
+      reason,
+    },
+    {
+      available,
+      experimental: true,
+      id: 'stepwise-v1',
+      label: 'Stepwise Agent',
+      reason,
+    },
+  ];
+}
+
+function parseAgenticStrategyStatus(input: unknown): AgenticPathStrategyStatus | null {
+  if (typeof input !== 'object' || input === null) {
+    return null;
+  }
+
+  const record = input as Record<string, unknown>;
+  const id = record['id'];
+  if (id !== 'multistep-v2' && id !== 'stepwise-v1') {
+    return null;
+  }
+
+  return {
+    available: record['available'] !== false,
+    experimental: record['experimental'] === true,
+    id,
+    label: typeof record['label'] === 'string' && record['label'].trim().length > 0
+      ? record['label']
+      : id === 'stepwise-v1' ? 'Stepwise Agent' : 'Planner Draft',
     reason: typeof record['reason'] === 'string' ? record['reason'] : null,
   };
 }
@@ -193,6 +246,7 @@ async function main(): Promise<void> {
   const cancelGeneratePathBlockerButton = $('#btn-cancel-generate-path-blocker') as HTMLButtonElement;
   const agenticPathBlockerMessage = $('#agentic-path-blocker-message');
   const pathPromptInput = $('#path-prompt-input') as HTMLTextAreaElement;
+  const pathStrategySelect = $('#path-strategy-select') as HTMLSelectElement;
   const pathDurationSelect = $('#path-duration-select') as HTMLSelectElement;
   const pathHoldSelect = $('#path-hold-select') as HTMLSelectElement;
   const generatePathButton = $('#btn-generate-path') as HTMLButtonElement;
@@ -283,6 +337,14 @@ async function main(): Promise<void> {
     },
     viewer,
   });
+  const stepwiseAgentOrchestrator = new StepwiseAgentOrchestrator({
+    onProgress: progress => {
+      agenticPathProgress = progress;
+      updatePathControlsState();
+      setStatusNote(progress.message);
+    },
+    viewer,
+  });
   const exportManager = new ExportManager({ viewer });
   const adaptiveRenderBudgetController = new AdaptiveRenderBudgetController();
   const pathOverlay = new CameraPathOverlay(pathOverlayElement);
@@ -330,13 +392,26 @@ async function main(): Promise<void> {
     model: null,
     plannerVersion: 'multistep-v2',
     reason: 'Checking whether agentic path generation is available on the server…',
+    strategies: defaultAgenticStrategies(false, 'Checking whether agentic path generation is available on the server…'),
   };
+  const getSelectedDraftStrategy = (): AgenticPathStrategyVersion =>
+    pathStrategySelect.value === 'stepwise-v1' ? 'stepwise-v1' : 'multistep-v2';
+  const getDraftStrategyStatus = (strategy: AgenticPathStrategyVersion): AgenticPathStrategyStatus =>
+    agenticPathStatus.strategies.find(entry => entry.id === strategy)
+    ?? defaultAgenticStrategies(agenticPathStatus.available, agenticPathStatus.reason).find(entry => entry.id === strategy)
+    ?? defaultAgenticStrategies(false, null)[0]!;
+  const isGenerationActive = () =>
+    agenticPathOrchestrator.isGenerating() || stepwiseAgentOrchestrator.isGenerating();
+  const cancelActiveGeneration = () =>
+    agenticPathOrchestrator.isGenerating()
+      ? agenticPathOrchestrator.cancelGeneration()
+      : stepwiseAgentOrchestrator.cancelGeneration();
   const isSceneLoaded = () => !sceneLoadInProgress && viewer.isSceneLoaded();
   const isInteractionLocked = () =>
     keyframeManager.isPreviewActive()
     || draftPreviewPlayer.isActive()
     || exportManager.isExporting()
-    || agenticPathOrchestrator.isGenerating();
+    || isGenerationActive();
   targetFpsSlider.min = String(adaptiveRenderBudgetController.getState().minTargetFps);
   targetFpsSlider.max = String(adaptiveRenderBudgetController.getState().maxTargetFps);
   targetFpsSlider.step = String(adaptiveRenderBudgetController.getState().sliderStep);
@@ -615,9 +690,15 @@ async function main(): Promise<void> {
   });
 
   const updateAgenticPathNote = () => {
-    if (agenticPathOrchestrator.isGenerating()) {
+    const selectedStrategy = getSelectedDraftStrategy();
+    const selectedStrategyStatus = getDraftStrategyStatus(selectedStrategy);
+    const strategyLabel = selectedStrategyStatus.experimental
+      ? `${selectedStrategyStatus.label} (Experimental)`
+      : selectedStrategyStatus.label;
+
+    if (isGenerationActive()) {
       agenticPathNote.textContent =
-        agenticPathProgress?.message ?? 'Generating a camera-path draft. Viewer controls are temporarily locked.';
+        agenticPathProgress?.message ?? `Generating a ${strategyLabel} camera-path draft. Viewer controls are temporarily locked.`;
       return;
     }
 
@@ -627,25 +708,29 @@ async function main(): Promise<void> {
       return;
     }
 
-    if (!agenticPathStatus.available) {
+    if (!selectedStrategyStatus.available) {
       agenticPathNote.textContent =
-        agenticPathStatus.reason ?? 'Agentic path generation is currently unavailable.';
+        selectedStrategyStatus.reason ?? 'Agentic path generation is currently unavailable.';
       return;
     }
 
     if (!isSceneLoaded()) {
       agenticPathNote.textContent =
-        'Load a scene to enable subject-centric and route-following draft generation. It captures the current view plus nearby scouts, and can add one bounded rescan round when grounding is weak.';
+        selectedStrategy === 'stepwise-v1'
+          ? 'Load a scene to enable the experimental stepwise agent. It captures the live view each step, chooses one move/rotate/capture/keyframe action at a time, and keeps the live path unchanged until you apply the draft.'
+          : 'Load a scene to enable subject-centric and route-following draft generation. It captures the current view plus nearby scouts, and can add one bounded rescan round when grounding is weak.';
       return;
     }
 
     const modelLabel = agenticPathStatus.model ? ` Using ${agenticPathStatus.model}.` : '';
     agenticPathNote.textContent =
-      `Prompt one continuous subject-centric move or one route-following traverse. The planner uses nearby scout captures, your timing/hold options, and active verification probes around risky draft moments before accepting the draft.${modelLabel}`;
+      selectedStrategy === 'stepwise-v1'
+        ? `Prompt one continuous subject-centric move or one route-following traverse. The experimental stepwise agent captures the live view, chooses one deterministic action at a time, and explicitly decides when to remember frames or create draft keyframes.${modelLabel}`
+        : `Prompt one continuous subject-centric move or one route-following traverse. The planner uses nearby scout captures, your timing/hold options, and active verification probes around risky draft moments before accepting the draft.${modelLabel}`;
   };
 
   const updateAgenticPathBlocker = () => {
-    const generationActive = agenticPathOrchestrator.isGenerating();
+    const generationActive = isGenerationActive();
     agenticPathBlocker.classList.toggle('active', generationActive);
     agenticPathBlocker.setAttribute('aria-hidden', String(!generationActive));
     agenticPathBlockerMessage.textContent = generationActive
@@ -654,7 +739,7 @@ async function main(): Promise<void> {
   };
 
   const updateAgenticPathFeedback = () => {
-    const visible = !agenticPathOrchestrator.isGenerating() && agenticPathFailure !== null;
+    const visible = !isGenerationActive() && agenticPathFailure !== null;
     agenticPathFeedback.hidden = !visible;
     agenticPathFeedback.classList.toggle('visible', visible);
     agenticPathFeedback.setAttribute('aria-hidden', String(!visible));
@@ -707,8 +792,9 @@ async function main(): Promise<void> {
     const draftPending = agenticDraft !== null;
     const exportActive = exportManager.isExporting();
     const exportCancelling = exportManager.isCancelling();
-    const generationActive = agenticPathOrchestrator.isGenerating();
+    const generationActive = isGenerationActive();
     const generationCancelling = agenticPathProgress?.stage === 'cancelling';
+    const selectedStrategyStatus = getDraftStrategyStatus(getSelectedDraftStrategy());
     const interactionLocked = livePreviewActive || draftPreviewActive || exportActive || generationActive;
 
     addKeyframeButton.disabled = !sceneLoaded || exportActive || generationActive || draftPending || draftPreviewActive;
@@ -723,15 +809,16 @@ async function main(): Promise<void> {
     exportProfileSelect.disabled = exportActive || generationActive || draftPending;
     exportFpsInput.disabled = exportActive || generationActive || draftPending;
     exportFileBaseInput.disabled = exportActive || generationActive || draftPending;
-    pathPromptInput.disabled = !sceneLoaded || exportActive || generationActive || draftPreviewActive || !agenticPathStatus.available;
-    pathDurationSelect.disabled = !sceneLoaded || exportActive || generationActive || draftPreviewActive || !agenticPathStatus.available;
-    pathHoldSelect.disabled = !sceneLoaded || exportActive || generationActive || draftPreviewActive || !agenticPathStatus.available;
+    pathPromptInput.disabled = !sceneLoaded || exportActive || generationActive || draftPreviewActive || !selectedStrategyStatus.available;
+    pathStrategySelect.disabled = exportActive || generationActive || draftPending || draftPreviewActive;
+    pathDurationSelect.disabled = !sceneLoaded || exportActive || generationActive || draftPreviewActive || !selectedStrategyStatus.available;
+    pathHoldSelect.disabled = !sceneLoaded || exportActive || generationActive || draftPreviewActive || !selectedStrategyStatus.available;
     generatePathButton.disabled =
       !sceneLoaded
       || exportActive
       || generationActive
       || draftPreviewActive
-      || !agenticPathStatus.available
+      || !selectedStrategyStatus.available
       || pathPromptInput.value.trim().length === 0;
     generatePathButton.classList.toggle('active', generationActive);
     generatePathButton.textContent = generationActive
@@ -747,7 +834,7 @@ async function main(): Promise<void> {
     cancelGeneratePathBlockerButton.disabled = !generationActive || generationCancelling;
     cancelGeneratePathBlockerButton.textContent = generationCancelling ? 'Cancelling…' : 'Cancel';
     agenticPromptButtons.forEach(button => {
-      button.disabled = !sceneLoaded || exportActive || generationActive || draftPreviewActive || !agenticPathStatus.available;
+      button.disabled = !sceneLoaded || exportActive || generationActive || draftPreviewActive || !selectedStrategyStatus.available;
     });
     setSceneButtonsEnabled(sceneLoaded, interactionLocked, walkState);
     setSceneSourceEnabled(!exportActive && !generationActive);
@@ -777,6 +864,7 @@ async function main(): Promise<void> {
           model: agenticPathStatus.model,
           plannerVersion: agenticPathStatus.plannerVersion,
           reason: 'Agentic path generation is unavailable on this server.',
+          strategies: defaultAgenticStrategies(false, 'Agentic path generation is unavailable on this server.'),
         };
       }
     } catch {
@@ -786,6 +874,7 @@ async function main(): Promise<void> {
         model: null,
         plannerVersion: 'multistep-v2',
         reason: 'Agentic path generation is unavailable because the server capability check failed.',
+        strategies: defaultAgenticStrategies(false, 'Agentic path generation is unavailable because the server capability check failed.'),
       };
     }
 
@@ -1100,7 +1189,7 @@ async function main(): Promise<void> {
     updatePathControlsState();
   });
 
-  [pathDurationSelect, pathHoldSelect].forEach(select => {
+  [pathStrategySelect, pathDurationSelect, pathHoldSelect].forEach(select => {
     select.addEventListener('change', () => {
       agenticPathFailure = null;
       updatePathControlsState();
@@ -1206,7 +1295,8 @@ async function main(): Promise<void> {
     syncPathVisualsState();
 
     try {
-      const draft = await agenticPathOrchestrator.generateDraft({
+      const draftStrategy = getSelectedDraftStrategy();
+      const draft = await (draftStrategy === 'stepwise-v1' ? stepwiseAgentOrchestrator : agenticPathOrchestrator).generateDraft({
         controls: getAgenticDraftControls(),
         existingKeyframes: keyframeManager.getKeyframes(),
         prompt,
@@ -1218,7 +1308,11 @@ async function main(): Promise<void> {
       renderKeyframeList();
       updatePathControlsState();
       syncPathVisualsState();
-      setStatusNote('Draft ready. Preview it, apply it, discard it, or regenerate with a different prompt.');
+      setStatusNote(
+        draftStrategy === 'stepwise-v1'
+          ? 'Experimental stepwise draft ready. Preview it, apply it, discard it, or regenerate with a different prompt.'
+          : 'Draft ready. Preview it, apply it, discard it, or regenerate with a different prompt.',
+      );
     } catch (error) {
       agenticPathProgress = null;
       agenticPathFailure = buildAgenticPathFailureFeedback(error);
@@ -1230,7 +1324,7 @@ async function main(): Promise<void> {
   });
 
   cancelGeneratePathBlockerButton.addEventListener('click', () => {
-    agenticPathOrchestrator.cancelGeneration();
+    cancelActiveGeneration();
   });
 
   previewDraftButton.addEventListener('click', () => {

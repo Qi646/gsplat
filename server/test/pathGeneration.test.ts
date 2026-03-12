@@ -5,6 +5,8 @@ import {
   parsePathGenerationComposeRequest,
   parsePathGenerationGroundModelResponse,
   parsePathGenerationGroundRequest,
+  parsePathGenerationStepModelResponse,
+  parsePathGenerationStepRequest,
   parsePathGenerationVerifyModelResponse,
   parsePathGenerationVerifyRequest,
 } from '../src/pathGeneration.js';
@@ -52,6 +54,43 @@ function createGroundRequest() {
       max: { x: 2, y: 2, z: 2 },
       min: { x: -2, y: -2, z: -2 },
     },
+  };
+}
+
+function createStepRequest() {
+  const groundRequest = createGroundRequest();
+  return {
+    actionHistory: [
+      {
+        action: { type: 'create-keyframe' },
+        outcome: 'stored',
+        stepIndex: 0,
+      },
+    ],
+    currentCapture: groundRequest.captures[0],
+    draftControls: {
+      holdPreference: 'auto',
+      requestedDurationSeconds: 12,
+    },
+    draftKeyframes: [
+      {
+        fov: 60,
+        id: 'kf-1',
+        position: { x: 4, y: 1, z: 0 },
+        quaternion: { x: 0, y: 0, z: 0, w: 1 },
+        time: 0,
+      },
+    ],
+    memoryCaptures: [
+      {
+        ...groundRequest.captures[1],
+        capturedAtStep: 1,
+      },
+    ],
+    prompt: 'Follow the corridor forward and save strong viewpoints.',
+    sceneBounds: groundRequest.sceneBounds,
+    stepIndex: 2,
+    strategyVersion: 'stepwise-v1',
   };
 }
 
@@ -353,6 +392,15 @@ describe('pathGeneration request parsing', () => {
     });
   });
 
+  it('accepts valid stepwise requests', () => {
+    const parsed = parsePathGenerationStepRequest(createStepRequest());
+
+    expect(parsed.strategyVersion).toBe('stepwise-v1');
+    expect(parsed.currentCapture.id).toBe('capture-current');
+    expect(parsed.memoryCaptures[0]?.capturedAtStep).toBe(1);
+    expect(parsed.actionHistory[0]?.action).toEqual({ type: 'create-keyframe' });
+  });
+
   it('normalizes verify-capture aliases for active probes', () => {
     const request = createVerifyRequest();
     request.captures = [
@@ -531,6 +579,29 @@ describe('pathGeneration model-response parsing', () => {
     });
   });
 
+  it('accepts valid stepwise action responses', () => {
+    const parsed = parsePathGenerationStepModelResponse({
+      action: {
+        primitive: 'forward-medium',
+        type: 'move',
+      },
+      complete: false,
+      pathMode: 'route-following',
+      reason: 'Advance along the corridor before committing another keyframe.',
+    });
+
+    expect(parsed).toEqual({
+      action: {
+        primitive: 'forward-medium',
+        type: 'move',
+      },
+      complete: false,
+      pathMode: 'route-following',
+      reason: 'Advance along the corridor before committing another keyframe.',
+      warning: undefined,
+    });
+  });
+
   it('normalizes loose arc direction labels', () => {
     const parsed = parsePathGenerationComposeModelResponse({
       segments: [
@@ -637,6 +708,22 @@ describe('OpenAIVisionPathPlanner status', () => {
         model: 'gpt-4.1-mini',
         plannerVersion: 'multistep-v2',
         reason: 'Agentic path generation is disabled because OPENAI_API_KEY is not configured on the server.',
+        strategies: [
+          {
+            available: false,
+            experimental: false,
+            id: 'multistep-v2',
+            label: 'Planner Draft',
+            reason: 'Agentic path generation is disabled because OPENAI_API_KEY is not configured on the server.',
+          },
+          {
+            available: false,
+            experimental: true,
+            id: 'stepwise-v1',
+            label: 'Stepwise Agent',
+            reason: 'Agentic path generation is disabled because OPENAI_API_KEY is not configured on the server.',
+          },
+        ],
       });
     } finally {
       if (originalApiKey === undefined) {

@@ -13,6 +13,7 @@ import { PathInterpolator } from './PathInterpolator';
 export type AgenticOrientationMode = 'look-at-subject' | 'look-forward';
 export type AgenticOrbitDirection = 'clockwise' | 'counterclockwise';
 export type AgenticVerticalBias = 'low' | 'mid' | 'high';
+export type AgenticPathStrategyVersion = 'multistep-v2' | 'stepwise-v1';
 export type AgenticPathMode = 'subject-centric' | 'route-following' | 'multi-subject' | 'ambiguous';
 export type AgenticPathSegmentType = 'hold' | 'arc' | 'dolly' | 'pedestal' | 'traverse';
 export type AgenticDollyDirection = 'in' | 'out';
@@ -112,6 +113,15 @@ export interface AgenticPathStatus {
   };
   model: string | null;
   plannerVersion: 'multistep-v2';
+  reason: string | null;
+  strategies: AgenticPathStrategyStatus[];
+}
+
+export interface AgenticPathStrategyStatus {
+  available: boolean;
+  experimental: boolean;
+  id: AgenticPathStrategyVersion;
+  label: string;
   reason: string | null;
 }
 

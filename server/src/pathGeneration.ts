@@ -1,6 +1,7 @@
 export type AgenticOrientationMode = 'look-at-subject' | 'look-forward';
 export type AgenticOrbitDirection = 'clockwise' | 'counterclockwise';
 export type AgenticVerticalBias = 'low' | 'mid' | 'high';
+export type PathGenerationStrategyVersion = 'multistep-v2' | 'stepwise-v1';
 export type PathGenerationPathMode = 'subject-centric' | 'route-following' | 'multi-subject' | 'ambiguous';
 export type PathGenerationSegmentType = 'hold' | 'arc' | 'dolly' | 'pedestal' | 'traverse';
 export type PathGenerationDollyDirection = 'in' | 'out';
@@ -16,6 +17,29 @@ export type PathGenerationVerifyProbeReason =
   | 'segment-transition'
   | 'hold-read'
   | 'long-path-lookahead';
+export type PathGenerationStepMovePrimitive =
+  | 'forward-short'
+  | 'forward-medium'
+  | 'back-short'
+  | 'strafe-left-short'
+  | 'strafe-right-short'
+  | 'rise-short'
+  | 'lower-short';
+export type PathGenerationStepRotatePrimitive =
+  | 'yaw-left-small'
+  | 'yaw-right-small'
+  | 'yaw-left-medium'
+  | 'yaw-right-medium'
+  | 'pitch-up-small'
+  | 'pitch-down-small';
+
+export interface PathGenerationKeyframe {
+  fov: number;
+  id: string;
+  position: PathGenerationVector3;
+  quaternion: PathGenerationQuaternion;
+  time: number;
+}
 
 export interface PathGenerationVector3 {
   x: number;
@@ -49,6 +73,10 @@ export interface PathGenerationCapture {
   imageDataUrl: string;
   role: 'current' | 'scout';
   width: number;
+}
+
+export interface PathGenerationStepMemoryCapture extends PathGenerationCapture {
+  capturedAtStep: number;
 }
 
 export interface PathGenerationPathTail {
@@ -235,6 +263,57 @@ export interface PathGenerationVerifyResponse {
   warning?: string;
 }
 
+export type PathGenerationStepAction =
+  | {
+    type: 'move';
+    primitive: PathGenerationStepMovePrimitive;
+  }
+  | {
+    type: 'rotate';
+    primitive: PathGenerationStepRotatePrimitive;
+  }
+  | {
+    type: 'capture-image';
+  }
+  | {
+    type: 'create-keyframe';
+  };
+
+export interface PathGenerationStepActionHistoryEntry {
+  action: PathGenerationStepAction;
+  note?: string;
+  outcome: 'applied' | 'completed' | 'rejected' | 'stored';
+  stepIndex: number;
+}
+
+export interface PathGenerationStepRequest {
+  actionHistory: PathGenerationStepActionHistoryEntry[];
+  currentCapture: PathGenerationCapture;
+  draftControls: PathGenerationDraftControls;
+  draftKeyframes: PathGenerationKeyframe[];
+  memoryCaptures: PathGenerationStepMemoryCapture[];
+  prompt: string;
+  sceneBounds: PathGenerationBounds;
+  stepIndex: number;
+  strategyVersion: 'stepwise-v1';
+}
+
+export interface PathGenerationStepResponse {
+  action?: PathGenerationStepAction;
+  complete: boolean;
+  pathMode: PathGenerationPathMode;
+  reason: string;
+  warning?: string;
+}
+
+export interface PathGenerationStrategyStatus {
+  available: boolean;
+  experimental: boolean;
+  id: PathGenerationStrategyVersion;
+  label: string;
+  reason: string | null;
+}
+
 export interface PathGenerationPlannerStatus {
   available: boolean;
   capabilities: {
@@ -250,12 +329,14 @@ export interface PathGenerationPlannerStatus {
   model: string | null;
   plannerVersion: 'multistep-v2';
   reason: string | null;
+  strategies: PathGenerationStrategyStatus[];
 }
 
 export interface PathGenerationPlanner {
   composePathPlan: (request: unknown) => Promise<PathGenerationComposeResponse>;
   getStatus: () => PathGenerationPlannerStatus;
   groundPathIntent: (request: unknown) => Promise<PathGenerationGroundResponse>;
+  stepPathAction: (request: unknown) => Promise<PathGenerationStepResponse>;
   verifyPathPlan: (request: unknown) => Promise<PathGenerationVerifyResponse>;
 }
 
@@ -340,23 +421,19 @@ export class OpenAIVisionPathPlanner implements PathGenerationPlanner {
   getStatus(): PathGenerationPlannerStatus {
     const apiKey = this.apiKey ?? process.env['OPENAI_API_KEY'];
     const model = this.model ?? process.env['OPENAI_MODEL'] ?? DEFAULT_OPENAI_MODEL;
-
-    if (!apiKey) {
-      return {
-        available: false,
-        capabilities: STATUS_CAPABILITIES,
-        model,
-        plannerVersion: 'multistep-v2',
-        reason: 'Agentic path generation is disabled because OPENAI_API_KEY is not configured on the server.',
-      };
-    }
+    const available = Boolean(apiKey);
+    const reason = available
+      ? null
+      : 'Agentic path generation is disabled because OPENAI_API_KEY is not configured on the server.';
+    const strategies = buildStrategyStatuses(available, reason);
 
     return {
-      available: true,
+      available,
       capabilities: STATUS_CAPABILITIES,
       model,
       plannerVersion: 'multistep-v2',
-      reason: null,
+      reason,
+      strategies,
     };
   }
 
@@ -407,6 +484,18 @@ export class OpenAIVisionPathPlanner implements PathGenerationPlanner {
       apiKey,
     );
     return parsePathGenerationVerifyModelResponse(
+      JSON.parse(stripJsonFences(extractCompletionText(completion))) as unknown,
+    );
+  }
+
+  async stepPathAction(request: unknown): Promise<PathGenerationStepResponse> {
+    const parsedRequest = parsePathGenerationStepRequest(request);
+    const apiKey = this.requireApiKey();
+    const completion = await this.requestChatCompletion(
+      buildStepChatCompletionRequestBody(parsedRequest, this.resolveModel()),
+      apiKey,
+    );
+    return parsePathGenerationStepModelResponse(
       JSON.parse(stripJsonFences(extractCompletionText(completion))) as unknown,
     );
   }
@@ -472,6 +561,25 @@ export class OpenAIVisionPathPlanner implements PathGenerationPlanner {
       },
     );
   }
+}
+
+function buildStrategyStatuses(available: boolean, reason: string | null): PathGenerationStrategyStatus[] {
+  return [
+    {
+      available,
+      experimental: false,
+      id: 'multistep-v2',
+      label: 'Planner Draft',
+      reason,
+    },
+    {
+      available,
+      experimental: true,
+      id: 'stepwise-v1',
+      label: 'Stepwise Agent',
+      reason,
+    },
+  ];
 }
 
 export function parsePathGenerationGroundRequest(input: unknown): PathGenerationGroundRequest {
@@ -558,6 +666,31 @@ export function parsePathGenerationVerifyRequest(input: unknown): PathGeneration
   };
 }
 
+export function parsePathGenerationStepRequest(input: unknown): PathGenerationStepRequest {
+  if (!isRecord(input)) {
+    throw new PathGenerationError(400, 'Path-generation step request body must be a JSON object.');
+  }
+
+  const rawActionHistory = input['actionHistory'];
+  const rawMemoryCaptures = input['memoryCaptures'];
+
+  return {
+    actionHistory: Array.isArray(rawActionHistory)
+      ? rawActionHistory.map((entry, index) => parseStepActionHistoryEntry(entry, `actionHistory[${index}]`))
+      : [],
+    currentCapture: parseCapture(input['currentCapture'], 'currentCapture'),
+    draftControls: parseDraftControls(input['draftControls'], 'draftControls'),
+    draftKeyframes: parseKeyframeArray(input['draftKeyframes'], 'draftKeyframes'),
+    memoryCaptures: Array.isArray(rawMemoryCaptures)
+      ? rawMemoryCaptures.map((entry, index) => parseStepMemoryCapture(entry, `memoryCaptures[${index}]`))
+      : [],
+    prompt: readString(input, 'prompt', 'request'),
+    sceneBounds: parseBounds(input['sceneBounds'], 'sceneBounds'),
+    stepIndex: readIntegerInRange(input, 'stepIndex', 'request', 0, 128),
+    strategyVersion: parseStrategyVersion(input['strategyVersion'], 'strategyVersion'),
+  };
+}
+
 export function parsePathGenerationGroundModelResponse(
   input: unknown,
   captures: PathGenerationCapture[] = [],
@@ -633,6 +766,31 @@ export function parsePathGenerationVerifyModelResponse(input: unknown): PathGene
   };
 }
 
+export function parsePathGenerationStepModelResponse(input: unknown): PathGenerationStepResponse {
+  if (!isRecord(input)) {
+    throw new PathGenerationError(502, 'Vision planner returned a non-object stepwise response.');
+  }
+
+  const complete = input['complete'] === true;
+  const reason = readString(input, 'reason', 'response');
+  const pathMode = parsePathMode(input['pathMode'], 'pathMode');
+  const action = input['action'] === undefined || input['action'] === null
+    ? undefined
+    : parseStepAction(input['action'], 'action');
+
+  if (!complete && !action) {
+    throw new PathGenerationError(502, 'Vision planner step response must include an action unless complete is true.');
+  }
+
+  return {
+    action,
+    complete,
+    pathMode,
+    reason,
+    warning: readOptionalNonEmptyString(input, 'warning'),
+  };
+}
+
 function buildGroundSystemPrompt(): string {
   return [
     'You are the grounding step of a camera path planner for a 3D scene viewer.',
@@ -700,6 +858,26 @@ function buildVerifySystemPrompt(): string {
   ].join(' ');
 }
 
+function buildStepSystemPrompt(): string {
+  return [
+    'You are the stepwise action policy for an experimental camera-path agent in a 3D scene viewer.',
+    'Return JSON only with keys complete, pathMode, reason, action, warning.',
+    'Classify the prompt into exactly one pathMode: "subject-centric", "route-following", "multi-subject", or "ambiguous".',
+    'Only "subject-centric" and "route-following" are supported. For unsupported modes, set complete=true and explain why in reason.',
+    'Choose exactly one next action unless complete is true.',
+    'Allowed move primitives: forward-short, forward-medium, back-short, strafe-left-short, strafe-right-short, rise-short, lower-short.',
+    'Allowed rotate primitives: yaw-left-small, yaw-right-small, yaw-left-medium, yaw-right-medium, pitch-up-small, pitch-down-small.',
+    'Other allowed action types are capture-image and create-keyframe.',
+    'Use create-keyframe when the current camera pose should be preserved in the draft.',
+    'Use capture-image when the current frame is useful evidence to remember for later decisions.',
+    'Prefer a first create-keyframe within the first few steps and a second create-keyframe before completing.',
+    'For subject-centric prompts, prioritize keeping one primary subject well framed.',
+    'For route-following prompts, prioritize steady forward progress and looking in the route direction.',
+    'When the draft already has at least two keyframes and the requested move is achieved, set complete=true.',
+    'Never emit numeric motion values or raw camera poses.',
+  ].join(' ');
+}
+
 function buildGroundChatCompletionRequestBody(
   request: PathGenerationGroundRequest,
   model: string,
@@ -750,6 +928,25 @@ function buildVerifyChatCompletionRequestBody(
       },
       {
         content: buildVerifyUserContent(request),
+        role: 'user',
+      },
+    ],
+    model,
+  };
+}
+
+function buildStepChatCompletionRequestBody(
+  request: PathGenerationStepRequest,
+  model: string,
+): UnknownRecord {
+  return {
+    messages: [
+      {
+        content: buildStepSystemPrompt(),
+        role: 'system',
+      },
+      {
+        content: buildStepUserContent(request),
         role: 'user',
       },
     ],
@@ -863,6 +1060,61 @@ function buildVerifyUserContent(request: PathGenerationVerifyRequest): Array<Rec
         projectedRoute: capture.projectedRoute,
         projectedSubject: capture.projectedSubject,
         timeSeconds: capture.timeSeconds,
+      })}`,
+      type: 'text',
+    });
+    content.push({
+      image_url: {
+        url: capture.imageDataUrl,
+      },
+      type: 'image_url',
+    });
+  }
+
+  return content;
+}
+
+function buildStepUserContent(request: PathGenerationStepRequest): Array<Record<string, unknown>> {
+  const content: Array<Record<string, unknown>> = [
+    {
+      text: [
+        `Prompt: ${request.prompt}`,
+        `Strategy version: ${request.strategyVersion}`,
+        `Step index: ${request.stepIndex}`,
+        `Draft controls: ${JSON.stringify(request.draftControls)}`,
+        `Draft keyframes: ${JSON.stringify(request.draftKeyframes)}`,
+        `Action history: ${JSON.stringify(request.actionHistory)}`,
+        `Memory capture count: ${request.memoryCaptures.length}`,
+        `Scene bounds: ${JSON.stringify(request.sceneBounds)}`,
+      ].join('\n'),
+      type: 'text',
+    },
+    {
+      text: `Current capture metadata: ${JSON.stringify({
+        camera: request.currentCapture.camera,
+        height: request.currentCapture.height,
+        id: request.currentCapture.id,
+        role: request.currentCapture.role,
+        width: request.currentCapture.width,
+      })}`,
+      type: 'text',
+    },
+    {
+      image_url: {
+        url: request.currentCapture.imageDataUrl,
+      },
+      type: 'image_url',
+    },
+  ];
+
+  for (const capture of request.memoryCaptures) {
+    content.push({
+      text: `Memory capture ${capture.id}: ${JSON.stringify({
+        camera: capture.camera,
+        capturedAtStep: capture.capturedAtStep,
+        height: capture.height,
+        role: capture.role,
+        width: capture.width,
       })}`,
       type: 'text',
     });
@@ -1045,6 +1297,40 @@ function parseCapture(value: unknown, context: string): PathGenerationCapture {
     imageDataUrl,
     role,
     width: readPositiveNumber(value, 'width', context),
+  };
+}
+
+function parseStepMemoryCapture(value: unknown, context: string): PathGenerationStepMemoryCapture {
+  const capture = parseCapture(value, context);
+  if (!isRecord(value)) {
+    throw new PathGenerationError(400, `${context} must be an object.`);
+  }
+
+  return {
+    ...capture,
+    capturedAtStep: readIntegerInRange(value, 'capturedAtStep', context, 0, 128),
+  };
+}
+
+function parseKeyframeArray(value: unknown, context: string): PathGenerationKeyframe[] {
+  if (!Array.isArray(value)) {
+    throw new PathGenerationError(400, `${context} must be an array.`);
+  }
+
+  return value.map((entry, index) => parseKeyframe(entry, `${context}[${index}]`));
+}
+
+function parseKeyframe(value: unknown, context: string): PathGenerationKeyframe {
+  if (!isRecord(value)) {
+    throw new PathGenerationError(400, `${context} must be an object.`);
+  }
+
+  return {
+    fov: readFiniteNumber(value, 'fov', context),
+    id: readString(value, 'id', context),
+    position: parseVector3(value['position'], `${context}.position`),
+    quaternion: parseQuaternion(value['quaternion'], `${context}.quaternion`),
+    time: readFiniteNumber(value, 'time', context),
   };
 }
 
@@ -1346,6 +1632,14 @@ function parseDraftControls(value: unknown, context: string): PathGenerationDraf
   };
 }
 
+function parseStrategyVersion(value: unknown, context: string): 'stepwise-v1' {
+  if (value === 'stepwise-v1') {
+    return value;
+  }
+
+  throw new PathGenerationError(400, `${context} must be "stepwise-v1".`);
+}
+
 function parseQuaternion(value: unknown, context: string): PathGenerationQuaternion {
   if (!isRecord(value)) {
     throw new PathGenerationError(400, `${context} must be an object.`);
@@ -1457,6 +1751,51 @@ function parseSegmentPlan(value: unknown, context: string): PathGenerationSegmen
       ? undefined
       : parsePedestalDirection(value['travelDirection'], `${context}.travelDirection`),
   };
+}
+
+function parseStepActionHistoryEntry(value: unknown, context: string): PathGenerationStepActionHistoryEntry {
+  if (!isRecord(value)) {
+    throw new PathGenerationError(400, `${context} must be an object.`);
+  }
+
+  const outcome = readString(value, 'outcome', context);
+  if (outcome !== 'applied' && outcome !== 'completed' && outcome !== 'rejected' && outcome !== 'stored') {
+    throw new PathGenerationError(400, `${context}.outcome must be applied, completed, rejected, or stored.`);
+  }
+
+  return {
+    action: parseStepAction(value['action'], `${context}.action`),
+    note: readOptionalNonEmptyString(value, 'note'),
+    outcome,
+    stepIndex: readIntegerInRange(value, 'stepIndex', context, 0, 128),
+  };
+}
+
+function parseStepAction(value: unknown, context: string): PathGenerationStepAction {
+  if (!isRecord(value)) {
+    throw new PathGenerationError(502, `${context} must be an object.`);
+  }
+
+  const type = readString(value, 'type', context);
+  if (type === 'capture-image' || type === 'create-keyframe') {
+    return { type };
+  }
+
+  if (type === 'move') {
+    return {
+      primitive: parseMovePrimitive(value['primitive'], `${context}.primitive`),
+      type,
+    };
+  }
+
+  if (type === 'rotate') {
+    return {
+      primitive: parseRotatePrimitive(value['primitive'], `${context}.primitive`),
+      type,
+    };
+  }
+
+  throw new PathGenerationError(502, `${context}.type must be move, rotate, capture-image, or create-keyframe.`);
 }
 
 function coerceSegmentType(value: unknown): PathGenerationSegmentType | null {
@@ -1610,6 +1949,37 @@ function parseHoldPreference(value: unknown, context: string): PathGenerationHol
   }
 
   throw new PathGenerationError(400, `${context} must be "auto", "none", "brief", or "linger".`);
+}
+
+function parseMovePrimitive(value: unknown, context: string): PathGenerationStepMovePrimitive {
+  if (
+    value === 'forward-short'
+    || value === 'forward-medium'
+    || value === 'back-short'
+    || value === 'strafe-left-short'
+    || value === 'strafe-right-short'
+    || value === 'rise-short'
+    || value === 'lower-short'
+  ) {
+    return value;
+  }
+
+  throw new PathGenerationError(502, `${context} must be a supported move primitive.`);
+}
+
+function parseRotatePrimitive(value: unknown, context: string): PathGenerationStepRotatePrimitive {
+  if (
+    value === 'yaw-left-small'
+    || value === 'yaw-right-small'
+    || value === 'yaw-left-medium'
+    || value === 'yaw-right-medium'
+    || value === 'pitch-up-small'
+    || value === 'pitch-down-small'
+  ) {
+    return value;
+  }
+
+  throw new PathGenerationError(502, `${context} must be a supported rotate primitive.`);
 }
 
 function parseVector3(value: unknown, context: string): PathGenerationVector3 {

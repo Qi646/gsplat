@@ -872,6 +872,13 @@
           style="width: 100%; min-height: 84px; resize: vertical; border-radius: 14px; border: 1px solid rgba(255,255,255,0.12); background: rgba(10,12,18,0.9); color: #f5f7fb; padding: 12px; box-sizing: border-box; font: inherit; margin-bottom: 10px;"
         ></textarea>
         <div class="export-settings-grid" style="margin-bottom: 10px;">
+          <label class="field-stack" for="path-strategy-select">
+            <strong>Draft Strategy</strong>
+            <select class="select-input" id="path-strategy-select">
+              <option value="multistep-v2" selected>Planner Draft</option>
+              <option value="stepwise-v1">Stepwise Agent (Experimental)</option>
+            </select>
+          </label>
           <label class="field-stack" for="path-duration-select">
             <strong>Draft Length</strong>
             <select class="select-input" id="path-duration-select">

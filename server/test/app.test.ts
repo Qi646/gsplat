@@ -68,6 +68,22 @@ describe('createApp', () => {
         model: 'gpt-5-mini',
         plannerVersion: 'multistep-v2',
         reason: null,
+        strategies: [
+          {
+            available: true,
+            experimental: false,
+            id: 'multistep-v2',
+            label: 'Planner Draft',
+            reason: null,
+          },
+          {
+            available: true,
+            experimental: true,
+            id: 'stepwise-v1',
+            label: 'Stepwise Agent',
+            reason: null,
+          },
+        ],
       })),
       groundPathIntent: overrides.groundPathIntent ?? vi.fn(async () => ({
         intent: {
@@ -88,6 +104,12 @@ describe('createApp', () => {
       verifyPathPlan: overrides.verifyPathPlan ?? vi.fn(async () => ({
         approved: true,
         issues: [],
+      })),
+      stepPathAction: overrides.stepPathAction ?? vi.fn(async () => ({
+        action: { type: 'create-keyframe' },
+        complete: false,
+        pathMode: 'subject-centric',
+        reason: 'Store the opening pose before moving.',
       })),
     };
   }
@@ -444,6 +466,57 @@ describe('createApp', () => {
     });
   });
 
+  it('returns a stepwise action response from the step route', async () => {
+    const pathPlanner = createPathPlanner({
+      stepPathAction: vi.fn(async requestBody => {
+        expect(requestBody).toMatchObject({
+          prompt: 'Follow the corridor forward and save strong viewpoints.',
+          strategyVersion: 'stepwise-v1',
+          stepIndex: 2,
+        });
+
+        return {
+          action: {
+            primitive: 'forward-medium',
+            type: 'move',
+          },
+          complete: false,
+          pathMode: 'route-following',
+          reason: 'Advance along the visible corridor before storing the next keyframe.',
+        };
+      }),
+    });
+    const app = createTestApp({ pathPlanner });
+
+    const response = await request(app)
+      .post('/api/path/step')
+      .send({
+        actionHistory: [],
+        currentCapture: createPathGenerationGroundRequest().captures[0],
+        draftControls: {
+          holdPreference: 'auto',
+          requestedDurationSeconds: 12,
+        },
+        draftKeyframes: [],
+        memoryCaptures: [],
+        prompt: 'Follow the corridor forward and save strong viewpoints.',
+        sceneBounds: createPathGenerationGroundRequest().sceneBounds,
+        stepIndex: 2,
+        strategyVersion: 'stepwise-v1',
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({
+      action: {
+        primitive: 'forward-medium',
+        type: 'move',
+      },
+      complete: false,
+      pathMode: 'route-following',
+      reason: 'Advance along the visible corridor before storing the next keyframe.',
+    });
+  });
+
   it('returns planner availability from the path status route', async () => {
     const app = createTestApp({
       pathPlanner: createPathPlanner({
@@ -462,6 +535,22 @@ describe('createApp', () => {
           model: 'gpt-5-mini',
           plannerVersion: 'multistep-v1',
           reason: 'Agentic path generation is disabled because OPENAI_API_KEY is not configured on the server.',
+          strategies: [
+            {
+              available: false,
+              experimental: false,
+              id: 'multistep-v2',
+              label: 'Planner Draft',
+              reason: 'Agentic path generation is disabled because OPENAI_API_KEY is not configured on the server.',
+            },
+            {
+              available: false,
+              experimental: true,
+              id: 'stepwise-v1',
+              label: 'Stepwise Agent',
+              reason: 'Agentic path generation is disabled because OPENAI_API_KEY is not configured on the server.',
+            },
+          ],
         })),
       }),
     });
@@ -484,6 +573,22 @@ describe('createApp', () => {
       model: 'gpt-5-mini',
       plannerVersion: 'multistep-v1',
       reason: 'Agentic path generation is disabled because OPENAI_API_KEY is not configured on the server.',
+      strategies: [
+        {
+          available: false,
+          experimental: false,
+          id: 'multistep-v2',
+          label: 'Planner Draft',
+          reason: 'Agentic path generation is disabled because OPENAI_API_KEY is not configured on the server.',
+        },
+        {
+          available: false,
+          experimental: true,
+          id: 'stepwise-v1',
+          label: 'Stepwise Agent',
+          reason: 'Agentic path generation is disabled because OPENAI_API_KEY is not configured on the server.',
+        },
+      ],
     });
   });
 
