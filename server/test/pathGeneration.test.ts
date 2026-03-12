@@ -67,6 +67,35 @@ function createStepRequest() {
         stepIndex: 0,
       },
     ],
+    candidateActions: [
+      {
+        action: { type: 'create-keyframe' },
+        predictedOutcome: {
+          expectedProgress: 'preserve-state',
+          repeatsRecentAction: true,
+          summary: 'Preserve the current camera pose.',
+          viewChangeType: 'preserve',
+        },
+      },
+      {
+        action: { primitive: 'forward-medium', type: 'move' },
+        predictedOutcome: {
+          expectedProgress: 'advance',
+          repeatsRecentAction: false,
+          summary: 'Move forward along the current view direction.',
+          viewChangeType: 'viewpoint-change',
+        },
+      },
+      {
+        action: { primitive: 'yaw-right-small', type: 'rotate' },
+        predictedOutcome: {
+          expectedProgress: 'change-viewpoint',
+          repeatsRecentAction: false,
+          summary: 'Turn slightly right in place.',
+          viewChangeType: 're-aim',
+        },
+      },
+    ],
     currentCapture: groundRequest.captures[0],
     draftControls: {
       holdPreference: 'auto',
@@ -399,6 +428,8 @@ describe('pathGeneration request parsing', () => {
     expect(parsed.currentCapture.id).toBe('capture-current');
     expect(parsed.memoryCaptures[0]?.capturedAtStep).toBe(1);
     expect(parsed.actionHistory[0]?.action).toEqual({ type: 'create-keyframe' });
+    expect(parsed.candidateActions).toHaveLength(3);
+    expect(parsed.candidateActions[1]?.predictedOutcome.viewChangeType).toBe('viewpoint-change');
   });
 
   it('normalizes verify-capture aliases for active probes', () => {
@@ -581,11 +612,25 @@ describe('pathGeneration model-response parsing', () => {
 
   it('accepts valid stepwise action responses', () => {
     const parsed = parsePathGenerationStepModelResponse({
-      action: {
+      candidateAssessment: [
+        {
+          action: {
+            primitive: 'forward-medium',
+            type: 'move',
+          },
+          assessment: 'Advances along the corridor.',
+          score: 0.72,
+        },
+      ],
+      chosenAction: {
         primitive: 'forward-medium',
         type: 'move',
       },
       complete: false,
+      localIntent: {
+        kind: 'advance-along-route',
+        successCriteria: ['make forward progress', 'keep the corridor readable'],
+      },
       pathMode: 'route-following',
       reason: 'Advance along the corridor before committing another keyframe.',
     });
@@ -595,7 +640,25 @@ describe('pathGeneration model-response parsing', () => {
         primitive: 'forward-medium',
         type: 'move',
       },
+      candidateAssessment: [
+        {
+          action: {
+            primitive: 'forward-medium',
+            type: 'move',
+          },
+          assessment: 'Advances along the corridor.',
+          score: 0.72,
+        },
+      ],
+      chosenAction: {
+        primitive: 'forward-medium',
+        type: 'move',
+      },
       complete: false,
+      localIntent: {
+        kind: 'advance-along-route',
+        successCriteria: ['make forward progress', 'keep the corridor readable'],
+      },
       pathMode: 'route-following',
       reason: 'Advance along the corridor before committing another keyframe.',
       warning: undefined,
@@ -604,7 +667,7 @@ describe('pathGeneration model-response parsing', () => {
 
   it('normalizes shorthand stepwise string actions', () => {
     const parsed = parsePathGenerationStepModelResponse({
-      action: 'create keyframe',
+      chosenAction: 'create keyframe',
       complete: false,
       pathMode: 'subject-centric',
       reason: 'Preserve the current framing before moving again.',
@@ -614,7 +677,12 @@ describe('pathGeneration model-response parsing', () => {
       action: {
         type: 'create-keyframe',
       },
+      candidateAssessment: undefined,
+      chosenAction: {
+        type: 'create-keyframe',
+      },
       complete: false,
+      localIntent: undefined,
       pathMode: 'subject-centric',
       reason: 'Preserve the current framing before moving again.',
       warning: undefined,
@@ -623,7 +691,7 @@ describe('pathGeneration model-response parsing', () => {
 
   it('normalizes shorthand stepwise action objects with alias keys', () => {
     const parsed = parsePathGenerationStepModelResponse({
-      action: {
+      chosenAction: {
         actionType: 'turn right',
         rotatePrimitive: 'turn right medium',
       },
@@ -637,7 +705,13 @@ describe('pathGeneration model-response parsing', () => {
         primitive: 'yaw-right-medium',
         type: 'rotate',
       },
+      candidateAssessment: undefined,
+      chosenAction: {
+        primitive: 'yaw-right-medium',
+        type: 'rotate',
+      },
       complete: false,
+      localIntent: undefined,
       pathMode: 'route-following',
       reason: 'Yaw to stay aligned with the corridor.',
       warning: undefined,
@@ -646,7 +720,7 @@ describe('pathGeneration model-response parsing', () => {
 
   it('coerces malformed motion actions back to create-keyframe when the primitive text says so', () => {
     const parsed = parsePathGenerationStepModelResponse({
-      action: {
+      chosenAction: {
         primitive: 'create-keyframe',
         type: 'rotate',
       },
@@ -659,7 +733,12 @@ describe('pathGeneration model-response parsing', () => {
       action: {
         type: 'create-keyframe',
       },
+      candidateAssessment: undefined,
+      chosenAction: {
+        type: 'create-keyframe',
+      },
       complete: false,
+      localIntent: undefined,
       pathMode: 'subject-centric',
       reason: 'Preserve the starting pose before moving around the truck.',
       warning: undefined,
@@ -668,7 +747,7 @@ describe('pathGeneration model-response parsing', () => {
 
   it('repairs move actions whose primitive is clearly a rotate primitive', () => {
     const parsed = parsePathGenerationStepModelResponse({
-      action: {
+      chosenAction: {
         primitive: 'yaw-right-small',
         type: 'move',
       },
@@ -682,7 +761,13 @@ describe('pathGeneration model-response parsing', () => {
         primitive: 'yaw-right-small',
         type: 'rotate',
       },
+      candidateAssessment: undefined,
+      chosenAction: {
+        primitive: 'yaw-right-small',
+        type: 'rotate',
+      },
       complete: false,
+      localIntent: undefined,
       pathMode: 'subject-centric',
       reason: 'Turn right slightly to continue the orbit.',
       warning: undefined,
@@ -691,7 +776,7 @@ describe('pathGeneration model-response parsing', () => {
 
   it('repairs rotate actions whose primitive is clearly a move primitive', () => {
     const parsed = parsePathGenerationStepModelResponse({
-      action: {
+      chosenAction: {
         primitive: 'forward-medium',
         type: 'rotate',
       },
@@ -705,7 +790,13 @@ describe('pathGeneration model-response parsing', () => {
         primitive: 'forward-medium',
         type: 'move',
       },
+      candidateAssessment: undefined,
+      chosenAction: {
+        primitive: 'forward-medium',
+        type: 'move',
+      },
       complete: false,
+      localIntent: undefined,
       pathMode: 'route-following',
       reason: 'Advance down the route.',
       warning: undefined,
@@ -714,7 +805,7 @@ describe('pathGeneration model-response parsing', () => {
 
   it('accepts the canonical create-keyframe step response shape', () => {
     const parsed = parsePathGenerationStepModelResponse({
-      action: { type: 'create-keyframe' },
+      chosenAction: { type: 'create-keyframe' },
       complete: false,
       pathMode: 'subject-centric',
       reason: 'User asked for a cinematic move around a single truck with the camera focused on it. This is a subject-centric task: keep the truck as the primary subject and move the camera around to reveal the front license plate at the end. No draft keyframes exist yet, so begin by preserving the current pose.',
@@ -725,7 +816,12 @@ describe('pathGeneration model-response parsing', () => {
       action: {
         type: 'create-keyframe',
       },
+      candidateAssessment: undefined,
+      chosenAction: {
+        type: 'create-keyframe',
+      },
       complete: false,
+      localIntent: undefined,
       pathMode: 'subject-centric',
       reason: 'User asked for a cinematic move around a single truck with the camera focused on it. This is a subject-centric task: keep the truck as the primary subject and move the camera around to reveal the front license plate at the end. No draft keyframes exist yet, so begin by preserving the current pose.',
       warning: 'Ensure subsequent moves keep the truck centered; avoid large lateral moves that risk occluding the truck with foreground elements. A second keyframe should be created before finishing on the license plate.',
@@ -969,6 +1065,54 @@ describe('OpenAIVisionPathPlanner request compatibility', () => {
     expect(requestBodies[0]?.['reasoning_effort']).toBe('minimal');
     expect(requestBodies[0]?.['temperature']).toBeUndefined();
     expect(requestBodies[0]?.['response_format']).toEqual({ type: 'json_object' });
+  });
+
+  it('includes explicit current-frame yaw framing guidance for stepwise planning', async () => {
+    const requestBodies: Array<Record<string, unknown>> = [];
+    const fetchImpl = vi.fn(async (_input: unknown, init?: RequestInit) => {
+      requestBodies.push(JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>);
+      return new Response(JSON.stringify({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                action: { type: 'create-keyframe' },
+                chosenAction: { type: 'create-keyframe' },
+                complete: false,
+                pathMode: 'subject-centric',
+                reason: 'Store the current framing.',
+              }),
+            },
+          },
+        ],
+      }), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 200,
+      });
+    }) as unknown as typeof fetch;
+    const planner = new OpenAIVisionPathPlanner({
+      apiKey: 'test-key',
+      fetchImpl,
+      model: 'gpt-5-mini',
+    });
+
+    await planner.stepPathAction(createStepRequest());
+
+    expect(requestBodies).toHaveLength(1);
+    const messages = requestBodies[0]?.['messages'];
+    expect(Array.isArray(messages)).toBe(true);
+    const systemMessage = Array.isArray(messages)
+      ? messages.find((entry): entry is { content: string; role: string } =>
+        typeof entry === 'object'
+        && entry !== null
+        && 'role' in entry
+        && 'content' in entry
+        && (entry as { role?: unknown }).role === 'system'
+        && typeof (entry as { content?: unknown }).content === 'string')
+      : undefined;
+    expect(systemMessage?.content).toContain('When the current frame and the action history disagree, trust the current frame.');
+    expect(systemMessage?.content).toContain('if the subject sits to the right of center and should move toward center, prefer yaw-right; if the subject sits to the left of center and should move toward center, prefer yaw-left.');
+    expect(systemMessage?.content).toContain('Use yaw only to re-aim the camera.');
   });
 
   it('falls back from reasoning_effort and parses structured completion content', async () => {

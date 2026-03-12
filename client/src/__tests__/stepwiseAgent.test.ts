@@ -129,25 +129,40 @@ describe('StepwiseAgentOrchestrator', () => {
     const { viewer } = createViewer();
     const responses = [
       {
-        action: { type: 'create-keyframe' },
+        chosenAction: { type: 'create-keyframe' },
         complete: false,
+        localIntent: {
+          kind: 'preserve-opening-view',
+          successCriteria: ['store the current pose'],
+        },
         pathMode: 'subject-centric',
         reason: 'Store the opening view.',
       },
       {
-        action: { type: 'capture-image' },
+        chosenAction: { type: 'capture-image' },
         complete: false,
         pathMode: 'subject-centric',
         reason: 'Remember this subject framing for later.',
       },
       {
-        action: { primitive: 'yaw-left-small', type: 'rotate' },
+        candidateAssessment: [
+          {
+            action: { primitive: 'yaw-left-small', type: 'rotate' },
+            assessment: 'A small re-aim starts the orbit without changing position.',
+            score: 0.64,
+          },
+        ],
+        chosenAction: { primitive: 'yaw-left-small', type: 'rotate' },
         complete: false,
+        localIntent: {
+          kind: 'change-viewpoint-around-subject',
+          successCriteria: ['begin changing the view while keeping the subject readable'],
+        },
         pathMode: 'subject-centric',
         reason: 'Rotate slightly around the subject.',
       },
       {
-        action: { type: 'create-keyframe' },
+        chosenAction: { type: 'create-keyframe' },
         complete: false,
         pathMode: 'subject-centric',
         reason: 'Store the rotated composition.',
@@ -186,25 +201,25 @@ describe('StepwiseAgentOrchestrator', () => {
     camera.updateMatrixWorld(true);
     const responses = [
       {
-        action: { type: 'create-keyframe' },
+        chosenAction: { type: 'create-keyframe' },
         complete: false,
         pathMode: 'route-following',
         reason: 'Store the opening route view.',
       },
       {
-        action: { primitive: 'forward-medium', type: 'move' },
+        chosenAction: { primitive: 'forward-medium', type: 'move' },
         complete: false,
         pathMode: 'route-following',
         reason: 'Move forward along the corridor.',
       },
       {
-        action: { primitive: 'yaw-left-medium', type: 'rotate' },
+        chosenAction: { primitive: 'yaw-left-medium', type: 'rotate' },
         complete: false,
         pathMode: 'route-following',
         reason: 'Turn back into the route direction.',
       },
       {
-        action: { type: 'create-keyframe' },
+        chosenAction: { type: 'create-keyframe' },
         complete: false,
         pathMode: 'route-following',
         reason: 'Store the corrected route view.',
@@ -242,19 +257,19 @@ describe('StepwiseAgentOrchestrator', () => {
     camera.updateMatrixWorld(true);
     const responses = [
       {
-        action: { type: 'create-keyframe' },
+        chosenAction: { type: 'create-keyframe' },
         complete: false,
         pathMode: 'subject-centric',
         reason: 'Store the opening composition.',
       },
       {
-        action: { primitive: 'yaw-right-small', type: 'rotate' },
+        chosenAction: { primitive: 'yaw-right-small', type: 'rotate' },
         complete: false,
         pathMode: 'subject-centric',
         reason: 'Rotate slightly to face the subject front.',
       },
       {
-        action: { type: 'create-keyframe' },
+        chosenAction: { type: 'create-keyframe' },
         complete: false,
         pathMode: 'subject-centric',
         reason: 'Store the corrected front-facing composition.',
@@ -297,31 +312,31 @@ describe('StepwiseAgentOrchestrator', () => {
     const requestBodies: Array<Record<string, unknown>> = [];
     const responses = [
       {
-        action: { type: 'capture-image' },
+        chosenAction: { type: 'capture-image' },
         complete: false,
         pathMode: 'subject-centric',
         reason: 'Remember the opening subject framing.',
       },
       {
-        action: { primitive: 'yaw-left-small', type: 'rotate' },
+        chosenAction: { primitive: 'yaw-left-small', type: 'rotate' },
         complete: false,
         pathMode: 'subject-centric',
         reason: 'Start orbiting the subject.',
       },
       {
-        action: { type: 'capture-image' },
+        chosenAction: { type: 'capture-image' },
         complete: false,
         pathMode: 'subject-centric',
         reason: 'Remember the improved front-quarter view.',
       },
       {
-        action: { type: 'create-keyframe' },
+        chosenAction: { type: 'create-keyframe' },
         complete: false,
         pathMode: 'subject-centric',
         reason: 'Store this stronger composition.',
       },
       {
-        action: { type: 'create-keyframe' },
+        chosenAction: { type: 'create-keyframe' },
         complete: false,
         pathMode: 'subject-centric',
         reason: 'Store the ending view.',
@@ -359,5 +374,28 @@ describe('StepwiseAgentOrchestrator', () => {
     expect(requestBodies[2]?.memoryCaptures).toEqual([]);
     expect(requestBodies[3]?.memoryCaptures).toEqual([]);
     expect(requestBodies[4]?.memoryCaptures).toEqual([]);
+    const candidateActions = requestBodies[0]?.candidateActions;
+    expect(Array.isArray(candidateActions)).toBe(true);
+    expect(candidateActions).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        action: { type: 'create-keyframe' },
+        predictedOutcome: expect.objectContaining({
+          expectedProgress: 'preserve-state',
+          viewChangeType: 'preserve',
+        }),
+      }),
+      expect.objectContaining({
+        action: { primitive: 'yaw-right-small', type: 'rotate' },
+        predictedOutcome: expect.objectContaining({
+          viewChangeType: 're-aim',
+        }),
+      }),
+      expect.objectContaining({
+        action: { primitive: 'strafe-left-short', type: 'move' },
+        predictedOutcome: expect.objectContaining({
+          viewChangeType: 'viewpoint-change',
+        }),
+      }),
+    ]));
   });
 });

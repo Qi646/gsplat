@@ -34,6 +34,29 @@ export type StepwiseAction =
   | { type: 'capture-image' }
   | { type: 'create-keyframe' };
 
+export interface StepwiseLocalIntent {
+  kind: string;
+  successCriteria: string[];
+}
+
+export interface StepwiseCandidatePredictedOutcome {
+  expectedProgress: 'advance' | 'change-viewpoint' | 'gather-evidence' | 'preserve-state';
+  repeatsRecentAction: boolean;
+  summary: string;
+  viewChangeType: 'gather-evidence' | 'preserve' | 're-aim' | 'viewpoint-change';
+}
+
+export interface StepwiseCandidateAction {
+  action: StepwiseAction;
+  predictedOutcome: StepwiseCandidatePredictedOutcome;
+}
+
+export interface StepwiseCandidateAssessment {
+  action: StepwiseAction;
+  assessment: string;
+  score?: number;
+}
+
 export interface StepwiseMemoryCapture extends AgenticPathCapture {
   capturedAtStep: number;
 }
@@ -47,7 +70,10 @@ export interface StepwiseActionHistoryEntry {
 
 interface StepwiseStepResponse {
   action?: StepwiseAction;
+  candidateAssessment?: StepwiseCandidateAssessment[];
+  chosenAction?: StepwiseAction;
   complete: boolean;
+  localIntent?: StepwiseLocalIntent;
   pathMode: AgenticPathMode;
   reason: string;
   warning?: string;
@@ -183,6 +209,7 @@ export class StepwiseAgentOrchestrator {
         );
         const response = await this.requestNextAction({
           actionHistory,
+          candidateActions: buildCandidateActions(actionHistory, keyframes.length),
           currentCapture,
           draftControls,
           draftKeyframes: keyframes,
@@ -310,6 +337,7 @@ export class StepwiseAgentOrchestrator {
   private async requestNextAction(
     request: {
       actionHistory: StepwiseActionHistoryEntry[];
+      candidateActions: StepwiseCandidateAction[];
       currentCapture: AgenticPathCapture;
       draftControls: AgenticDraftControls;
       draftKeyframes: Keyframe[];
@@ -400,6 +428,128 @@ function captureKeyframeFromCamera(camera: THREE.PerspectiveCamera, lastTime: nu
     },
     time: lastTime === null ? 0 : lastTime + KEYFRAME_SPACING_SECONDS,
   };
+}
+
+function buildCandidateActions(
+  actionHistory: StepwiseActionHistoryEntry[],
+  keyframeCount: number,
+): StepwiseCandidateAction[] {
+  const candidates: StepwiseCandidateAction[] = [];
+  const push = (action: StepwiseAction, predictedOutcome: Omit<StepwiseCandidatePredictedOutcome, 'repeatsRecentAction'>) => {
+    candidates.push({
+      action,
+      predictedOutcome: {
+        ...predictedOutcome,
+        repeatsRecentAction: actionMatchesHistory(action, actionHistory.at(-1)?.action),
+      },
+    });
+  };
+
+  if (keyframeCount < MAX_KEYFRAMES) {
+    push(
+      { type: 'create-keyframe' },
+      {
+        expectedProgress: 'preserve-state',
+        summary: 'Preserve the current camera pose as a draft keyframe before making further changes.',
+        viewChangeType: 'preserve',
+      },
+    );
+  }
+
+  push(
+    { type: 'capture-image' },
+    {
+      expectedProgress: 'gather-evidence',
+      summary: 'Keep the current frame as evidence without changing the camera pose.',
+      viewChangeType: 'gather-evidence',
+    },
+  );
+
+  const motionCandidates: Array<StepwiseAction> = [
+    { primitive: 'forward-short', type: 'move' },
+    { primitive: 'forward-medium', type: 'move' },
+    { primitive: 'back-short', type: 'move' },
+    { primitive: 'strafe-left-short', type: 'move' },
+    { primitive: 'strafe-right-short', type: 'move' },
+    { primitive: 'rise-short', type: 'move' },
+    { primitive: 'lower-short', type: 'move' },
+    { primitive: 'yaw-left-small', type: 'rotate' },
+    { primitive: 'yaw-right-small', type: 'rotate' },
+    { primitive: 'yaw-left-medium', type: 'rotate' },
+    { primitive: 'yaw-right-medium', type: 'rotate' },
+    { primitive: 'pitch-up-small', type: 'rotate' },
+    { primitive: 'pitch-down-small', type: 'rotate' },
+  ];
+
+  for (const action of motionCandidates) {
+    push(action, describeCandidateAction(action));
+  }
+
+  return candidates;
+}
+
+function describeCandidateAction(action: Extract<StepwiseAction, { type: 'move' | 'rotate' }>): Omit<StepwiseCandidatePredictedOutcome, 'repeatsRecentAction'> {
+  if (action.type === 'rotate') {
+    return {
+      expectedProgress: 'change-viewpoint',
+      summary: describeRotatePrimitive(action.primitive),
+      viewChangeType: 're-aim',
+    };
+  }
+
+  return {
+    expectedProgress: action.primitive.startsWith('forward') ? 'advance' : 'change-viewpoint',
+    summary: describeMovePrimitive(action.primitive),
+    viewChangeType: 'viewpoint-change',
+  };
+}
+
+function describeMovePrimitive(primitive: StepwiseMovePrimitive): string {
+  switch (primitive) {
+    case 'forward-short':
+      return 'Move the camera a short distance forward along the current view direction.';
+    case 'forward-medium':
+      return 'Move the camera a medium distance forward along the current view direction.';
+    case 'back-short':
+      return 'Move the camera a short distance backward from the current view direction.';
+    case 'strafe-left-short':
+      return 'Shift the camera a short distance to the left while keeping its orientation unchanged.';
+    case 'strafe-right-short':
+      return 'Shift the camera a short distance to the right while keeping its orientation unchanged.';
+    case 'rise-short':
+      return 'Move the camera a short distance upward without changing orientation.';
+    case 'lower-short':
+      return 'Move the camera a short distance downward without changing orientation.';
+  }
+}
+
+function describeRotatePrimitive(primitive: StepwiseRotatePrimitive): string {
+  switch (primitive) {
+    case 'yaw-left-small':
+      return 'Turn the camera slightly left in place without changing position.';
+    case 'yaw-right-small':
+      return 'Turn the camera slightly right in place without changing position.';
+    case 'yaw-left-medium':
+      return 'Turn the camera a medium amount left in place without changing position.';
+    case 'yaw-right-medium':
+      return 'Turn the camera a medium amount right in place without changing position.';
+    case 'pitch-up-small':
+      return 'Tilt the camera slightly upward in place without changing position.';
+    case 'pitch-down-small':
+      return 'Tilt the camera slightly downward in place without changing position.';
+  }
+}
+
+function actionMatchesHistory(action: StepwiseAction, previousAction?: StepwiseAction): boolean {
+  if (!previousAction || action.type !== previousAction.type) {
+    return false;
+  }
+  if ('primitive' in action || 'primitive' in previousAction) {
+    return 'primitive' in action
+      && 'primitive' in previousAction
+      && action.primitive === previousAction.primitive;
+  }
+  return true;
 }
 
 function buildDraftSummary(pathMode: AgenticPathMode, keyframeCount: number, memoryCaptureCount: number): string {
@@ -567,21 +717,82 @@ function parseStepResponse(input: unknown): StepwiseStepResponse {
   const warning = typeof record['warning'] === 'string' && record['warning'].trim().length > 0
     ? record['warning'].trim()
     : undefined;
+  const chosenAction = record['chosenAction'] === undefined || record['chosenAction'] === null
+    ? undefined
+    : parseStepAction(record['chosenAction']);
   const action = record['action'] === undefined || record['action'] === null
     ? undefined
     : parseStepAction(record['action']);
+  const localIntent = parseLocalIntent(record['localIntent']);
+  const candidateAssessment = parseCandidateAssessment(record['candidateAssessment']);
+  const resolvedAction = chosenAction ?? action;
 
-  if (!complete && !action) {
+  if (!complete && !resolvedAction) {
     throw new AgenticPathGenerationError('The stepwise planner must choose an action unless it has completed the draft.');
   }
 
   return {
-    action,
+    action: resolvedAction,
+    candidateAssessment,
+    chosenAction,
     complete,
+    localIntent,
     pathMode,
     reason,
     warning,
   };
+}
+
+function parseLocalIntent(value: unknown): StepwiseLocalIntent | undefined {
+  if (typeof value !== 'object' || value === null) {
+    return undefined;
+  }
+  const record = value as Record<string, unknown>;
+  const kind = typeof record['kind'] === 'string' && record['kind'].trim().length > 0
+    ? record['kind'].trim()
+    : null;
+  if (!kind) {
+    return undefined;
+  }
+  const successCriteria = Array.isArray(record['successCriteria'])
+    ? record['successCriteria']
+      .filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0)
+      .map(entry => entry.trim())
+    : [];
+  return {
+    kind,
+    successCriteria,
+  };
+}
+
+function parseCandidateAssessment(value: unknown): StepwiseCandidateAssessment[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const assessments = value.flatMap((entry): StepwiseCandidateAssessment[] => {
+    if (typeof entry !== 'object' || entry === null) {
+      return [];
+    }
+    const record = entry as Record<string, unknown>;
+    const assessment = typeof record['assessment'] === 'string' && record['assessment'].trim().length > 0
+      ? record['assessment'].trim()
+      : null;
+    if (!assessment) {
+      return [];
+    }
+    const actionValue = record['action'] ?? record['candidate'];
+    if (actionValue === undefined || actionValue === null) {
+      return [];
+    }
+    const action = parseStepAction(actionValue);
+    const rawScore = record['score'];
+    return [{
+      action,
+      assessment,
+      score: typeof rawScore === 'number' && Number.isFinite(rawScore) ? rawScore : undefined,
+    }];
+  });
+  return assessments.length > 0 ? assessments : undefined;
 }
 
 function parsePathMode(value: unknown): AgenticPathMode {

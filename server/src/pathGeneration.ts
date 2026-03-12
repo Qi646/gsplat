@@ -279,6 +279,29 @@ export type PathGenerationStepAction =
     type: 'create-keyframe';
   };
 
+export interface PathGenerationStepLocalIntent {
+  kind: string;
+  successCriteria: string[];
+}
+
+export interface PathGenerationStepCandidatePredictedOutcome {
+  expectedProgress: 'advance' | 'change-viewpoint' | 'gather-evidence' | 'preserve-state';
+  repeatsRecentAction: boolean;
+  summary: string;
+  viewChangeType: 'gather-evidence' | 'preserve' | 're-aim' | 'viewpoint-change';
+}
+
+export interface PathGenerationStepCandidateAction {
+  action: PathGenerationStepAction;
+  predictedOutcome: PathGenerationStepCandidatePredictedOutcome;
+}
+
+export interface PathGenerationStepCandidateAssessment {
+  action: PathGenerationStepAction;
+  assessment: string;
+  score?: number;
+}
+
 export interface PathGenerationStepActionHistoryEntry {
   action: PathGenerationStepAction;
   note?: string;
@@ -288,6 +311,7 @@ export interface PathGenerationStepActionHistoryEntry {
 
 export interface PathGenerationStepRequest {
   actionHistory: PathGenerationStepActionHistoryEntry[];
+  candidateActions: PathGenerationStepCandidateAction[];
   currentCapture: PathGenerationCapture;
   draftControls: PathGenerationDraftControls;
   draftKeyframes: PathGenerationKeyframe[];
@@ -300,7 +324,10 @@ export interface PathGenerationStepRequest {
 
 export interface PathGenerationStepResponse {
   action?: PathGenerationStepAction;
+  candidateAssessment?: PathGenerationStepCandidateAssessment[];
+  chosenAction?: PathGenerationStepAction;
   complete: boolean;
+  localIntent?: PathGenerationStepLocalIntent;
   pathMode: PathGenerationPathMode;
   reason: string;
   warning?: string;
@@ -672,11 +699,15 @@ export function parsePathGenerationStepRequest(input: unknown): PathGenerationSt
   }
 
   const rawActionHistory = input['actionHistory'];
+  const rawCandidateActions = input['candidateActions'];
   const rawMemoryCaptures = input['memoryCaptures'];
 
   return {
     actionHistory: Array.isArray(rawActionHistory)
       ? rawActionHistory.map((entry, index) => parseStepActionHistoryEntry(entry, `actionHistory[${index}]`))
+      : [],
+    candidateActions: Array.isArray(rawCandidateActions)
+      ? rawCandidateActions.map((entry, index) => parseStepCandidateAction(entry, `candidateActions[${index}]`))
       : [],
     currentCapture: parseCapture(input['currentCapture'], 'currentCapture'),
     draftControls: parseDraftControls(input['draftControls'], 'draftControls'),
@@ -774,17 +805,30 @@ export function parsePathGenerationStepModelResponse(input: unknown): PathGenera
   const complete = input['complete'] === true;
   const reason = readString(input, 'reason', 'response');
   const pathMode = parsePathMode(input['pathMode'], 'pathMode');
+  const chosenAction = input['chosenAction'] === undefined || input['chosenAction'] === null
+    ? undefined
+    : parseStepAction(input['chosenAction'], 'chosenAction');
   const action = input['action'] === undefined || input['action'] === null
     ? undefined
     : parseStepAction(input['action'], 'action');
+  const localIntent = input['localIntent'] === undefined || input['localIntent'] === null
+    ? undefined
+    : parseStepLocalIntent(input['localIntent'], 'localIntent');
+  const candidateAssessment = input['candidateAssessment'] === undefined || input['candidateAssessment'] === null
+    ? undefined
+    : parseStepCandidateAssessmentArray(input['candidateAssessment'], 'candidateAssessment');
+  const resolvedAction = chosenAction ?? action;
 
-  if (!complete && !action) {
+  if (!complete && !resolvedAction) {
     throw new PathGenerationError(502, 'Vision planner step response must include an action unless complete is true.');
   }
 
   return {
-    action,
+    action: resolvedAction,
+    candidateAssessment,
+    chosenAction,
     complete,
+    localIntent,
     pathMode,
     reason,
     warning: readOptionalNonEmptyString(input, 'warning'),
@@ -861,24 +905,31 @@ function buildVerifySystemPrompt(): string {
 function buildStepSystemPrompt(): string {
   return [
     'You are the stepwise action policy for an experimental camera-path agent in a 3D scene viewer.',
-    'Return JSON only with keys complete, pathMode, reason, action, warning.',
+    'Return JSON only with keys complete, pathMode, localIntent, candidateAssessment, chosenAction, reason, warning.',
     'Classify the prompt into exactly one pathMode: "subject-centric", "route-following", "multi-subject", or "ambiguous".',
     'Only "subject-centric" and "route-following" are supported. For unsupported modes, set complete=true and explain why in reason.',
     'Choose exactly one next action unless complete is true.',
     'Base the next-step decision primarily on the current capture image and its camera metadata.',
     'Use draft keyframes and action history only as compact progress context so you do not repeat or undo prior work.',
     'No historical images are provided for this step. Do not infer that any previous view is the live current view.',
-    'Action must be either {"type":"capture-image"}, {"type":"create-keyframe"}, {"type":"move","primitive":"..."}, or {"type":"rotate","primitive":"..."}.',
+    'When the current frame and the action history disagree, trust the current frame.',
+    'The runtime provides a bounded candidateActions list. Evaluate those candidates instead of inventing new actions.',
+    'localIntent must be an object with keys kind and successCriteria.',
+    'candidateAssessment must be an array of zero or more objects with keys action, assessment, and optional score.',
+    'chosenAction must be either {"type":"capture-image"}, {"type":"create-keyframe"}, {"type":"move","primitive":"..."}, or {"type":"rotate","primitive":"..."}.',
     'Allowed move primitives: forward-short, forward-medium, back-short, strafe-left-short, strafe-right-short, rise-short, lower-short.',
     'Allowed rotate primitives: yaw-left-small, yaw-right-small, yaw-left-medium, yaw-right-medium, pitch-up-small, pitch-down-small.',
-    'Other allowed action types are capture-image and create-keyframe.',
-    'If action.type is capture-image or create-keyframe, do not include primitive or any extra action fields.',
-    'If action.type is move or rotate, primitive must be one of the allowed primitives for that type.',
+    'Other allowed chosenAction types are capture-image and create-keyframe.',
+    'If chosenAction.type is capture-image or create-keyframe, do not include primitive or any extra action fields.',
+    'If chosenAction.type is move or rotate, primitive must be one of the allowed primitives for that type.',
     'Do not mix action types and primitives. Never pair rotate with create-keyframe, or move with a rotate primitive.',
-    'Do not return shorthand labels, prose actions, or synonyms inside action. Use the exact enum strings above.',
-    'Canonical valid examples: {"type":"create-keyframe"}, {"type":"capture-image"}, {"type":"move","primitive":"strafe-right-short"}, {"type":"rotate","primitive":"yaw-right-small"}.',
-    'Canonical invalid examples: {"type":"move","primitive":"yaw-right-small"}, {"type":"rotate","primitive":"forward-short"}, {"type":"create-keyframe","primitive":"forward-short"}.',
+    'Do not return shorthand labels, prose actions, or synonyms inside chosenAction. Use the exact enum strings above.',
+    'Canonical valid chosenAction examples: {"type":"create-keyframe"}, {"type":"capture-image"}, {"type":"move","primitive":"strafe-right-short"}, {"type":"rotate","primitive":"yaw-right-small"}.',
+    'Canonical invalid chosenAction examples: {"type":"move","primitive":"yaw-right-small"}, {"type":"rotate","primitive":"forward-short"}, {"type":"create-keyframe","primitive":"forward-short"}.',
     'If you want a short forward move, use {"type":"move","primitive":"forward-short"}. If you want to turn right, use {"type":"rotate","primitive":"yaw-right-small"} or {"type":"rotate","primitive":"yaw-right-medium"}.',
+    'Yaw directions are camera turn directions in the current frame: if the subject sits to the right of center and should move toward center, prefer yaw-right; if the subject sits to the left of center and should move toward center, prefer yaw-left.',
+    'Use yaw only to re-aim the camera. Do not claim that an in-place yaw reveals a different side or the front of a subject unless the current image already shows that this small re-aim is sufficient; otherwise prefer a move on a later step.',
+    'Use the provided candidate predictedOutcome summaries to reason about likely consequences; do not infer action effects from primitive names alone.',
     'Use create-keyframe when the current camera pose should be preserved in the draft.',
     'Use capture-image when the current frame is useful evidence to remember for later decisions.',
     'Prefer a first create-keyframe within the first few steps and a second create-keyframe before completing.',
@@ -1096,6 +1147,7 @@ function buildStepUserContent(request: PathGenerationStepRequest): Array<Record<
         `Draft controls: ${JSON.stringify(request.draftControls)}`,
         `Draft keyframes: ${JSON.stringify(request.draftKeyframes)}`,
         `Action history: ${JSON.stringify(request.actionHistory)}`,
+        `Candidate actions: ${JSON.stringify(request.candidateActions)}`,
         'Remembered image count sent this step: 0. No historical images are included.',
         `Scene bounds: ${JSON.stringify(request.sceneBounds)}`,
       ].join('\n'),
@@ -1761,6 +1813,99 @@ function parseStepActionHistoryEntry(value: unknown, context: string): PathGener
     note: readOptionalNonEmptyString(value, 'note'),
     outcome,
     stepIndex: readIntegerInRange(value, 'stepIndex', context, 0, 128),
+  };
+}
+
+function parseStepCandidateAction(value: unknown, context: string): PathGenerationStepCandidateAction {
+  if (!isRecord(value)) {
+    throw new PathGenerationError(400, `${context} must be an object.`);
+  }
+
+  return {
+    action: parseStepAction(value['action'], `${context}.action`),
+    predictedOutcome: parseStepCandidatePredictedOutcome(value['predictedOutcome'], `${context}.predictedOutcome`),
+  };
+}
+
+function parseStepCandidatePredictedOutcome(
+  value: unknown,
+  context: string,
+): PathGenerationStepCandidatePredictedOutcome {
+  if (!isRecord(value)) {
+    throw new PathGenerationError(400, `${context} must be an object.`);
+  }
+
+  const expectedProgress = value['expectedProgress'];
+  const viewChangeType = value['viewChangeType'];
+  if (
+    expectedProgress !== 'advance'
+    && expectedProgress !== 'change-viewpoint'
+    && expectedProgress !== 'gather-evidence'
+    && expectedProgress !== 'preserve-state'
+  ) {
+    throw new PathGenerationError(400, `${context}.expectedProgress must be a supported candidate progress label.`);
+  }
+  if (
+    viewChangeType !== 'gather-evidence'
+    && viewChangeType !== 'preserve'
+    && viewChangeType !== 're-aim'
+    && viewChangeType !== 'viewpoint-change'
+  ) {
+    throw new PathGenerationError(400, `${context}.viewChangeType must be a supported candidate view-change label.`);
+  }
+
+  return {
+    expectedProgress,
+    repeatsRecentAction: value['repeatsRecentAction'] === true,
+    summary: readString(value, 'summary', context),
+    viewChangeType,
+  };
+}
+
+function parseStepLocalIntent(value: unknown, context: string): PathGenerationStepLocalIntent {
+  if (!isRecord(value)) {
+    throw new PathGenerationError(502, `${context} must be an object.`);
+  }
+
+  const rawSuccessCriteria = value['successCriteria'];
+  return {
+    kind: readString(value, 'kind', context),
+    successCriteria: Array.isArray(rawSuccessCriteria)
+      ? rawSuccessCriteria.map((entry, index) => {
+        if (typeof entry !== 'string' || entry.trim().length === 0) {
+          throw new PathGenerationError(502, `${context}.successCriteria[${index}] must be a non-empty string.`);
+        }
+        return entry.trim();
+      })
+      : [],
+  };
+}
+
+function parseStepCandidateAssessmentArray(
+  value: unknown,
+  context: string,
+): PathGenerationStepCandidateAssessment[] {
+  if (!Array.isArray(value)) {
+    throw new PathGenerationError(502, `${context} must be an array.`);
+  }
+
+  return value.map((entry, index) => parseStepCandidateAssessment(entry, `${context}[${index}]`));
+}
+
+function parseStepCandidateAssessment(value: unknown, context: string): PathGenerationStepCandidateAssessment {
+  if (!isRecord(value)) {
+    throw new PathGenerationError(502, `${context} must be an object.`);
+  }
+
+  const rawScore = value['score'];
+  if (rawScore !== undefined && (!Number.isFinite(rawScore) || typeof rawScore !== 'number')) {
+    throw new PathGenerationError(502, `${context}.score must be a finite number when provided.`);
+  }
+
+  return {
+    action: parseStepAction(value['action'] ?? value['candidate'], `${context}.action`),
+    assessment: readString(value, 'assessment', context),
+    score: typeof rawScore === 'number' ? rawScore : undefined,
   };
 }
 
