@@ -102,7 +102,7 @@ export class StepwiseAgentOrchestrator {
   private readonly viewer: ViewerAdapter;
 
   constructor(options: StepwiseAgentOrchestratorOptions) {
-    this.fetchImpl = options.fetchImpl ?? fetch;
+    this.fetchImpl = resolveFetchImpl(options.fetchImpl);
     this.onProgress = options.onProgress;
     this.timeoutMs = Number.isFinite(options.timeoutMs) ? Math.max(1_000, options.timeoutMs ?? DEFAULT_GENERATION_TIMEOUT_MS) : DEFAULT_GENERATION_TIMEOUT_MS;
     this.viewer = options.viewer;
@@ -512,6 +512,15 @@ function normalizeDraftControls(controls: AgenticDraftControls): AgenticDraftCon
       ? controls.requestedDurationSeconds
       : null,
   };
+}
+
+function resolveFetchImpl(fetchImpl?: typeof fetch): typeof fetch {
+  const resolvedFetch = fetchImpl ?? globalThis.fetch;
+  if (typeof resolvedFetch !== 'function') {
+    throw new Error('A fetch implementation is required for stepwise camera-path generation.');
+  }
+
+  return resolvedFetch.bind(globalThis);
 }
 
 function serializeBounds(bounds: THREE.Box3): SerializedBounds {

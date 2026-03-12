@@ -62,6 +62,68 @@ afterEach(() => {
 });
 
 describe('StepwiseAgentOrchestrator', () => {
+  it('binds ambient browser fetch to globalThis before calling the stepwise planner', async () => {
+    installCaptureStubs();
+    const { viewer } = createViewer();
+    const originalFetch = globalThis.fetch;
+    const fetchCalls: string[] = [];
+    let responseIndex = 0;
+    const responses = [
+      {
+        action: { type: 'create-keyframe' },
+        complete: false,
+        pathMode: 'subject-centric',
+        reason: 'Store the opening view.',
+      },
+      {
+        action: { type: 'create-keyframe' },
+        complete: false,
+        pathMode: 'subject-centric',
+        reason: 'Store the ending view.',
+      },
+      {
+        complete: true,
+        pathMode: 'subject-centric',
+        reason: 'The requested move is represented.',
+      },
+    ];
+
+    const globalFetch = vi.fn(function (this: typeof globalThis, input: RequestInfo | URL) {
+      if (this !== globalThis) {
+        throw new Error("'fetch' called on an object that does not implement interface Window.");
+      }
+
+      const url = String(input);
+      fetchCalls.push(url);
+      const body = responses[responseIndex] ?? responses.at(-1);
+      responseIndex += 1;
+      return Promise.resolve(new Response(JSON.stringify(body), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 200,
+      }));
+    }) as typeof fetch;
+
+    globalThis.fetch = globalFetch;
+
+    try {
+      const orchestrator = new StepwiseAgentOrchestrator({ viewer });
+      const draft = await orchestrator.generateDraft({
+        controls: {
+          holdPreference: 'auto',
+          requestedDurationSeconds: 8,
+        },
+        existingKeyframes: [],
+        prompt: 'Create a short continuous move around this subject.',
+      });
+
+      expect(draft.keyframes).toHaveLength(2);
+      expect(globalFetch).toHaveBeenCalledTimes(3);
+      expect(fetchCalls).toEqual(['/api/path/step', '/api/path/step', '/api/path/step']);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it('builds a draft from capture, memory, move, and keyframe actions', async () => {
     installCaptureStubs();
     const { viewer } = createViewer();
