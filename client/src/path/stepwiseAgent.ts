@@ -72,7 +72,6 @@ const MAX_MEMORY_CAPTURES = 12;
 const MAX_KEYFRAMES = 8;
 const MAX_REJECTIONS_WITHOUT_PROGRESS = 4;
 const KEYFRAME_SPACING_SECONDS = 2.5;
-const MAX_CONTEXT_MEMORY_CAPTURES = 1;
 const MIN_ROUTE_FACING_DOT = 0.35;
 
 const MOVE_DISTANCE_MULTIPLIERS: Record<StepwiseMovePrimitive, number> = {
@@ -187,7 +186,7 @@ export class StepwiseAgentOrchestrator {
           currentCapture,
           draftControls,
           draftKeyframes: keyframes,
-          memoryCaptures: selectStepContextMemoryCaptures(memoryCaptures, actionHistory),
+          memoryCaptures: [],
           prompt,
           sceneBounds: serializeBounds(bounds),
           stepIndex,
@@ -623,31 +622,6 @@ function parseStepAction(value: unknown): StepwiseAction {
 
   throw new AgenticPathGenerationError('The stepwise planner returned an unsupported action.');
 }
-
-function selectStepContextMemoryCaptures(
-  memoryCaptures: StepwiseMemoryCapture[],
-  actionHistory: StepwiseActionHistoryEntry[],
-): StepwiseMemoryCapture[] {
-  if (memoryCaptures.length <= MAX_CONTEXT_MEMORY_CAPTURES) {
-    return [...memoryCaptures];
-  }
-
-  const lastStoredCaptureStep = [...actionHistory]
-    .reverse()
-    .find((entry) => entry.action.type === 'capture-image' && entry.outcome === 'stored')
-    ?.stepIndex;
-  if (lastStoredCaptureStep !== undefined) {
-    const matchingCapture = [...memoryCaptures]
-      .reverse()
-      .find((capture) => capture.capturedAtStep === lastStoredCaptureStep);
-    if (matchingCapture) {
-      return [matchingCapture];
-    }
-  }
-
-  return [memoryCaptures.at(-1)!];
-}
-
 async function blobToJpegDataUrl(blob: Blob): Promise<{ dataUrl: string; height: number; width: number }> {
   const imageBitmap = await createImageBitmap(blob);
   try {

@@ -234,7 +234,7 @@ describe('StepwiseAgentOrchestrator', () => {
     expect(draft.keyframes).toHaveLength(2);
   });
 
-  it('sends only the most recent remembered capture as optional context', async () => {
+  it('does not send remembered images back to the planner on later steps', async () => {
     installCaptureStubs();
     const { viewer } = createViewer();
     const requestBodies: Array<Record<string, unknown>> = [];
@@ -298,10 +298,9 @@ describe('StepwiseAgentOrchestrator', () => {
     expect(draft.keyframes).toHaveLength(2);
     expect(requestBodies).toHaveLength(6);
     expect(requestBodies[0]?.memoryCaptures).toEqual([]);
-    expect(requestBodies[1]?.memoryCaptures).toHaveLength(1);
-    expect(requestBodies[2]?.memoryCaptures).toHaveLength(1);
-    expect(requestBodies[3]?.memoryCaptures).toHaveLength(1);
-    expect(requestBodies[4]?.memoryCaptures).toHaveLength(1);
-    expect((requestBodies[4]?.memoryCaptures as Array<{ capturedAtStep: number }>)[0]?.capturedAtStep).toBe(2);
+    expect(requestBodies[1]?.memoryCaptures).toEqual([]);
+    expect(requestBodies[2]?.memoryCaptures).toEqual([]);
+    expect(requestBodies[3]?.memoryCaptures).toEqual([]);
+    expect(requestBodies[4]?.memoryCaptures).toEqual([]);
   });
 });

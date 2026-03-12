@@ -867,7 +867,7 @@ function buildStepSystemPrompt(): string {
     'Choose exactly one next action unless complete is true.',
     'Base the next-step decision primarily on the current capture image and its camera metadata.',
     'Use draft keyframes and action history only as compact progress context so you do not repeat or undo prior work.',
-    'Treat memory captures as optional supporting evidence, not the primary basis for the next action.',
+    'No historical images are provided for this step. Do not infer that any previous view is the live current view.',
     'Action must be either {"type":"capture-image"}, {"type":"create-keyframe"}, {"type":"move","primitive":"..."}, or {"type":"rotate","primitive":"..."}.',
     'Allowed move primitives: forward-short, forward-medium, back-short, strafe-left-short, strafe-right-short, rise-short, lower-short.',
     'Allowed rotate primitives: yaw-left-small, yaw-right-small, yaw-left-medium, yaw-right-medium, pitch-up-small, pitch-down-small.',
@@ -1086,9 +1086,6 @@ function buildVerifyUserContent(request: PathGenerationVerifyRequest): Array<Rec
 }
 
 function buildStepUserContent(request: PathGenerationStepRequest): Array<Record<string, unknown>> {
-  const memorySummary = request.memoryCaptures.length > 0
-    ? `Sending ${request.memoryCaptures.length} remembered capture(s) as optional supporting evidence only.`
-    : 'No remembered captures are being sent for this step.';
   const content: Array<Record<string, unknown>> = [
     {
       text: [
@@ -1099,7 +1096,7 @@ function buildStepUserContent(request: PathGenerationStepRequest): Array<Record<
         `Draft controls: ${JSON.stringify(request.draftControls)}`,
         `Draft keyframes: ${JSON.stringify(request.draftKeyframes)}`,
         `Action history: ${JSON.stringify(request.actionHistory)}`,
-        memorySummary,
+        'Remembered image count sent this step: 0. No historical images are included.',
         `Scene bounds: ${JSON.stringify(request.sceneBounds)}`,
       ].join('\n'),
       type: 'text',
@@ -1121,25 +1118,6 @@ function buildStepUserContent(request: PathGenerationStepRequest): Array<Record<
       type: 'image_url',
     },
   ];
-
-  for (const capture of request.memoryCaptures) {
-    content.push({
-      text: `Memory capture ${capture.id}: ${JSON.stringify({
-        camera: capture.camera,
-        capturedAtStep: capture.capturedAtStep,
-        height: capture.height,
-        role: capture.role,
-        width: capture.width,
-      })}`,
-      type: 'text',
-    });
-    content.push({
-      image_url: {
-        url: capture.imageDataUrl,
-      },
-      type: 'image_url',
-    });
-  }
 
   return content;
 }
