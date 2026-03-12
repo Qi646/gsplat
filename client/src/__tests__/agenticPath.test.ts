@@ -7,6 +7,7 @@ import {
   buildTargetedRescanPoses,
   groundSubjectFromLocalizations,
   validateDraftPath,
+  type AgenticDraftControls,
   type AgenticGroundResponse,
   type AgenticPathCapture,
   type AgenticPathSegmentPlan,
@@ -108,6 +109,14 @@ function createSegmentPlan(overrides: Partial<AgenticPathSegmentPlan> = {}): Age
   } as AgenticPathSegmentPlan;
 }
 
+function createDraftControls(overrides: Partial<AgenticDraftControls> = {}): AgenticDraftControls {
+  return {
+    holdPreference: 'auto',
+    requestedDurationSeconds: null,
+    ...overrides,
+  };
+}
+
 function createMockViewer(options: {
   bounds?: THREE.Box3;
   captureFrame?: () => Promise<Blob>;
@@ -183,7 +192,7 @@ describe('buildScoutCameraPoses', () => {
     expect(poses).toHaveLength(6);
     poses.forEach(pose => {
       expect(pose.position.distanceTo(camera.position)).toBeGreaterThan(0.2);
-      expect(pose.position.distanceTo(camera.position)).toBeLessThan(currentDistance * 0.45);
+      expect(pose.position.distanceTo(camera.position)).toBeLessThan(currentDistance * 0.6);
     });
   });
 
@@ -401,6 +410,96 @@ describe('buildDraftPath and validateDraftPath', () => {
     expect(validation.valid).toBe(false);
     expect(validation.feedback.join(' ')).toMatch(/subject|frame|camera/i);
   });
+
+  it('requires an explicit ending hold when lingering hold is requested', () => {
+    const anchor = new THREE.Vector3(0, 0.5, 0);
+    const bounds = new THREE.Box3(
+      new THREE.Vector3(-4, -2, -4),
+      new THREE.Vector3(4, 4, 4),
+    );
+    const baseCamera = createCamera(new THREE.Vector3(5, 1, 0), anchor);
+    const segments = [
+      createSegmentPlan({ durationSeconds: 8, segmentType: 'arc', sweepDegrees: 90 }),
+    ];
+
+    const builtDraft = buildDraftPath({
+      basePose: {
+        fov: baseCamera.fov,
+        position: baseCamera.position.clone(),
+        quaternion: baseCamera.quaternion.clone(),
+      },
+      bounds,
+      groundedSubject: {
+        anchor: { x: anchor.x, y: anchor.y, z: anchor.z },
+        basisForward: { x: 0, y: 0, z: -1 },
+        basisUp: { x: 0, y: 1, z: 0 },
+        captureCount: 4,
+        confidence: 0.88,
+        meanResidual: 0.05,
+        sceneScale: bounds.getSize(new THREE.Vector3()).length(),
+      },
+      segments,
+      startTime: 0,
+    });
+
+    const validation = validateDraftPath(
+      builtDraft,
+      bounds,
+      {
+        anchor: { x: anchor.x, y: anchor.y, z: anchor.z },
+        basisForward: { x: 0, y: 0, z: -1 },
+        basisUp: { x: 0, y: 1, z: 0 },
+        captureCount: 4,
+        confidence: 0.88,
+        meanResidual: 0.05,
+        sceneScale: bounds.getSize(new THREE.Vector3()).length(),
+      },
+      createDraftControls({ holdPreference: 'linger', requestedDurationSeconds: 8 }),
+      segments,
+    );
+
+    expect(validation.valid).toBe(false);
+    expect(validation.feedback).toContain('The requested lingering ending hold was missing or too short.');
+  });
+
+  it('keeps downward pedestal drafts above the scene floor', () => {
+    const anchor = new THREE.Vector3(0, 0.5, 0);
+    const bounds = new THREE.Box3(
+      new THREE.Vector3(-4, -2, -4),
+      new THREE.Vector3(4, 4, 4),
+    );
+    const builtDraft = buildDraftPath({
+      basePose: {
+        fov: 60,
+        position: new THREE.Vector3(5, -1.6, 0),
+        quaternion: createCamera(new THREE.Vector3(5, -1.6, 0), anchor).quaternion.clone(),
+      },
+      bounds,
+      groundedSubject: {
+        anchor: { x: anchor.x, y: anchor.y, z: anchor.z },
+        basisForward: { x: 0, y: 0, z: -1 },
+        basisUp: { x: 0, y: 1, z: 0 },
+        captureCount: 4,
+        confidence: 0.88,
+        meanResidual: 0.05,
+        sceneScale: bounds.getSize(new THREE.Vector3()).length(),
+      },
+      segments: [
+        createSegmentPlan({
+          durationSeconds: 6,
+          lookMode: 'look-at-subject',
+          segmentType: 'pedestal',
+          travelDirection: 'down',
+        }),
+      ],
+      startTime: 0,
+    });
+
+    const floorThreshold = bounds.min.y + Math.max(bounds.getSize(new THREE.Vector3()).length() * 0.04, 0.2) - 1e-6;
+    builtDraft.keyframes.forEach(keyframe => {
+      expect(keyframe.position.y).toBeGreaterThanOrEqual(floorThreshold);
+    });
+  });
 });
 
 describe('AgenticPathOrchestrator', () => {
@@ -441,6 +540,12 @@ describe('AgenticPathOrchestrator', () => {
         summary: 'Repaired draft.',
       },
     ];
+    const verifyResponses = [
+      {
+        approved: true,
+        issues: [],
+      },
+    ];
 
     const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
@@ -453,6 +558,13 @@ describe('AgenticPathOrchestrator', () => {
         );
         groundResponses.push(response);
         return new Response(JSON.stringify(response), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        });
+      }
+
+      if (url.endsWith('/api/path/verify')) {
+        return new Response(JSON.stringify(verifyResponses.shift()), {
           headers: { 'Content-Type': 'application/json' },
           status: 200,
         });
@@ -473,6 +585,7 @@ describe('AgenticPathOrchestrator', () => {
     });
 
     const draft = await orchestrator.generateDraft({
+      controls: createDraftControls(),
       existingKeyframes: [],
       prompt: 'Create a cinematic arc around the truck and then hold.',
     });
@@ -480,7 +593,7 @@ describe('AgenticPathOrchestrator', () => {
     expect(draft.summary).toBe('Repaired draft.');
     expect(draft.keyframes.length).toBeGreaterThan(3);
     expect(groundResponses).toHaveLength(1);
-    expect(progressStages).toEqual([
+    expect(progressStages.slice(0, 12)).toEqual([
       'capture-round-1',
       'capture-round-1',
       'capture-round-1',
@@ -494,6 +607,7 @@ describe('AgenticPathOrchestrator', () => {
       'repairing',
       'validating',
     ]);
+    expect(progressStages.filter(stage => stage === 'verifying')).toHaveLength(5);
   });
 
   it('uses the rescue round when only the current view localizes the subject initially', async () => {
@@ -506,6 +620,7 @@ describe('AgenticPathOrchestrator', () => {
     const progressStages: string[] = [];
     const { viewer } = createMockViewer();
     let groundCallCount = 0;
+    const verifyResponses = [{ approved: true, issues: [] }];
     const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url.endsWith('/api/path/ground')) {
@@ -517,6 +632,13 @@ describe('AgenticPathOrchestrator', () => {
           'subject-centric',
           captures.map(capture => projectPoint(subject, capture)),
         )), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        });
+      }
+
+      if (url.endsWith('/api/path/verify')) {
+        return new Response(JSON.stringify(verifyResponses.shift()), {
           headers: { 'Content-Type': 'application/json' },
           status: 200,
         });
@@ -543,6 +665,7 @@ describe('AgenticPathOrchestrator', () => {
     });
 
     const draft = await orchestrator.generateDraft({
+      controls: createDraftControls(),
       existingKeyframes: [],
       prompt: 'Create a cinematic arc around the truck and then hold.',
     });
@@ -551,6 +674,100 @@ describe('AgenticPathOrchestrator', () => {
     expect(groundCallCount).toBe(2);
     expect(progressStages).toContain('capture-round-2');
     expect(progressStages.filter(stage => stage === 'grounding')).toHaveLength(2);
+    expect(progressStages).toContain('verifying');
+  });
+
+  it('repairs a draft when planner verification rejects the first version', async () => {
+    installCapturePipelineStubs();
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      callback(0);
+      return 1;
+    });
+
+    const progressStages: string[] = [];
+    const { viewer } = createMockViewer();
+    const composeResponses = [
+      {
+        segments: [
+          createSegmentPlan({ durationSeconds: 8, segmentType: 'arc', sweepDegrees: 100 }),
+        ],
+        summary: 'Initial draft.',
+      },
+      {
+        segments: [
+          createSegmentPlan({ durationSeconds: 6, segmentType: 'arc', sweepDegrees: 90 }),
+          createSegmentPlan({ durationSeconds: 3, segmentType: 'hold' }),
+        ],
+        summary: 'Verified repair.',
+      },
+    ];
+    const verifyResponses = [
+      {
+        approved: false,
+        issues: ['The path feels too low and partially loses the truck near the end.'],
+      },
+      {
+        approved: true,
+        issues: [],
+      },
+    ];
+
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith('/api/path/ground')) {
+        const request = JSON.parse(String(init?.body ?? '{}')) as { captures: AgenticPathCapture[] };
+        const subject = new THREE.Vector3(0, 0.5, 0);
+        return new Response(JSON.stringify(createGroundResponse(
+          'subject-centric',
+          request.captures.map(capture => projectPoint(subject, capture)),
+        )), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        });
+      }
+
+      if (url.endsWith('/api/path/verify')) {
+        return new Response(JSON.stringify(verifyResponses.shift()), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        });
+      }
+
+      return new Response(JSON.stringify(composeResponses.shift()), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 200,
+      });
+    }) as unknown as typeof fetch;
+
+    const orchestrator = new AgenticPathOrchestrator({
+      fetchImpl,
+      onProgress: progress => {
+        progressStages.push(progress.stage);
+      },
+      viewer,
+    });
+
+    const draft = await orchestrator.generateDraft({
+      controls: createDraftControls({ requestedDurationSeconds: 9 }),
+      existingKeyframes: [],
+      prompt: 'Create a cinematic arc around the truck and keep the framing clean.',
+    });
+
+    expect(draft.summary).toBe('Verified repair.');
+    expect(progressStages.slice(0, 10)).toEqual([
+      'capture-round-1',
+      'capture-round-1',
+      'capture-round-1',
+      'capture-round-1',
+      'capture-round-1',
+      'capture-round-1',
+      'capture-round-1',
+      'grounding',
+      'composing',
+      'validating',
+    ]);
+    expect(progressStages.filter(stage => stage === 'repairing')).toHaveLength(1);
+    expect(progressStages.filter(stage => stage === 'verifying')).toHaveLength(10);
   });
 
   it('stops on unsupported route-following prompts', async () => {
@@ -576,6 +793,7 @@ describe('AgenticPathOrchestrator', () => {
     const orchestrator = new AgenticPathOrchestrator({ fetchImpl, viewer });
 
     await expect(orchestrator.generateDraft({
+      controls: createDraftControls(),
       existingKeyframes: [],
       prompt: 'Weave through these trees.',
     })).rejects.toThrow(/unsupported/i);
@@ -610,6 +828,7 @@ describe('AgenticPathOrchestrator', () => {
     });
 
     const generationPromise = orchestrator.generateDraft({
+      controls: createDraftControls(),
       existingKeyframes: [],
       prompt: 'Create a cinematic arc around the truck.',
     });

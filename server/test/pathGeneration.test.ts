@@ -5,6 +5,8 @@ import {
   parsePathGenerationComposeRequest,
   parsePathGenerationGroundModelResponse,
   parsePathGenerationGroundRequest,
+  parsePathGenerationVerifyModelResponse,
+  parsePathGenerationVerifyRequest,
 } from '../src/pathGeneration.js';
 
 function createGroundRequest() {
@@ -79,12 +81,89 @@ function createComposeRequest() {
       targetDurationSeconds: 10,
       tone: 'cinematic',
     },
+    draftControls: {
+      holdPreference: 'brief',
+      requestedDurationSeconds: 10,
+    },
     pathTail: null,
     sceneBounds: {
       max: { x: 2, y: 2, z: 2 },
       min: { x: -2, y: -2, z: -2 },
     },
     validationFeedback: ['Subject drifted out of the safe frame box.'],
+  };
+}
+
+function createVerifyRequest() {
+  return {
+    captures: [
+      {
+        camera: {
+          aspect: 16 / 9,
+          fov: 60,
+          position: { x: 4, y: 1, z: 0 },
+          quaternion: { x: 0, y: 0, z: 0, w: 1 },
+        },
+        height: 360,
+        id: 'verify-sample-1',
+        imageDataUrl: 'data:image/jpeg;base64,AA==',
+        projectedSubject: {
+          ndcX: 0.04,
+          ndcY: -0.03,
+          visible: true,
+        },
+        timeSeconds: 8,
+        width: 640,
+      },
+    ],
+    currentCamera: {
+      aspect: 16 / 9,
+      fov: 60,
+      position: { x: 4, y: 1, z: 0 },
+      quaternion: { x: 0, y: 0, z: 0, w: 1 },
+    },
+    draftControls: {
+      holdPreference: 'linger',
+      requestedDurationSeconds: 12,
+    },
+    groundedSubject: {
+      anchor: { x: 0, y: 0.5, z: 0 },
+      basisForward: { x: 0, y: 0, z: -1 },
+      basisUp: { x: 0, y: 1, z: 0 },
+      captureCount: 4,
+      confidence: 0.84,
+      meanResidual: 0.08,
+      sceneScale: 8,
+    },
+    intent: {
+      continuousPath: true,
+      orientationPreference: 'look-at-subject',
+      pathMode: 'subject-centric',
+      requestedMoveTypes: ['arc', 'hold'],
+      subjectHint: 'truck',
+      targetDurationSeconds: 12,
+      tone: 'cinematic',
+    },
+    prompt: 'Orbit the truck and end on a lingering hold.',
+    sceneBounds: {
+      max: { x: 2, y: 2, z: 2 },
+      min: { x: -2, y: -2, z: -2 },
+    },
+    segments: [
+      {
+        direction: 'counterclockwise',
+        durationSeconds: 8,
+        lookMode: 'look-at-subject',
+        segmentType: 'arc',
+        sweepDegrees: 120,
+      },
+      {
+        durationSeconds: 4,
+        lookMode: 'look-at-subject',
+        segmentType: 'hold',
+      },
+    ],
+    summary: 'Orbit around the truck, then linger on the badge.',
   };
 }
 
@@ -101,7 +180,22 @@ describe('pathGeneration request parsing', () => {
     const parsed = parsePathGenerationComposeRequest(createComposeRequest());
 
     expect(parsed.intent.pathMode).toBe('subject-centric');
+    expect(parsed.draftControls).toEqual({
+      holdPreference: 'brief',
+      requestedDurationSeconds: 10,
+    });
     expect(parsed.validationFeedback).toEqual(['Subject drifted out of the safe frame box.']);
+  });
+
+  it('accepts valid verify requests', () => {
+    const parsed = parsePathGenerationVerifyRequest(createVerifyRequest());
+
+    expect(parsed.prompt).toContain('lingering hold');
+    expect(parsed.draftControls).toEqual({
+      holdPreference: 'linger',
+      requestedDurationSeconds: 12,
+    });
+    expect(parsed.captures).toHaveLength(1);
   });
 });
 
@@ -296,6 +390,16 @@ describe('pathGeneration model-response parsing', () => {
     expect(parsed.segments[3]?.segmentType).toBe('arc');
     expect(parsed.segments[3]?.verticalBias).toBe('high');
   });
+
+  it('accepts valid planner verification responses', () => {
+    const parsed = parsePathGenerationVerifyModelResponse({
+      approved: false,
+      issues: ['The ending hold is too short.'],
+    });
+
+    expect(parsed.approved).toBe(false);
+    expect(parsed.issues).toEqual(['The ending hold is too short.']);
+  });
 });
 
 describe('OpenAIVisionPathPlanner status', () => {
@@ -308,6 +412,7 @@ describe('OpenAIVisionPathPlanner status', () => {
       expect(planner.getStatus()).toEqual({
         available: false,
         capabilities: {
+          includesPlannerVerification: true,
           maxCaptureRounds: 2,
           maxSegments: 4,
           segmentTypes: ['hold', 'arc', 'dolly', 'pedestal'],

@@ -11,6 +11,7 @@ export type AgenticPathMode = 'subject-centric' | 'route-following' | 'multi-sub
 export type AgenticPathSegmentType = 'hold' | 'arc' | 'dolly' | 'pedestal';
 export type AgenticDollyDirection = 'in' | 'out';
 export type AgenticPedestalDirection = 'up' | 'down';
+export type AgenticHoldPreference = 'auto' | 'none' | 'brief' | 'linger';
 
 export interface AgenticPathCapture {
   camera: SerializedCaptureCamera;
@@ -59,6 +60,7 @@ export interface AgenticGroundedSubject {
 export interface AgenticPathStatus {
   available: boolean;
   capabilities: {
+    includesPlannerVerification: boolean;
     maxCaptureRounds: number;
     maxSegments: number;
     segmentTypes: AgenticPathSegmentType[];
@@ -133,9 +135,15 @@ export interface AgenticPathProgress {
     | 'capture-round-2'
     | 'composing'
     | 'validating'
+    | 'verifying'
     | 'repairing'
     | 'cancelling';
   totalCaptures?: number;
+}
+
+export interface AgenticDraftControls {
+  holdPreference: AgenticHoldPreference;
+  requestedDurationSeconds: number | null;
 }
 
 export interface AgenticPathOrchestratorOptions {
@@ -146,6 +154,7 @@ export interface AgenticPathOrchestratorOptions {
 }
 
 export interface GenerateAgenticDraftOptions {
+  controls: AgenticDraftControls;
   existingKeyframes: Keyframe[];
   prompt: string;
 }
@@ -174,11 +183,44 @@ interface AgenticGroundRequest {
 
 interface AgenticComposeRequest {
   currentCamera: SerializedCaptureCamera;
+  draftControls: AgenticDraftControls;
   groundedSubject: AgenticGroundedSubject;
   intent: AgenticPromptIntent;
   pathTail: SerializedPathTail | null;
   sceneBounds: SerializedBounds;
   validationFeedback?: string[];
+}
+
+interface AgenticVerifyCapture {
+  camera: SerializedCaptureCamera;
+  height: number;
+  id: string;
+  imageDataUrl: string;
+  projectedSubject: {
+    ndcX: number;
+    ndcY: number;
+    visible: boolean;
+  };
+  timeSeconds: number;
+  width: number;
+}
+
+interface AgenticVerifyRequest {
+  captures: AgenticVerifyCapture[];
+  currentCamera: SerializedCaptureCamera;
+  draftControls: AgenticDraftControls;
+  groundedSubject: AgenticGroundedSubject;
+  intent: AgenticPromptIntent;
+  prompt: string;
+  sceneBounds: SerializedBounds;
+  segments: AgenticPathSegmentPlan[];
+  summary: string;
+}
+
+interface AgenticVerifyResponse {
+  approved: boolean;
+  issues: string[];
+  warning?: string;
 }
 
 interface BuiltDraftPath {
@@ -191,6 +233,11 @@ interface OrbitFrame {
   height: number;
   radialDirection: THREE.Vector3;
   radius: number;
+}
+
+interface HeightSafetyWindow {
+  maxHeight: number;
+  minHeight: number;
 }
 
 interface RayObservation {
@@ -246,18 +293,18 @@ const MIN_VECTOR_LENGTH_SQUARED = 1e-8;
 const ROUND_ONE_TOTAL_CAPTURE_COUNT = 7;
 const ROUND_TWO_TOTAL_CAPTURE_COUNT = 4;
 const ROUND_ONE_SCOUT_POSE_SPECS: ScoutPoseSpec[] = [
-  { pitchRadians: 0, yawRadians: THREE.MathUtils.degToRad(-16) },
-  { pitchRadians: 0, yawRadians: THREE.MathUtils.degToRad(-8) },
-  { pitchRadians: 0, yawRadians: THREE.MathUtils.degToRad(8) },
-  { pitchRadians: 0, yawRadians: THREE.MathUtils.degToRad(16) },
-  { pitchRadians: THREE.MathUtils.degToRad(-6), yawRadians: 0 },
-  { pitchRadians: THREE.MathUtils.degToRad(6), yawRadians: 0 },
+  { pitchRadians: 0, yawRadians: THREE.MathUtils.degToRad(-20) },
+  { pitchRadians: 0, yawRadians: THREE.MathUtils.degToRad(-10) },
+  { pitchRadians: 0, yawRadians: THREE.MathUtils.degToRad(10) },
+  { pitchRadians: 0, yawRadians: THREE.MathUtils.degToRad(20) },
+  { pitchRadians: THREE.MathUtils.degToRad(-8), yawRadians: 0 },
+  { pitchRadians: THREE.MathUtils.degToRad(8), yawRadians: 0 },
 ];
 const ROUND_TWO_RESCAN_POSE_SPECS: ScoutPoseSpec[] = [
-  { pitchRadians: 0, yawRadians: THREE.MathUtils.degToRad(-5) },
-  { pitchRadians: 0, yawRadians: THREE.MathUtils.degToRad(5) },
-  { pitchRadians: THREE.MathUtils.degToRad(-5), yawRadians: 0 },
-  { pitchRadians: THREE.MathUtils.degToRad(5), yawRadians: 0 },
+  { pitchRadians: 0, yawRadians: THREE.MathUtils.degToRad(-6) },
+  { pitchRadians: 0, yawRadians: THREE.MathUtils.degToRad(6) },
+  { pitchRadians: THREE.MathUtils.degToRad(-6), yawRadians: 0 },
+  { pitchRadians: THREE.MathUtils.degToRad(6), yawRadians: 0 },
 ];
 const SEGMENT_KEYFRAME_COUNT: Record<AgenticPathSegmentType, number> = {
   arc: 4,
@@ -266,6 +313,7 @@ const SEGMENT_KEYFRAME_COUNT: Record<AgenticPathSegmentType, number> = {
   pedestal: 3,
 };
 const VALIDATION_SAMPLE_STEP_SECONDS = 0.25;
+const VERIFICATION_SAMPLE_COUNT = 4;
 
 export class AgenticPathGenerationError extends Error {
   constructor(message: string) {
@@ -328,6 +376,7 @@ export class AgenticPathOrchestrator {
     }
 
     this.generating = true;
+    const draftControls = normalizeDraftControls(options.controls);
     const livePose = clonePoseFromCamera(camera);
     const timeout = createGenerationTimeout(this.timeoutMs);
     this.generationTimeout = timeout;
@@ -408,10 +457,13 @@ export class AgenticPathOrchestrator {
         groundedSubject = groundSubjectFromLocalizations(localizations, captures, bounds, basePose);
       }
 
+      const resolvedIntent = applyDraftControlsToIntent(groundResponse.intent, draftControls);
+
       let composeResponse = await this.requestCompose({
         currentCamera: serializedCurrentCamera,
+        draftControls,
         groundedSubject,
-        intent: groundResponse.intent,
+        intent: resolvedIntent,
         pathTail: serializedPathTail,
         sceneBounds: serializedBounds,
       }, timeout);
@@ -427,16 +479,35 @@ export class AgenticPathOrchestrator {
         message: 'Validating the generated camera-path draft…',
         stage: 'validating',
       });
-      let validation = validateDraftPath(builtDraft, bounds, groundedSubject);
+      let validation = validateDraftPath(builtDraft, bounds, groundedSubject, draftControls, composeResponse.segments);
+      let verification = validation.valid
+        ? await this.requestVerify({
+          captures: await this.captureVerificationSamples(builtDraft, groundedSubject, livePose, timeout),
+          currentCamera: serializedCurrentCamera,
+          draftControls,
+          groundedSubject,
+          intent: resolvedIntent,
+          prompt,
+          sceneBounds: serializedBounds,
+          segments: composeResponse.segments,
+          summary: composeResponse.summary,
+        }, timeout)
+        : null;
+      const repairFeedback = validation.valid
+        ? verification?.approved === false
+          ? verification.issues
+          : []
+        : validation.feedback;
 
-      if (!validation.valid) {
+      if (repairFeedback.length > 0) {
         composeResponse = await this.requestCompose({
           currentCamera: serializedCurrentCamera,
+          draftControls,
           groundedSubject,
-          intent: groundResponse.intent,
+          intent: resolvedIntent,
           pathTail: serializedPathTail,
           sceneBounds: serializedBounds,
-          validationFeedback: validation.feedback,
+          validationFeedback: repairFeedback,
         }, timeout);
         builtDraft = buildDraftPath({
           basePose,
@@ -450,9 +521,23 @@ export class AgenticPathOrchestrator {
           message: 'Re-validating the repaired camera-path draft…',
           stage: 'validating',
         });
-        validation = validateDraftPath(builtDraft, bounds, groundedSubject);
+        validation = validateDraftPath(builtDraft, bounds, groundedSubject, draftControls, composeResponse.segments);
         if (!validation.valid) {
           throw new AgenticPathGenerationError(validation.feedback[0] ?? 'The draft path could not be validated.');
+        }
+        verification = await this.requestVerify({
+          captures: await this.captureVerificationSamples(builtDraft, groundedSubject, livePose, timeout),
+          currentCamera: serializedCurrentCamera,
+          draftControls,
+          groundedSubject,
+          intent: resolvedIntent,
+          prompt,
+          sceneBounds: serializedBounds,
+          segments: composeResponse.segments,
+          summary: composeResponse.summary,
+        }, timeout);
+        if (!verification.approved) {
+          throw new AgenticPathGenerationError(verification.issues[0] ?? 'The draft path did not pass planner verification.');
         }
       }
 
@@ -462,7 +547,7 @@ export class AgenticPathOrchestrator {
         keyframes: builtDraft.keyframes,
         segments: composeResponse.segments,
         summary: composeResponse.summary,
-        warning: composeResponse.warning ?? groundResponse.warning,
+        warning: composeResponse.warning ?? verification?.warning ?? groundResponse.warning,
       };
     } finally {
       this.generating = false;
@@ -655,6 +740,105 @@ export class AgenticPathOrchestrator {
     );
   }
 
+  private async requestVerify(
+    request: AgenticVerifyRequest,
+    timeout: AgenticGenerationTimeout,
+  ): Promise<AgenticVerifyResponse> {
+    this.reportProgress({
+      buttonLabel: 'Verifying…',
+      message: 'Reviewing sampled draft frames with the planner…',
+      stage: 'verifying',
+    });
+    const response = await timeout.runStep(() => this.fetchImpl('/api/path/verify', {
+      body: JSON.stringify(request),
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      method: 'POST',
+      signal: timeout.signal,
+    }), 'waiting for the verification response');
+
+    if (!response.ok) {
+      throw new AgenticPathGenerationError(
+        await timeout.runStep(() => readAgenticPathError(response), 'reading the verification error response'),
+      );
+    }
+
+    return parseVerifyResponse(
+      await timeout.runStep(() => response.json() as Promise<unknown>, 'reading the verification response'),
+    );
+  }
+
+  private async captureVerificationSamples(
+    builtDraft: BuiltDraftPath,
+    groundedSubject: AgenticGroundedSubject,
+    livePose: InterpolatedPose,
+    timeout: AgenticGenerationTimeout,
+  ): Promise<AgenticVerifyCapture[]> {
+    if (!this.viewer.getCamera()) {
+      throw new AgenticPathGenerationError('Viewer camera became unavailable during draft verification.');
+    }
+
+    const sampleTimes = chooseVerificationSampleTimes(builtDraft);
+    const anchor = vectorFromSerializable(groundedSubject.anchor);
+    const pathInterpolator = new PathInterpolator();
+    pathInterpolator.setKeyframes(builtDraft.keyframes);
+    const captures: AgenticVerifyCapture[] = [];
+
+    try {
+      for (const [index, sampleTime] of sampleTimes.entries()) {
+        timeout.throwIfAborted('capturing draft verification views');
+        this.reportProgress({
+          buttonLabel: 'Verifying…',
+          message: `Capturing draft review frame ${index + 1}/${sampleTimes.length} for planner verification.`,
+          stage: 'verifying',
+        });
+        const pose = pathInterpolator.evaluate(sampleTime);
+        if (!pose) {
+          throw new AgenticPathGenerationError('The draft path could not be sampled for planner verification.');
+        }
+
+        this.viewer.applyCameraPose(pose);
+        await this.renderFrame(timeout, 'capturing draft verification views');
+        const activeCamera = this.viewer.getCamera();
+        if (!activeCamera) {
+          throw new AgenticPathGenerationError('Viewer camera became unavailable during draft verification.');
+        }
+
+        captures.push({
+          camera: serializeCamera(activeCamera),
+          height: 0,
+          id: `verify-sample-${index + 1}`,
+          imageDataUrl: '',
+          projectedSubject: projectSubject(anchor, pose),
+          timeSeconds: sampleTime,
+          width: 0,
+        });
+        const image = await this.captureCurrentView(
+          `verify-sample-${index + 1}`,
+          'scout',
+          activeCamera,
+          timeout,
+          'capturing draft verification views',
+        );
+        captures[index] = {
+          camera: image.camera,
+          height: image.height,
+          id: image.id,
+          imageDataUrl: image.imageDataUrl,
+          projectedSubject: projectSubject(anchor, pose),
+          timeSeconds: sampleTime,
+          width: image.width,
+        };
+      }
+    } finally {
+      this.viewer.applyCameraPose(livePose);
+      this.viewer.renderNow();
+    }
+
+    return captures;
+  }
+
   private reportCaptureProgress(
     captureRound: 1 | 2,
     captureIndex: number,
@@ -759,7 +943,7 @@ export function buildDraftPath(options: BuildDraftPathOptions): BuiltDraftPath {
   const sceneDiagonal = Math.max(sceneSize.length(), 1);
   const keyframes: Keyframe[] = [];
   const windows: SegmentWindow[] = [];
-  let currentPose = ensureSafeStartingPose(options.basePose, anchor, sceneDiagonal);
+  let currentPose = ensureSafeStartingPose(options.basePose, anchor, axis, options.bounds, sceneDiagonal);
   let currentTime = options.startTime;
 
   for (const [segmentIndex, segment] of options.segments.entries()) {
@@ -802,6 +986,8 @@ export function validateDraftPath(
   builtDraft: BuiltDraftPath,
   bounds: THREE.Box3,
   groundedSubject: AgenticGroundedSubject,
+  draftControls?: AgenticDraftControls,
+  segments: AgenticPathSegmentPlan[] = [],
 ): AgenticDraftValidationResult {
   if (builtDraft.keyframes.length < 2) {
     return {
@@ -817,12 +1003,16 @@ export function validateDraftPath(
   const expandedBounds = bounds.clone().expandByScalar(sceneDiagonal * 0.15);
   const minDistanceToSubject = Math.max(0.5, sceneDiagonal * 0.15);
   const anchor = vectorFromSerializable(groundedSubject.anchor);
+  const axis = normalizedVectorFromSerializable(groundedSubject.basisUp, DEFAULT_LOOK_UP);
+  const heightSafetyWindow = resolveHeightSafetyWindow(bounds, anchor, axis, sceneDiagonal);
   const pathInterpolator = new PathInterpolator();
   pathInterpolator.setKeyframes(builtDraft.keyframes);
 
   if (totalDuration - firstTime < 6 || totalDuration - firstTime > 18) {
     feedback.push('The draft duration must stay between 6 and 18 seconds.');
   }
+
+  pushSegmentControlFeedback(feedback, totalDuration - firstTime, draftControls, segments);
 
   for (let sampleTime = firstTime; sampleTime <= totalDuration + 1e-6; sampleTime += VALIDATION_SAMPLE_STEP_SECONDS) {
     const pose = pathInterpolator.evaluate(sampleTime);
@@ -841,6 +1031,11 @@ export function validateDraftPath(
 
     if (pose.position.distanceTo(anchor) < minDistanceToSubject) {
       pushValidationFeedback(feedback, 'The draft moved the camera too close to the subject.');
+    }
+
+    const sampleHeight = pose.position.dot(axis) - anchor.dot(axis);
+    if (sampleHeight < heightSafetyWindow.minHeight) {
+      pushValidationFeedback(feedback, 'The draft dipped below the scene floor.');
     }
 
     const projectedAnchor = projectSubject(anchor, pose);
@@ -923,6 +1118,7 @@ function buildSegmentSamples(
   const radius = THREE.MathUtils.clamp(orbitFrame.radius || sceneDiagonal * 0.45, minRadius, maxRadius);
   const sceneHeight = Math.max(computeBoundsExtentAlongAxis(bounds, orbitFrame.axis), sceneDiagonal * 0.25, 1);
   const startHeight = orbitFrame.height;
+  const heightSafetyWindow = resolveHeightSafetyWindow(bounds, anchor, orbitFrame.axis, sceneDiagonal);
   const endFov = THREE.MathUtils.clamp(currentPose.fov + (segment.fovDelta ?? 0), 25, 85);
 
   if (segment.segmentType === 'hold') {
@@ -939,7 +1135,10 @@ function buildSegmentSamples(
   }
 
   if (segment.segmentType === 'arc') {
-    const targetHeight = resolveHeightOffset(segment.verticalBias, startHeight, sceneHeight);
+    const targetHeight = clampHeightToSafetyWindow(
+      resolveHeightOffset(segment.verticalBias, startHeight, sceneHeight),
+      heightSafetyWindow,
+    );
     const sweepRadians = THREE.MathUtils.degToRad(
       THREE.MathUtils.clamp(segment.sweepDegrees ?? 110, 35, 210),
     );
@@ -950,7 +1149,10 @@ function buildSegmentSamples(
       Array.from({ length: sampleCount }, (_, index) => {
         const ratio = sampleCount > 1 ? index / (sampleCount - 1) : 1;
         const angle = directionSign * sweepRadians * ratio;
-        const height = THREE.MathUtils.lerp(startHeight, targetHeight, ratio);
+        const height = clampHeightToSafetyWindow(
+          THREE.MathUtils.lerp(startHeight, targetHeight, ratio),
+          heightSafetyWindow,
+        );
         return {
           fov: THREE.MathUtils.lerp(currentPose.fov, endFov, ratio),
           position: createOrbitPosition(anchor, orbitFrame, radius, height, angle),
@@ -964,7 +1166,10 @@ function buildSegmentSamples(
   }
 
   if (segment.segmentType === 'dolly') {
-    const targetHeight = resolveHeightOffset(segment.verticalBias, startHeight, sceneHeight);
+    const targetHeight = clampHeightToSafetyWindow(
+      resolveHeightOffset(segment.verticalBias, startHeight, sceneHeight),
+      heightSafetyWindow,
+    );
     const direction = segment.travelDirection ?? 'in';
     const distanceAmount = sceneDiagonal * THREE.MathUtils.clamp(segment.distanceScale ?? 0.14, 0.05, 0.35);
     const endRadius = THREE.MathUtils.clamp(
@@ -982,7 +1187,10 @@ function buildSegmentSamples(
             anchor,
             orbitFrame,
             THREE.MathUtils.lerp(radius, endRadius, ratio),
-            THREE.MathUtils.lerp(startHeight, targetHeight, ratio),
+            clampHeightToSafetyWindow(
+              THREE.MathUtils.lerp(startHeight, targetHeight, ratio),
+              heightSafetyWindow,
+            ),
             0,
           ),
         };
@@ -996,14 +1204,23 @@ function buildSegmentSamples(
 
   const direction = segment.travelDirection ?? 'up';
   const heightAmount = sceneDiagonal * THREE.MathUtils.clamp(segment.heightScale ?? 0.14, 0.05, 0.35);
-  const endHeight = direction === 'up' ? startHeight + heightAmount : startHeight - heightAmount;
+  const endHeight = clampHeightToSafetyWindow(
+    direction === 'up' ? startHeight + heightAmount : startHeight - heightAmount,
+    heightSafetyWindow,
+  );
 
   return finalizeSegmentOrientations(
     Array.from({ length: sampleCount }, (_, index) => {
       const ratio = sampleCount > 1 ? index / (sampleCount - 1) : 1;
       return {
         fov: THREE.MathUtils.lerp(currentPose.fov, endFov, ratio),
-        position: createOrbitPosition(anchor, orbitFrame, radius, THREE.MathUtils.lerp(startHeight, endHeight, ratio), 0),
+        position: createOrbitPosition(
+          anchor,
+          orbitFrame,
+          radius,
+          clampHeightToSafetyWindow(THREE.MathUtils.lerp(startHeight, endHeight, ratio), heightSafetyWindow),
+          0,
+        ),
       };
     }),
     segment.lookMode,
@@ -1126,6 +1343,20 @@ function computeBoundsExtentAlongAxis(bounds: THREE.Box3, axis: THREE.Vector3): 
   );
 }
 
+function computeBoundsProjectionLimits(
+  bounds: THREE.Box3,
+  axis: THREE.Vector3,
+): { max: number; min: number } {
+  const center = bounds.getCenter(new THREE.Vector3());
+  const halfSize = bounds.getSize(new THREE.Vector3()).multiplyScalar(0.5);
+  const extent = Math.abs(axis.x) * halfSize.x + Math.abs(axis.y) * halfSize.y + Math.abs(axis.z) * halfSize.z;
+  const projectedCenter = center.dot(axis);
+  return {
+    max: projectedCenter + extent,
+    min: projectedCenter - extent,
+  };
+}
+
 function createCameraFromPose(pose: InterpolatedPose): THREE.PerspectiveCamera {
   const camera = new THREE.PerspectiveCamera(pose.fov, 16 / 9, 0.1, 1000);
   camera.position.copy(pose.position);
@@ -1209,28 +1440,132 @@ function distancePointToRay(
   return toPoint.sub(projection).length();
 }
 
+function resolveHeightSafetyWindow(
+  bounds: THREE.Box3,
+  anchor: THREE.Vector3,
+  axis: THREE.Vector3,
+  sceneDiagonal: number,
+): HeightSafetyWindow {
+  const limits = computeBoundsProjectionLimits(bounds, axis);
+  const anchorHeight = anchor.dot(axis);
+  const clearance = Math.max(sceneDiagonal * 0.04, 0.2);
+  const minHeight = limits.min - anchorHeight + clearance;
+  const maxHeight = limits.max - anchorHeight - clearance;
+
+  if (maxHeight >= minHeight) {
+    return { maxHeight, minHeight };
+  }
+
+  const fallbackHeight = (limits.min + limits.max) * 0.5 - anchorHeight;
+  return {
+    maxHeight: fallbackHeight + 0.05,
+    minHeight: fallbackHeight - 0.05,
+  };
+}
+
+function clampHeightToSafetyWindow(height: number, safetyWindow: HeightSafetyWindow): number {
+  return THREE.MathUtils.clamp(height, safetyWindow.minHeight, safetyWindow.maxHeight);
+}
+
+function clampPoseHeight(
+  pose: InterpolatedPose,
+  anchor: THREE.Vector3,
+  axis: THREE.Vector3,
+  safetyWindow: HeightSafetyWindow,
+): InterpolatedPose {
+  const relativeHeight = pose.position.dot(axis) - anchor.dot(axis);
+  const clampedHeight = clampHeightToSafetyWindow(relativeHeight, safetyWindow);
+  if (Math.abs(clampedHeight - relativeHeight) <= 1e-6) {
+    return pose;
+  }
+
+  return {
+    fov: pose.fov,
+    position: pose.position.clone().addScaledVector(axis, clampedHeight - relativeHeight),
+    quaternion: pose.quaternion.clone(),
+  };
+}
+
 function ensureSafeStartingPose(
   pose: InterpolatedPose,
   anchor: THREE.Vector3,
+  axis: THREE.Vector3,
+  bounds: THREE.Box3,
   sceneDiagonal: number,
 ): InterpolatedPose {
   const minDistanceToSubject = Math.max(0.7, sceneDiagonal * 0.18);
+  const heightSafetyWindow = resolveHeightSafetyWindow(bounds, anchor, axis, sceneDiagonal);
   const relativeOffset = pose.position.clone().sub(anchor);
   const currentDistance = relativeOffset.length();
 
   if (currentDistance >= minDistanceToSubject) {
-    return clonePose(pose);
+    return clampPoseHeight(clonePose(pose), anchor, axis, heightSafetyWindow);
   }
 
   const safeDirection = currentDistance <= MIN_VECTOR_LENGTH_SQUARED
     ? getForwardVector(pose.quaternion).multiplyScalar(-1)
     : relativeOffset.normalize();
 
-  return {
+  return clampPoseHeight({
     fov: pose.fov,
     position: anchor.clone().addScaledVector(safeDirection, minDistanceToSubject),
     quaternion: pose.quaternion.clone(),
-  };
+  }, anchor, axis, heightSafetyWindow);
+}
+
+function pushSegmentControlFeedback(
+  feedback: string[],
+  actualDurationSeconds: number,
+  draftControls: AgenticDraftControls | undefined,
+  segments: AgenticPathSegmentPlan[],
+): void {
+  if (!draftControls) {
+    return;
+  }
+
+  if (
+    draftControls.requestedDurationSeconds !== null
+    && Math.abs(actualDurationSeconds - draftControls.requestedDurationSeconds) > 2
+  ) {
+    pushValidationFeedback(feedback, 'The draft missed the requested timing target.');
+  }
+
+  const endingHold = segments.at(-1)?.segmentType === 'hold' ? segments.at(-1) : null;
+  if (draftControls.holdPreference === 'brief') {
+    if (!endingHold || endingHold.durationSeconds < 1.25) {
+      pushValidationFeedback(feedback, 'The requested ending hold was missing or too short.');
+    }
+  } else if (draftControls.holdPreference === 'linger') {
+    if (!endingHold || endingHold.durationSeconds < 2.75) {
+      pushValidationFeedback(feedback, 'The requested lingering ending hold was missing or too short.');
+    }
+  } else if (draftControls.holdPreference === 'none') {
+    if (segments.some(segment => segment.segmentType === 'hold')) {
+      pushValidationFeedback(feedback, 'The draft added a hold even though hold was turned off.');
+    }
+  }
+}
+
+function chooseVerificationSampleTimes(builtDraft: BuiltDraftPath): number[] {
+  const firstTime = builtDraft.keyframes[0]?.time ?? 0;
+  const lastTime = builtDraft.keyframes.at(-1)?.time ?? firstTime;
+  const holdWindow = [...builtDraft.windows].reverse().find(window => window.segmentType === 'hold') ?? null;
+  const suggestedTimes = holdWindow
+    ? [firstTime, holdWindow.startTime, (holdWindow.startTime + holdWindow.endTime) * 0.5, holdWindow.endTime]
+    : [
+      firstTime,
+      THREE.MathUtils.lerp(firstTime, lastTime, 0.35),
+      THREE.MathUtils.lerp(firstTime, lastTime, 0.7),
+      lastTime,
+    ];
+
+  return Array.from(new Set(
+    suggestedTimes
+      .map(time => Number(time.toFixed(3)))
+      .filter(time => time >= firstTime - 1e-6 && time <= lastTime + 1e-6),
+  ))
+    .slice(0, VERIFICATION_SAMPLE_COUNT)
+    .sort((left, right) => left - right);
 }
 
 function findSegmentWindow(windows: SegmentWindow[], time: number): SegmentWindow | null {
@@ -1352,6 +1687,46 @@ function normalizedVectorFromSerializable(vector: SerializableVector3, fallback:
   return resolved.lengthSq() <= MIN_VECTOR_LENGTH_SQUARED ? fallback.clone() : resolved.normalize();
 }
 
+function normalizeDraftControls(controls: AgenticDraftControls): AgenticDraftControls {
+  const holdPreference = controls.holdPreference === 'none'
+    || controls.holdPreference === 'brief'
+    || controls.holdPreference === 'linger'
+    ? controls.holdPreference
+    : 'auto';
+  const requestedDurationSeconds = controls.requestedDurationSeconds === null
+    || !Number.isFinite(controls.requestedDurationSeconds)
+    ? null
+    : THREE.MathUtils.clamp(Math.round(controls.requestedDurationSeconds), 6, 18);
+
+  return {
+    holdPreference,
+    requestedDurationSeconds,
+  };
+}
+
+function applyDraftControlsToIntent(
+  intent: AgenticPromptIntent,
+  controls: AgenticDraftControls,
+): AgenticPromptIntent {
+  const requestedMoveTypes = new Set(intent.requestedMoveTypes);
+  if (controls.holdPreference === 'none') {
+    requestedMoveTypes.delete('hold');
+  } else if (controls.holdPreference === 'brief' || controls.holdPreference === 'linger') {
+    requestedMoveTypes.add('hold');
+  }
+
+  const nextRequestedMoveTypes = Array.from(requestedMoveTypes);
+  if (nextRequestedMoveTypes.length === 0) {
+    nextRequestedMoveTypes.push('arc');
+  }
+
+  return {
+    ...intent,
+    requestedMoveTypes: nextRequestedMoveTypes,
+    targetDurationSeconds: controls.requestedDurationSeconds ?? intent.targetDurationSeconds,
+  };
+}
+
 function parseComposeResponse(input: unknown): AgenticComposeResponse {
   if (!isRecord(input)) {
     throw new AgenticPathGenerationError('Planner composition response was not a JSON object.');
@@ -1432,6 +1807,30 @@ function parseGroundResponse(input: unknown): AgenticGroundResponse {
     subjectLocalizations: rawLocalizations.map((localization, index) =>
       parseLocalization(localization, `subjectLocalizations[${index}]`)),
     unsupportedReason: readOptionalString(input, 'unsupportedReason'),
+    warning: readOptionalString(input, 'warning'),
+  };
+}
+
+function parseVerifyResponse(input: unknown): AgenticVerifyResponse {
+  if (!isRecord(input)) {
+    throw new AgenticPathGenerationError('Planner verification response was not a JSON object.');
+  }
+
+  const rawIssues = input['issues'];
+  const issues = Array.isArray(rawIssues)
+    ? rawIssues
+      .filter((issue): issue is string => typeof issue === 'string' && issue.trim().length > 0)
+      .map(issue => issue.trim())
+    : [];
+  const approved = input['approved'] === true;
+
+  if (!approved && issues.length === 0) {
+    throw new AgenticPathGenerationError('Planner verification rejected the draft without any actionable issues.');
+  }
+
+  return {
+    approved,
+    issues,
     warning: readOptionalString(input, 'warning'),
   };
 }

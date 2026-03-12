@@ -108,6 +108,15 @@ export function createApp(options: Partial<AppOptions> = {}): express.Express {
     }
   });
 
+  app.post('/api/path/verify', async (request, response) => {
+    try {
+      const verifyResponse = await pathPlanner.verifyPathPlan(request.body);
+      response.status(200).json(verifyResponse);
+    } catch (error) {
+      sendPathGenerationError(response, error, 'Could not verify camera path.');
+    }
+  });
+
   app.post('/api/export/jobs', async (request, response) => {
     try {
       const settings = request.body as Partial<ExportJobSettings> | undefined;

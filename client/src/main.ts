@@ -21,6 +21,7 @@ import { resolveSceneLoadSource, type SceneLoadInput, type SceneLoadSource } fro
 import { SCENE_PRESETS } from './lib/scenePresets';
 import {
   AgenticPathOrchestrator,
+  type AgenticDraftControls,
   type AgenticPathDraft,
   type AgenticPathProgress,
   type AgenticPathStatus,
@@ -98,6 +99,7 @@ function parseAgenticPathStatus(input: unknown): AgenticPathStatus {
     return {
       available: false,
       capabilities: {
+        includesPlannerVerification: true,
         maxCaptureRounds: 2,
         maxSegments: 4,
         segmentTypes: ['hold', 'arc', 'dolly', 'pedestal'],
@@ -111,9 +113,13 @@ function parseAgenticPathStatus(input: unknown): AgenticPathStatus {
   }
 
   const record = input as Record<string, unknown>;
+  const capabilities = typeof record['capabilities'] === 'object' && record['capabilities'] !== null
+    ? record['capabilities'] as Record<string, unknown>
+    : null;
   return {
     available: record['available'] === true,
     capabilities: {
+      includesPlannerVerification: capabilities?.['includesPlannerVerification'] !== false,
       maxCaptureRounds: 2,
       maxSegments: 4,
       segmentTypes: ['hold', 'arc', 'dolly', 'pedestal'],
@@ -159,6 +165,8 @@ async function main(): Promise<void> {
   const cancelGeneratePathBlockerButton = $('#btn-cancel-generate-path-blocker') as HTMLButtonElement;
   const agenticPathBlockerMessage = $('#agentic-path-blocker-message');
   const pathPromptInput = $('#path-prompt-input') as HTMLTextAreaElement;
+  const pathDurationSelect = $('#path-duration-select') as HTMLSelectElement;
+  const pathHoldSelect = $('#path-hold-select') as HTMLSelectElement;
   const generatePathButton = $('#btn-generate-path') as HTMLButtonElement;
   const draftCard = $('#agentic-draft-card');
   const draftSummary = $('#agentic-draft-summary');
@@ -282,6 +290,7 @@ async function main(): Promise<void> {
   let agenticPathStatus: AgenticPathStatus = {
     available: false,
     capabilities: {
+      includesPlannerVerification: true,
       maxCaptureRounds: 2,
       maxSegments: 4,
       segmentTypes: ['hold', 'arc', 'dolly', 'pedestal'],
@@ -564,6 +573,17 @@ async function main(): Promise<void> {
     keyframeList.classList.toggle('disabled', active);
   };
 
+  const getAgenticDraftControls = (): AgenticDraftControls => ({
+    holdPreference: pathHoldSelect.value === 'none'
+      || pathHoldSelect.value === 'brief'
+      || pathHoldSelect.value === 'linger'
+      ? pathHoldSelect.value
+      : 'auto',
+    requestedDurationSeconds: pathDurationSelect.value === 'auto'
+      ? null
+      : Number(pathDurationSelect.value),
+  });
+
   const updateAgenticPathNote = () => {
     if (agenticPathOrchestrator.isGenerating()) {
       agenticPathNote.textContent =
@@ -591,7 +611,7 @@ async function main(): Promise<void> {
 
     const modelLabel = agenticPathStatus.model ? ` Using ${agenticPathStatus.model}.` : '';
     agenticPathNote.textContent =
-      `Prompt one continuous subject-centric camera move. The planner generates a draft first, using the current view plus nearby scout captures.${modelLabel}`;
+      `Prompt one continuous subject-centric camera move. The planner uses nearby scout captures, your timing/hold options, and a sampled draft verification pass before accepting the draft.${modelLabel}`;
   };
 
   const updateAgenticPathBlocker = () => {
@@ -674,6 +694,8 @@ async function main(): Promise<void> {
     exportFpsInput.disabled = exportActive || generationActive || draftPending;
     exportFileBaseInput.disabled = exportActive || generationActive || draftPending;
     pathPromptInput.disabled = !sceneLoaded || exportActive || generationActive || draftPreviewActive || !agenticPathStatus.available;
+    pathDurationSelect.disabled = !sceneLoaded || exportActive || generationActive || draftPreviewActive || !agenticPathStatus.available;
+    pathHoldSelect.disabled = !sceneLoaded || exportActive || generationActive || draftPreviewActive || !agenticPathStatus.available;
     generatePathButton.disabled =
       !sceneLoaded
       || exportActive
@@ -1048,9 +1070,18 @@ async function main(): Promise<void> {
     updatePathControlsState();
   });
 
+  [pathDurationSelect, pathHoldSelect].forEach(select => {
+    select.addEventListener('change', () => {
+      agenticPathFailure = null;
+      updatePathControlsState();
+    });
+  });
+
   agenticPromptButtons.forEach(button => {
     button.addEventListener('click', () => {
       pathPromptInput.value = button.dataset['agenticPrompt'] ?? '';
+      pathDurationSelect.value = button.dataset['agenticDuration'] ?? pathDurationSelect.value;
+      pathHoldSelect.value = button.dataset['agenticHold'] ?? pathHoldSelect.value;
       agenticPathFailure = null;
       pathPromptInput.focus();
       updatePathControlsState();
@@ -1146,6 +1177,7 @@ async function main(): Promise<void> {
 
     try {
       const draft = await agenticPathOrchestrator.generateDraft({
+        controls: getAgenticDraftControls(),
         existingKeyframes: keyframeManager.getKeyframes(),
         prompt,
       });

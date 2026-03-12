@@ -871,16 +871,40 @@
           placeholder="Create one continuous cinematic move around this truck, then hold on the front badge."
           style="width: 100%; min-height: 84px; resize: vertical; border-radius: 14px; border: 1px solid rgba(255,255,255,0.12); background: rgba(10,12,18,0.9); color: #f5f7fb; padding: 12px; box-sizing: border-box; font: inherit; margin-bottom: 10px;"
         ></textarea>
+        <div class="export-settings-grid" style="margin-bottom: 10px;">
+          <label class="field-stack" for="path-duration-select">
+            <strong>Draft Length</strong>
+            <select class="select-input" id="path-duration-select">
+              <option value="auto">Auto</option>
+              <option value="8">8s</option>
+              <option value="12" selected>12s</option>
+              <option value="16">16s</option>
+            </select>
+          </label>
+          <label class="field-stack" for="path-hold-select">
+            <strong>Ending Hold</strong>
+            <select class="select-input" id="path-hold-select">
+              <option value="auto" selected>Auto</option>
+              <option value="none">None</option>
+              <option value="brief">Brief</option>
+              <option value="linger">Linger</option>
+            </select>
+          </label>
+        </div>
         <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px;">
           <button
             class="btn"
             type="button"
+            data-agentic-duration="12"
+            data-agentic-hold="brief"
             data-agentic-prompt="Create one continuous cinematic arc around this truck, keep the camera focused on it, then hold for a beat."
             style="flex: 1 1 180px;"
           >Arc + hold</button>
           <button
             class="btn"
             type="button"
+            data-agentic-duration="12"
+            data-agentic-hold="none"
             data-agentic-prompt="Create one continuous cinematic push-in toward this truck, then rise slightly while keeping the camera on it."
             style="flex: 1 1 180px;"
           >Push in + rise</button>

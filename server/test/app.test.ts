@@ -55,13 +55,14 @@ describe('createApp', () => {
       getStatus: overrides.getStatus ?? vi.fn<PathGenerationPlannerStatus>(() => ({
         available: true,
         capabilities: {
+          includesPlannerVerification: true,
           maxCaptureRounds: 2,
           maxSegments: 4,
           segmentTypes: ['hold', 'arc', 'dolly', 'pedestal'],
           supportedPathModes: ['subject-centric'],
           unsupportedPathModes: ['route-following', 'multi-subject', 'ambiguous'],
         },
-        model: 'gpt-4.1-mini',
+        model: 'gpt-5-mini',
         plannerVersion: 'multistep-v1',
         reason: null,
       })),
@@ -80,6 +81,10 @@ describe('createApp', () => {
           { captureId: 'capture-current', confidence: 0.96, pixelX: 320, pixelY: 240 },
           { captureId: 'capture-scout-1', confidence: 0.92, pixelX: 300, pixelY: 220 },
         ],
+      })),
+      verifyPathPlan: overrides.verifyPathPlan ?? vi.fn(async () => ({
+        approved: true,
+        issues: [],
       })),
     };
   }
@@ -359,19 +364,50 @@ describe('createApp', () => {
     expect(response.body.segments).toHaveLength(2);
   });
 
+  it('returns a planner verification response from the verify route', async () => {
+    const pathPlanner = createPathPlanner({
+      verifyPathPlan: vi.fn(async requestBody => {
+        expect(requestBody).toMatchObject({
+          draftControls: {
+            holdPreference: 'linger',
+            requestedDurationSeconds: 12,
+          },
+          prompt: 'Orbit the truck and end on a lingering hold.',
+        });
+
+        return {
+          approved: false,
+          issues: ['The ending hold is too short.'],
+        };
+      }),
+    });
+    const app = createTestApp({ pathPlanner });
+
+    const response = await request(app)
+      .post('/api/path/verify')
+      .send(createPathGenerationVerifyRequest());
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({
+      approved: false,
+      issues: ['The ending hold is too short.'],
+    });
+  });
+
   it('returns planner availability from the path status route', async () => {
     const app = createTestApp({
       pathPlanner: createPathPlanner({
         getStatus: vi.fn(() => ({
           available: false,
           capabilities: {
+            includesPlannerVerification: true,
             maxCaptureRounds: 2,
             maxSegments: 4,
             segmentTypes: ['hold', 'arc', 'dolly', 'pedestal'],
             supportedPathModes: ['subject-centric'],
             unsupportedPathModes: ['route-following', 'multi-subject', 'ambiguous'],
           },
-          model: 'gpt-4.1-mini',
+          model: 'gpt-5-mini',
           plannerVersion: 'multistep-v1',
           reason: 'Agentic path generation is disabled because OPENAI_API_KEY is not configured on the server.',
         })),
@@ -384,13 +420,14 @@ describe('createApp', () => {
     expect(response.body).toEqual({
       available: false,
       capabilities: {
+        includesPlannerVerification: true,
         maxCaptureRounds: 2,
         maxSegments: 4,
         segmentTypes: ['hold', 'arc', 'dolly', 'pedestal'],
         supportedPathModes: ['subject-centric'],
         unsupportedPathModes: ['route-following', 'multi-subject', 'ambiguous'],
       },
-      model: 'gpt-4.1-mini',
+      model: 'gpt-5-mini',
       plannerVersion: 'multistep-v1',
       reason: 'Agentic path generation is disabled because OPENAI_API_KEY is not configured on the server.',
     });
@@ -428,6 +465,23 @@ describe('createApp', () => {
 
     expect(response.status).toBe(400);
     expect(response.body).toEqual({ error: 'Route-following prompts are not supported in v1.' });
+  });
+
+  it('returns path-generation planner errors as verify-route errors', async () => {
+    const app = createTestApp({
+      pathPlanner: createPathPlanner({
+        verifyPathPlan: vi.fn(async () => {
+          throw new PathGenerationError(400, 'The draft dipped below the scene floor.');
+        }),
+      }),
+    });
+
+    const response = await request(app)
+      .post('/api/path/verify')
+      .send(createPathGenerationVerifyRequest());
+
+    expect(response.status).toBe(400);
+    expect(response.body).toEqual({ error: 'The draft dipped below the scene floor.' });
   });
 });
 
@@ -517,11 +571,88 @@ function createPathGenerationComposeRequest() {
       targetDurationSeconds: 10,
       tone: 'cinematic',
     },
+    draftControls: {
+      holdPreference: 'brief',
+      requestedDurationSeconds: 10,
+    },
     pathTail: null,
     sceneBounds: {
       max: { x: 2, y: 2, z: 2 },
       min: { x: -2, y: -2, z: -2 },
     },
     validationFeedback: [],
+  };
+}
+
+function createPathGenerationVerifyRequest() {
+  return {
+    captures: [
+      {
+        camera: {
+          aspect: 16 / 9,
+          fov: 60,
+          position: { x: 4, y: 1, z: 0 },
+          quaternion: { x: 0, y: 0, z: 0, w: 1 },
+        },
+        height: 360,
+        id: 'verify-sample-1',
+        imageDataUrl: 'data:image/jpeg;base64,AA==',
+        projectedSubject: {
+          ndcX: 0.02,
+          ndcY: -0.04,
+          visible: true,
+        },
+        timeSeconds: 8,
+        width: 640,
+      },
+    ],
+    currentCamera: {
+      aspect: 16 / 9,
+      fov: 60,
+      position: { x: 4, y: 1, z: 0 },
+      quaternion: { x: 0, y: 0, z: 0, w: 1 },
+    },
+    draftControls: {
+      holdPreference: 'linger',
+      requestedDurationSeconds: 12,
+    },
+    groundedSubject: {
+      anchor: { x: 0, y: 0.5, z: 0 },
+      basisForward: { x: 0, y: 0, z: -1 },
+      basisUp: { x: 0, y: 1, z: 0 },
+      captureCount: 4,
+      confidence: 0.84,
+      meanResidual: 0.08,
+      sceneScale: 8,
+    },
+    intent: {
+      continuousPath: true,
+      orientationPreference: 'look-at-subject',
+      pathMode: 'subject-centric',
+      requestedMoveTypes: ['arc', 'hold'],
+      subjectHint: 'truck',
+      targetDurationSeconds: 12,
+      tone: 'cinematic',
+    },
+    prompt: 'Orbit the truck and end on a lingering hold.',
+    sceneBounds: {
+      max: { x: 2, y: 2, z: 2 },
+      min: { x: -2, y: -2, z: -2 },
+    },
+    segments: [
+      {
+        direction: 'counterclockwise',
+        durationSeconds: 8,
+        lookMode: 'look-at-subject',
+        segmentType: 'arc',
+        sweepDegrees: 120,
+      },
+      {
+        durationSeconds: 4,
+        lookMode: 'look-at-subject',
+        segmentType: 'hold',
+      },
+    ],
+    summary: 'Orbit around the truck, then linger on the front badge.',
   };
 }

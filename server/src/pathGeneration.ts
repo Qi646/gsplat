@@ -5,6 +5,7 @@ export type PathGenerationPathMode = 'subject-centric' | 'route-following' | 'mu
 export type PathGenerationSegmentType = 'hold' | 'arc' | 'dolly' | 'pedestal';
 export type PathGenerationDollyDirection = 'in' | 'out';
 export type PathGenerationPedestalDirection = 'up' | 'down';
+export type PathGenerationHoldPreference = 'auto' | 'none' | 'brief' | 'linger';
 
 export interface PathGenerationVector3 {
   x: number;
@@ -55,6 +56,11 @@ export interface PathGenerationPromptIntent {
   subjectHint: string | null;
   targetDurationSeconds: number | null;
   tone: string | null;
+}
+
+export interface PathGenerationDraftControls {
+  holdPreference: PathGenerationHoldPreference;
+  requestedDurationSeconds: number | null;
 }
 
 export interface PathGenerationSubjectLocalization {
@@ -130,6 +136,7 @@ export type PathGenerationSegmentPlan =
 
 export interface PathGenerationComposeRequest {
   currentCamera: PathGenerationCamera;
+  draftControls: PathGenerationDraftControls;
   groundedSubject: PathGenerationGroundedSubject;
   intent: PathGenerationPromptIntent;
   pathTail: PathGenerationPathTail | null;
@@ -143,9 +150,42 @@ export interface PathGenerationComposeResponse {
   warning?: string;
 }
 
+export interface PathGenerationVerifyCapture {
+  camera: PathGenerationCamera;
+  height: number;
+  id: string;
+  imageDataUrl: string;
+  projectedSubject: {
+    ndcX: number;
+    ndcY: number;
+    visible: boolean;
+  };
+  timeSeconds: number;
+  width: number;
+}
+
+export interface PathGenerationVerifyRequest {
+  captures: PathGenerationVerifyCapture[];
+  currentCamera: PathGenerationCamera;
+  draftControls: PathGenerationDraftControls;
+  groundedSubject: PathGenerationGroundedSubject;
+  intent: PathGenerationPromptIntent;
+  prompt: string;
+  sceneBounds: PathGenerationBounds;
+  segments: PathGenerationSegmentPlan[];
+  summary: string;
+}
+
+export interface PathGenerationVerifyResponse {
+  approved: boolean;
+  issues: string[];
+  warning?: string;
+}
+
 export interface PathGenerationPlannerStatus {
   available: boolean;
   capabilities: {
+    includesPlannerVerification: boolean;
     maxCaptureRounds: number;
     maxSegments: number;
     segmentTypes: PathGenerationSegmentType[];
@@ -161,6 +201,7 @@ export interface PathGenerationPlanner {
   composePathPlan: (request: unknown) => Promise<PathGenerationComposeResponse>;
   getStatus: () => PathGenerationPlannerStatus;
   groundPathIntent: (request: unknown) => Promise<PathGenerationGroundResponse>;
+  verifyPathPlan: (request: unknown) => Promise<PathGenerationVerifyResponse>;
 }
 
 export interface OpenAIVisionPathPlannerOptions {
@@ -208,6 +249,7 @@ const DEFAULT_CHAT_COMPLETION_REQUEST_COMPATIBILITY: ChatCompletionRequestCompat
 const MAX_CHAT_COMPLETION_COMPATIBILITY_ATTEMPTS = 4;
 const PLANNER_COMPLETION_TOKEN_LIMIT = 1800;
 const STATUS_CAPABILITIES = {
+  includesPlannerVerification: true,
   maxCaptureRounds: 2,
   maxSegments: 4,
   segmentTypes: ['hold', 'arc', 'dolly', 'pedestal'] as PathGenerationSegmentType[],
@@ -296,6 +338,18 @@ export class OpenAIVisionPathPlanner implements PathGenerationPlanner {
       apiKey,
     );
     return parsePathGenerationComposeModelResponse(
+      JSON.parse(stripJsonFences(extractCompletionText(completion))) as unknown,
+    );
+  }
+
+  async verifyPathPlan(request: unknown): Promise<PathGenerationVerifyResponse> {
+    const parsedRequest = parsePathGenerationVerifyRequest(request);
+    const apiKey = this.requireApiKey();
+    const completion = await this.requestChatCompletion(
+      buildVerifyChatCompletionRequestBody(parsedRequest, this.resolveModel()),
+      apiKey,
+    );
+    return parsePathGenerationVerifyModelResponse(
       JSON.parse(stripJsonFences(extractCompletionText(completion))) as unknown,
     );
   }
@@ -393,6 +447,7 @@ export function parsePathGenerationComposeRequest(input: unknown): PathGeneratio
   const rawValidationFeedback = input['validationFeedback'];
   return {
     currentCamera: parseCamera(input['currentCamera'], 'currentCamera'),
+    draftControls: parseDraftControls(input['draftControls'], 'draftControls'),
     groundedSubject: parseGroundedSubject(input['groundedSubject'], 'groundedSubject'),
     intent: parsePromptIntent(input['intent'], 'intent'),
     pathTail: input['pathTail'] === null || input['pathTail'] === undefined
@@ -402,6 +457,29 @@ export function parsePathGenerationComposeRequest(input: unknown): PathGeneratio
     validationFeedback: rawValidationFeedback === undefined
       ? undefined
       : parseValidationFeedback(rawValidationFeedback, 'validationFeedback'),
+  };
+}
+
+export function parsePathGenerationVerifyRequest(input: unknown): PathGenerationVerifyRequest {
+  if (!isRecord(input)) {
+    throw new PathGenerationError(400, 'Path-generation verify request body must be a JSON object.');
+  }
+
+  const rawCaptures = input['captures'];
+  if (!Array.isArray(rawCaptures) || rawCaptures.length === 0) {
+    throw new PathGenerationError(400, 'Verify requests must include at least one draft review capture.');
+  }
+
+  return {
+    captures: rawCaptures.map((capture, index) => parseVerifyCapture(capture, `captures[${index}]`)),
+    currentCamera: parseCamera(input['currentCamera'], 'currentCamera'),
+    draftControls: parseDraftControls(input['draftControls'], 'draftControls'),
+    groundedSubject: parseGroundedSubject(input['groundedSubject'], 'groundedSubject'),
+    intent: parsePromptIntent(input['intent'], 'intent'),
+    prompt: readString(input, 'prompt', 'request'),
+    sceneBounds: parseBounds(input['sceneBounds'], 'sceneBounds'),
+    segments: parseSegmentPlanArray(input['segments'], 'segments'),
+    summary: readString(input, 'summary', 'request'),
   };
 }
 
@@ -449,6 +527,33 @@ export function parsePathGenerationComposeModelResponse(input: unknown): PathGen
   };
 }
 
+export function parsePathGenerationVerifyModelResponse(input: unknown): PathGenerationVerifyResponse {
+  if (!isRecord(input)) {
+    throw new PathGenerationError(502, 'Vision planner returned a non-object verification response.');
+  }
+
+  const rawIssues = input['issues'];
+  const issues = Array.isArray(rawIssues)
+    ? rawIssues.map((entry, index) => {
+      if (typeof entry !== 'string' || entry.trim().length === 0) {
+        throw new PathGenerationError(502, `issues[${index}] must be a non-empty string.`);
+      }
+      return entry.trim();
+    })
+    : [];
+  const approved = input['approved'] === true;
+
+  if (!approved && issues.length === 0) {
+    throw new PathGenerationError(502, 'Vision planner rejected the draft without returning any issues.');
+  }
+
+  return {
+    approved,
+    issues,
+    warning: readOptionalNonEmptyString(input, 'warning'),
+  };
+}
+
 function buildGroundSystemPrompt(): string {
   return [
     'You are the grounding step of a camera path planner for a 3D scene viewer.',
@@ -484,7 +589,23 @@ function buildComposeSystemPrompt(): string {
     'When direction is present, it must be the string "clockwise" or "counterclockwise".',
     'Do not output raw keyframes.',
     'Keep the overall path cinematic, continuous, and compatible with a single primary subject.',
+    'Respect draftControls when provided. requestedDurationSeconds should strongly guide the overall duration.',
+    'When holdPreference is "brief" or "linger", prefer a final hold segment. "linger" should be materially longer than a beat.',
+    'When holdPreference is "none", do not include hold segments.',
     'If validationFeedback is present, adjust the segment choices to address those failures.',
+  ].join(' ');
+}
+
+function buildVerifySystemPrompt(): string {
+  return [
+    'You are the verification step of a camera path planner for a 3D scene viewer.',
+    'A draft path has already been composed and locally validated. Review the sampled draft images and metadata.',
+    'Return JSON only with keys approved, issues, warning.',
+    'Set approved to true only if the draft visually matches the prompt and looks plausible.',
+    'Reject drafts that visibly lose the subject, drift away from the requested framing, dip under the world/floor, or fail a requested ending hold.',
+    'When holdPreference is "brief" or "linger", check that the later verification frames read like a real pause rather than continuous motion.',
+    'When holdPreference is "none", treat the explicit control as overriding hold language in the prompt.',
+    'If approved is false, issues must contain short, actionable reasons the composer can address.',
   ].join(' ');
 }
 
@@ -519,6 +640,25 @@ function buildComposeChatCompletionRequestBody(
       },
       {
         content: buildComposeUserContent(request),
+        role: 'user',
+      },
+    ],
+    model,
+  };
+}
+
+function buildVerifyChatCompletionRequestBody(
+  request: PathGenerationVerifyRequest,
+  model: string,
+): UnknownRecord {
+  return {
+    messages: [
+      {
+        content: buildVerifySystemPrompt(),
+        role: 'system',
+      },
+      {
+        content: buildVerifyUserContent(request),
         role: 'user',
       },
     ],
@@ -595,12 +735,50 @@ function buildGroundUserContent(request: PathGenerationGroundRequest): Array<Rec
 function buildComposeUserContent(request: PathGenerationComposeRequest): string {
   return [
     `Intent: ${JSON.stringify(request.intent)}`,
+    `Draft controls: ${JSON.stringify(request.draftControls)}`,
     `Grounded subject: ${JSON.stringify(request.groundedSubject)}`,
     `Scene bounds: ${JSON.stringify(request.sceneBounds)}`,
     `Current camera: ${JSON.stringify(request.currentCamera)}`,
     `Path tail: ${JSON.stringify(request.pathTail)}`,
     `Validation feedback: ${JSON.stringify(request.validationFeedback ?? [])}`,
   ].join('\n');
+}
+
+function buildVerifyUserContent(request: PathGenerationVerifyRequest): Array<Record<string, unknown>> {
+  const content: Array<Record<string, unknown>> = [
+    {
+      text: [
+        `Prompt: ${request.prompt}`,
+        `Intent: ${JSON.stringify(request.intent)}`,
+        `Draft controls: ${JSON.stringify(request.draftControls)}`,
+        `Draft summary: ${request.summary}`,
+        `Segments: ${JSON.stringify(request.segments)}`,
+        `Grounded subject: ${JSON.stringify(request.groundedSubject)}`,
+        `Scene bounds: ${JSON.stringify(request.sceneBounds)}`,
+        `Current camera: ${JSON.stringify(request.currentCamera)}`,
+      ].join('\n'),
+      type: 'text',
+    },
+  ];
+
+  for (const capture of request.captures) {
+    content.push({
+      text: `Draft review frame ${capture.id}: ${JSON.stringify({
+        camera: capture.camera,
+        projectedSubject: capture.projectedSubject,
+        timeSeconds: capture.timeSeconds,
+      })}`,
+      type: 'text',
+    });
+    content.push({
+      image_url: {
+        url: capture.imageDataUrl,
+      },
+      type: 'image_url',
+    });
+  }
+
+  return content;
 }
 
 function extractCompletionText(payload: ChatCompletionResponse): string {
@@ -963,6 +1141,17 @@ function parsePromptIntent(
   };
 }
 
+function parseDraftControls(value: unknown, context: string): PathGenerationDraftControls {
+  if (!isRecord(value)) {
+    throw new PathGenerationError(400, `${context} must be an object.`);
+  }
+
+  return {
+    holdPreference: parseHoldPreference(value['holdPreference'] ?? 'auto', `${context}.holdPreference`),
+    requestedDurationSeconds: readNullableFiniteNumber(value, 'requestedDurationSeconds'),
+  };
+}
+
 function parseQuaternion(value: unknown, context: string): PathGenerationQuaternion {
   if (!isRecord(value)) {
     throw new PathGenerationError(400, `${context} must be an object.`);
@@ -985,6 +1174,16 @@ function parseRequestedMoveTypes(value: unknown, context: string): PathGeneratio
     .map(entry => coerceSegmentType(entry))
     .filter((entry): entry is PathGenerationSegmentType => entry !== null);
   return moves.length > 0 ? Array.from(new Set(moves)) : ['arc'];
+}
+
+function parseSegmentPlanArray(value: unknown, context: string): PathGenerationSegmentPlan[] {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new PathGenerationError(400, `${context} must be a non-empty array.`);
+  }
+
+  return value
+    .slice(0, STATUS_CAPABILITIES.maxSegments)
+    .map((entry, index) => parseSegmentPlan(entry, `${context}[${index}]`));
 }
 
 function parseSegmentPlan(value: unknown, context: string): PathGenerationSegmentPlan {
@@ -1155,6 +1354,27 @@ function parsePedestalDirection(value: unknown, context: string): PathGeneration
   throw new PathGenerationError(502, `${context} must be "up" or "down".`);
 }
 
+function parseHoldPreference(value: unknown, context: string): PathGenerationHoldPreference {
+  if (value === 'auto' || value === 'none' || value === 'brief' || value === 'linger') {
+    return value;
+  }
+
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (normalized.includes('off') || normalized.includes('none')) {
+      return 'none';
+    }
+    if (normalized.includes('brief') || normalized.includes('short')) {
+      return 'brief';
+    }
+    if (normalized.includes('linger') || normalized.includes('long')) {
+      return 'linger';
+    }
+  }
+
+  throw new PathGenerationError(400, `${context} must be "auto", "none", "brief", or "linger".`);
+}
+
 function parseVector3(value: unknown, context: string): PathGenerationVector3 {
   if (!isRecord(value)) {
     throw new PathGenerationError(400, `${context} must be an object.`);
@@ -1164,6 +1384,37 @@ function parseVector3(value: unknown, context: string): PathGenerationVector3 {
     x: readFiniteNumber(value, 'x', context),
     y: readFiniteNumber(value, 'y', context),
     z: readFiniteNumber(value, 'z', context),
+  };
+}
+
+function parseVerifyCapture(value: unknown, context: string): PathGenerationVerifyCapture {
+  if (!isRecord(value)) {
+    throw new PathGenerationError(400, `${context} must be an object.`);
+  }
+
+  return {
+    camera: parseCamera(value['camera'], `${context}.camera`),
+    height: readFiniteNumber(value, 'height', context),
+    id: readString(value, 'id', context),
+    imageDataUrl: readString(value, 'imageDataUrl', context),
+    projectedSubject: parseVerifyProjectedSubject(value['projectedSubject'], `${context}.projectedSubject`),
+    timeSeconds: readFiniteNumber(value, 'timeSeconds', context),
+    width: readFiniteNumber(value, 'width', context),
+  };
+}
+
+function parseVerifyProjectedSubject(
+  value: unknown,
+  context: string,
+): PathGenerationVerifyCapture['projectedSubject'] {
+  if (!isRecord(value)) {
+    throw new PathGenerationError(400, `${context} must be an object.`);
+  }
+
+  return {
+    ndcX: readFiniteNumber(value, 'ndcX', context),
+    ndcY: readFiniteNumber(value, 'ndcY', context),
+    visible: value['visible'] === true,
   };
 }
 
