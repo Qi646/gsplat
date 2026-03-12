@@ -255,8 +255,9 @@ export class StepwiseAgentOrchestrator {
           continue;
         }
 
+        const currentPose = clonePoseFromCamera(currentCamera);
         const nextPose = applyDeterministicAction(action, currentCamera, bounds);
-        const safetyResult = validateStepPose(nextPose, bounds, pathMode);
+        const safetyResult = validateStepPose(currentPose, nextPose, action, bounds, pathMode);
         if (!safetyResult.valid) {
           actionHistory.push({
             action,
@@ -456,10 +457,18 @@ function applyDeterministicAction(
   };
 }
 
-function validateStepPose(pose: InterpolatedPose, bounds: THREE.Box3, pathMode: AgenticPathMode): { reason?: string; valid: boolean } {
+function validateStepPose(
+  currentPose: InterpolatedPose,
+  nextPose: InterpolatedPose,
+  action: StepwiseAction,
+  bounds: THREE.Box3,
+  pathMode: AgenticPathMode,
+): { reason?: string; valid: boolean } {
   const margin = Math.max(bounds.getSize(new THREE.Vector3()).length() * 0.04, 0.15);
   const expandedBounds = bounds.clone().expandByScalar(margin);
-  if (!expandedBounds.containsPoint(pose.position)) {
+  const isInPlaceRotation = action.type === 'rotate'
+    && currentPose.position.distanceToSquared(nextPose.position) <= 1e-10;
+  if (!isInPlaceRotation && !expandedBounds.containsPoint(nextPose.position)) {
     return {
       reason: 'Rejected because the step would leave the supported scene volume.',
       valid: false,
@@ -467,7 +476,7 @@ function validateStepPose(pose: InterpolatedPose, bounds: THREE.Box3, pathMode: 
   }
 
   const minHeight = bounds.min.y + margin * 0.5;
-  if (pose.position.y < minHeight) {
+  if (nextPose.position.y < minHeight) {
     return {
       reason: 'Rejected because the step would dip below the floor clearance limit.',
       valid: false,
@@ -475,7 +484,7 @@ function validateStepPose(pose: InterpolatedPose, bounds: THREE.Box3, pathMode: 
   }
 
   if (pathMode === 'route-following') {
-    const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(pose.quaternion).normalize();
+    const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(nextPose.quaternion).normalize();
     if (forward.dot(new THREE.Vector3(0, 0, -1)) > -MIN_ROUTE_FACING_DOT) {
       return {
         reason: 'Rejected because the route-following view would turn too far away from forward travel.',

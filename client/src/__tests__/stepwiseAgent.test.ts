@@ -234,6 +234,63 @@ describe('StepwiseAgentOrchestrator', () => {
     expect(draft.keyframes).toHaveLength(2);
   });
 
+  it('allows in-place subject rotations when a small subject is framed from outside tight scene bounds', async () => {
+    installCaptureStubs();
+    const { camera, viewer } = createViewer();
+    camera.position.set(0, 1.5, 10.5);
+    camera.lookAt(new THREE.Vector3(0, 1.5, 0));
+    camera.updateMatrixWorld(true);
+    const responses = [
+      {
+        action: { type: 'create-keyframe' },
+        complete: false,
+        pathMode: 'subject-centric',
+        reason: 'Store the opening composition.',
+      },
+      {
+        action: { primitive: 'yaw-right-small', type: 'rotate' },
+        complete: false,
+        pathMode: 'subject-centric',
+        reason: 'Rotate slightly to face the subject front.',
+      },
+      {
+        action: { type: 'create-keyframe' },
+        complete: false,
+        pathMode: 'subject-centric',
+        reason: 'Store the corrected front-facing composition.',
+      },
+      {
+        complete: true,
+        pathMode: 'subject-centric',
+        reason: 'The requested front-facing move is represented.',
+      },
+    ];
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify(responses.shift()), {
+      headers: { 'Content-Type': 'application/json' },
+      status: 200,
+    }));
+
+    const startingPosition = camera.position.clone();
+    const orchestrator = new StepwiseAgentOrchestrator({ fetchImpl, viewer });
+    const draft = await orchestrator.generateDraft({
+      controls: {
+        holdPreference: 'none',
+        requestedDurationSeconds: 6,
+      },
+      existingKeyframes: [],
+      prompt: 'Face the front of Luigi while keeping him centered.',
+    });
+
+    expect(fetchImpl).toHaveBeenCalledTimes(4);
+    expect(draft.keyframes).toHaveLength(2);
+    expect(draft.keyframes[1]?.position).toEqual({
+      x: startingPosition.x,
+      y: startingPosition.y,
+      z: startingPosition.z,
+    });
+    expect(draft.keyframes[1]?.quaternion).not.toEqual(draft.keyframes[0]?.quaternion);
+  });
+
   it('does not send remembered images back to the planner on later steps', async () => {
     installCaptureStubs();
     const { viewer } = createViewer();
