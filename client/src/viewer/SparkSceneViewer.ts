@@ -7,7 +7,7 @@ import {
 } from '../lib/robustSceneBounds';
 import type { SceneFormatId } from '../lib/sceneFormat';
 import { resolveSceneLoadSource, type SceneLoadInput } from '../lib/sceneSource';
-import type { InterpolatedPose, ViewerDebugSnapshot } from '../types';
+import type { InterpolatedPose, ScenePointSample, ViewerDebugSnapshot } from '../types';
 import { applyAdaptiveCameraFrustum } from './adaptiveCameraFrustum';
 import {
   createViewerOrbitControls,
@@ -27,6 +27,7 @@ const SPARK_VIEW_OPTIONS = {
   sortRadial: false,
   stochastic: false,
 } as const;
+const DEFAULT_SCENE_POINT_SAMPLE_LIMIT = 8192;
 
 export class SparkSceneViewer implements ViewerAdapter {
   private readonly hostElement: HTMLElement;
@@ -204,6 +205,49 @@ export class SparkSceneViewer implements ViewerAdapter {
     }
 
     return canvasToBlob(surface);
+  }
+
+  sampleScenePoints(maxSamples = DEFAULT_SCENE_POINT_SAMPLE_LIMIT): ScenePointSample[] {
+    if (!this.splatMesh) {
+      return [];
+    }
+
+    const sampleLimit = Math.max(1, Math.floor(maxSamples));
+    const splatCount = this.splatMesh.packedSplats.numSplats;
+    if (splatCount <= 0) {
+      return [];
+    }
+
+    const stride = Math.max(1, Math.ceil(splatCount / sampleLimit));
+    const center = new THREE.Vector3();
+    const samples: ScenePointSample[] = [];
+
+    this.splatMesh.forEachSplat((index, splatCenter, _scales, _quaternion, opacity) => {
+      if (index % stride !== 0 || samples.length >= sampleLimit) {
+        return;
+      }
+
+      center.copy(splatCenter).applyMatrix4(this.splatMesh?.matrixWorld ?? new THREE.Matrix4());
+      if (
+        !Number.isFinite(opacity)
+        || !Number.isFinite(center.x)
+        || !Number.isFinite(center.y)
+        || !Number.isFinite(center.z)
+      ) {
+        return;
+      }
+
+      samples.push({
+        opacity: opacity * 255,
+        position: {
+          x: center.x,
+          y: center.y,
+          z: center.z,
+        },
+      });
+    });
+
+    return samples;
   }
 
   frameScene(): boolean {

@@ -491,6 +491,32 @@ describe('SceneViewer', () => {
     expect(sceneBounds.max.toArray()).toEqual([4, 5, 6]);
   });
 
+  it('samples world-space scene points from the active splat mesh', async () => {
+    mockModule.__mockState.splatCount = 6;
+    mockModule.__mockState.sampleCenters = [
+      [1, 2, 3],
+      [4, 5, 6],
+      [7, 8, 9],
+    ];
+    mockModule.__mockState.sampleColors = [
+      [1, 1, 1, 12],
+      [1, 1, 1, 24],
+      [1, 1, 1, 36],
+    ];
+    const events = new AppEvents();
+    const hostElement = {} as HTMLDivElement;
+    const viewer = new SceneViewer({ hostElement, events });
+
+    await viewer.init();
+    await viewer.loadScene('/api/presets/truck.ksplat');
+
+    expect(viewer.sampleScenePoints(3)).toEqual([
+      { opacity: 12, position: { x: 1, y: 2, z: 3 } },
+      { opacity: 36, position: { x: 7, y: 8, z: 9 } },
+      { opacity: 24, position: { x: 4, y: 5, z: 6 } },
+    ]);
+  });
+
   it('returns a cloned scene bounds box only after a successful scene load', async () => {
     const events = new AppEvents();
     const hostElement = {} as HTMLDivElement;

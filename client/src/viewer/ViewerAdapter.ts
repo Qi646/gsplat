@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import type { SceneLoadInput } from '../lib/sceneSource';
-import type { AppEvents, InterpolatedPose, ViewerDebugSnapshot, ViewerRendererId } from '../types';
+import type { AppEvents, InterpolatedPose, ScenePointSample, ViewerDebugSnapshot, ViewerRendererId } from '../types';
 import type { ViewerRuntimeOverrides } from './viewerRuntime';
 
 export interface ViewerAdapterOptions {
@@ -20,6 +20,7 @@ export interface ViewerAdapter {
   resumeOrbitFromCamera(distance?: number): void;
   renderNow(): void;
   captureFrame(): Promise<Blob>;
+  sampleScenePoints(maxSamples?: number): ScenePointSample[];
   frameScene(): boolean;
   resetView(): void;
   applyCameraPose(pose: InterpolatedPose): void;

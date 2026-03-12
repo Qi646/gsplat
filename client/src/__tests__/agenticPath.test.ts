@@ -144,6 +144,7 @@ function createMockViewer(options: {
     getSceneBounds: () => bounds.clone(),
     isSceneLoaded: () => true,
     renderNow: () => {},
+    sampleScenePoints: () => [],
   } as unknown as ViewerAdapter;
 
   return { camera, viewer };

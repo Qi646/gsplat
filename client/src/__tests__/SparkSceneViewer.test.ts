@@ -519,6 +519,34 @@ describe('SparkSceneViewer', () => {
     expect(internalBounds.max.toArray()).toEqual(originalMax.toArray());
   });
 
+  it('samples world-space scene points from the active Spark mesh', async () => {
+    mockModule.__mockState.splatCount = 6;
+    mockModule.__mockState.samples = [
+      { center: [1, 2, 3], opacity: 0.25 },
+      { center: [4, 5, 6], opacity: 0.5 },
+      { center: [7, 8, 9], opacity: 0.75 },
+      { center: [10, 11, 12], opacity: 1 },
+      { center: [13, 14, 15], opacity: 0.9 },
+      { center: [16, 17, 18], opacity: 0.8 },
+    ];
+    const events = new AppEvents();
+    const hostElement = {
+      clientHeight: 600,
+      clientWidth: 800,
+      replaceChildren: vi.fn(),
+    } as unknown as HTMLDivElement;
+    const viewer = new SparkSceneViewer({ hostElement, events });
+
+    await viewer.init();
+    await viewer.loadScene('/api/presets/truck.ksplat');
+
+    expect(viewer.sampleScenePoints(3)).toEqual([
+      { opacity: 63.75, position: { x: 1, y: 2, z: 3 } },
+      { opacity: 191.25, position: { x: 7, y: 8, z: 9 } },
+      { opacity: 229.5, position: { x: 13, y: 14, z: 15 } },
+    ]);
+  });
+
   it('maps cached ply presets to the Spark ply file type', async () => {
     const events = new AppEvents();
     const hostElement = {

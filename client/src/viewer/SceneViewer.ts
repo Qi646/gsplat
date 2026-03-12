@@ -4,7 +4,7 @@ import { formatLoadProgress } from '../lib/loadProgress';
 import { computeRobustSceneBounds } from '../lib/robustSceneBounds';
 import type { SceneFormatId } from '../lib/sceneFormat';
 import { resolveSceneLoadSource, type SceneLoadInput } from '../lib/sceneSource';
-import type { AppEvents, InterpolatedPose, ViewerDebugSnapshot } from '../types';
+import type { AppEvents, InterpolatedPose, ScenePointSample, ViewerDebugSnapshot } from '../types';
 import { applyAdaptiveCameraFrustum } from './adaptiveCameraFrustum';
 import {
   createViewerOrbitControls,
@@ -19,6 +19,8 @@ import {
 import { computeFramedSceneView } from './sceneFraming';
 import { resolveViewerRuntimeConfig, type ViewerRuntimeOverrides, type ViewerRuntimeOptions } from './viewerRuntime';
 import type { ViewerAdapter, ViewerAdapterOptions } from './ViewerAdapter';
+
+const DEFAULT_SCENE_POINT_SAMPLE_LIMIT = 8192;
 
 export class SceneViewer implements ViewerAdapter {
   private hostElement: HTMLElement;
@@ -193,6 +195,48 @@ export class SceneViewer implements ViewerAdapter {
     }
 
     return canvasToBlob(surface);
+  }
+
+  sampleScenePoints(maxSamples = DEFAULT_SCENE_POINT_SAMPLE_LIMIT): ScenePointSample[] {
+    const splatMesh = this.viewer?.getSplatMesh();
+    if (!splatMesh) {
+      return [];
+    }
+
+    const sampleLimit = Math.max(1, Math.floor(maxSamples));
+    const splatCount = typeof splatMesh.getSplatCount === 'function' ? splatMesh.getSplatCount() : 0;
+    if (splatCount <= 0) {
+      return [];
+    }
+
+    const stride = Math.max(1, Math.ceil(splatCount / sampleLimit));
+    const center = new THREE.Vector3();
+    const color = new THREE.Vector4();
+    const samples: ScenePointSample[] = [];
+
+    for (let splatIndex = 0; splatIndex < splatCount && samples.length < sampleLimit; splatIndex += stride) {
+      splatMesh.getSplatColor(splatIndex, color);
+      splatMesh.getSplatCenter(splatIndex, center, true);
+      if (
+        !Number.isFinite(color.w)
+        || !Number.isFinite(center.x)
+        || !Number.isFinite(center.y)
+        || !Number.isFinite(center.z)
+      ) {
+        continue;
+      }
+
+      samples.push({
+        opacity: color.w,
+        position: {
+          x: center.x,
+          y: center.y,
+          z: center.z,
+        },
+      });
+    }
+
+    return samples;
   }
 
   frameScene(): boolean {

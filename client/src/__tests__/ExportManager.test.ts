@@ -38,6 +38,10 @@ class FakeViewer implements ViewerAdapter {
     return new Blob(['png-frame'], { type: 'image/png' });
   }
 
+  sampleScenePoints() {
+    return [];
+  }
+
   dispose(): void {}
 
   frameScene(): boolean {

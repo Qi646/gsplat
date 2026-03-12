@@ -43,6 +43,11 @@ export interface InterpolatedPose {
   fov: number;
 }
 
+export interface ScenePointSample {
+  opacity: number;
+  position: SerializableVector3;
+}
+
 export interface ViewerDebugSnapshot {
   rendererId: ViewerRendererId;
   camera: {
