@@ -1,6 +1,7 @@
 # AGENT_MEMORY
 
 ## Current Context
+- 2026-03-12: LAN-accessibility pass found no hardcoded `localhost` / `127.0.0.1` frontend fetch or axios URLs in product code; runtime API calls already use same-origin `/api/*`. The backend now reflects any dev origin by default, accepts `CORS_ORIGIN` overrides (`*`, `true` / `false`, or comma-delimited origin lists), the Vite `/api` proxy target is overrideable via `VITE_API_PROXY_TARGET`, and current product code does not use `navigator.clipboard`, `navigator.mediaDevices`, or geolocation. Plain `http://<LAN-IP>` still is not a secure context, so the explicit shared-memory `?viewerMode=default` diagnostic path may remain unavailable there and compatibility mode stays the safe LAN default.
 - 2026-03-12: Chrome DevTools MCP project smoke against the live app on `localhost:5173` passed the core non-AI viewer flow in `?renderer=mkkellogg&viewerMode=compat`: deterministic `smoke-grid.ply` load reported `sceneLoaded: true`, manual wheel-driven camera motion plus two keyframe captures enabled live preview/export, Inspect -> Fly -> Inspect switching worked, and a 3s 720p/30 FPS MP4 export completed with `output.mp4` after 91 rendered frames.
 - 2026-03-12: The same Chrome MCP smoke exposed two browser findings that are worth following up: every tested `mkkellogg` page still logs a Spark-side failed WASM request (`@sparkjsdev/spark` imported via a malformed `data:application/wasm` Vite path returning HTTP 431) plus an `Uncaught (in promise)` console error even when Spark is not the active renderer, and the Truck preset's agentic draft flow timed out after the built-in 60s generation budget while `capturing round 1 scout views` before recovering control.
 - 2026-03-12: Agentic generation architecture is a staged single-orchestrator pipeline, not a multi-agent system: `client/src/path/agenticPath.ts` owns capture orchestration, 3D grounding solve, deterministic draft synthesis, local validation, active verification probe planning, and draft lifecycle/UI handoff; `server/src/pathGeneration.ts` is a thin planner adapter that exposes `/api/path/ground`, `/api/path/compose`, and `/api/path/verify` and turns each step into one OpenAI-compatible vision/model call with strict schema parsing plus request-shape compatibility fallbacks.
@@ -113,6 +114,7 @@
 - Walk-mode exit now resumes the shared camera controls through an atomic handoff in both renderer adapters: the camera target and derived up vector are aligned from the live camera pose before controls are re-enabled, so pressing `Esc` preserves the exact walk view for subsequent keyframe capture.
 
 ## Decisions
+- Prefer same-origin relative frontend API paths plus configurable proxy/CORS settings over hardcoded loopback URLs so LAN development does not depend on `localhost`.
 - Use a root `.gitignore` for repo-wide transient files and the root archive before the initial commit.
 - For large or multi-feature tasks, prefer incremental code changes and incremental commits rather than one large end-of-task commit.
 - Build the real app at the repo root and treat `gsplat-viewer/` as read-only reference material.

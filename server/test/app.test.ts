@@ -16,6 +16,7 @@ describe('createApp', () => {
 
   afterEach(async () => {
     vi.restoreAllMocks();
+    vi.unstubAllEnvs();
 
     if (tempDir) {
       await rm(tempDir, { force: true, recursive: true });
@@ -130,6 +131,53 @@ describe('createApp', () => {
     expect(response.headers['cross-origin-opener-policy']).toBe(
       CROSS_ORIGIN_ISOLATION_HEADERS['Cross-Origin-Opener-Policy']
     );
+  });
+
+  it('reflects arbitrary LAN origins by default outside production', async () => {
+    const app = createTestApp();
+    const lanOrigin = 'http://192.168.1.24:5173';
+
+    const response = await request(app)
+      .get('/api/health')
+      .set('Origin', lanOrigin);
+
+    expect(response.status).toBe(200);
+    expect(response.headers['access-control-allow-origin']).toBe(lanOrigin);
+    expect(response.headers.vary).toContain('Origin');
+  });
+
+  it('supports wildcard development CORS through CORS_ORIGIN=*', async () => {
+    vi.stubEnv('CORS_ORIGIN', '*');
+    const app = createTestApp();
+    const lanOrigin = 'http://192.168.1.77:5173';
+
+    const response = await request(app)
+      .get('/api/health')
+      .set('Origin', lanOrigin);
+
+    expect(response.status).toBe(200);
+    expect(response.headers['access-control-allow-origin']).toBe(lanOrigin);
+  });
+
+  it('supports comma-delimited CORS origin allowlists', async () => {
+    vi.stubEnv('CORS_ORIGIN', 'http://localhost:5173, http://192.168.1.24:5173');
+    const app = createTestApp();
+
+    const allowedResponse = await request(app)
+      .get('/api/health')
+      .set('Origin', 'http://192.168.1.24:5173');
+
+    expect(allowedResponse.status).toBe(200);
+    expect(allowedResponse.headers['access-control-allow-origin']).toBe(
+      'http://192.168.1.24:5173'
+    );
+
+    const deniedResponse = await request(app)
+      .get('/api/health')
+      .set('Origin', 'http://10.0.0.8:5173');
+
+    expect(deniedResponse.status).toBe(200);
+    expect(deniedResponse.headers['access-control-allow-origin']).toBeUndefined();
   });
 
   it('serves a verified preset route with cross-origin isolation headers', async () => {

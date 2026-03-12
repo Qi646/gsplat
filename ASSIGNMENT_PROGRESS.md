@@ -1,6 +1,6 @@
 # Assignment Progress
 
-Last updated: 2026-03-11
+Last updated: 2026-03-12
 
 This file tracks current progress against [ASSIGNMENT.md](./ASSIGNMENT.md). Update it whenever MVP scope, optional extras, or deliverable status changes.
 
@@ -9,7 +9,7 @@ This file tracks current progress against [ASSIGNMENT.md](./ASSIGNMENT.md). Upda
 - MVP requirements: 4/4 implemented in the root app.
 - Optional extras from `ASSIGNMENT.md`: 4/10 fully implemented, 2/10 partially implemented.
 - Deliverables: repo + README are present; demo recording and one-page design note are still pending.
-- Latest validation on 2026-03-11: `npm test` and `npm run build` passed at the repo root.
+- Latest validation on 2026-03-12: `npm test` and `npm run build` passed at the repo root.
 
 ## MVP Requirements
 
@@ -49,6 +49,7 @@ This file tracks current progress against [ASSIGNMENT.md](./ASSIGNMENT.md). Upda
 These items are beyond the MVP and do not map directly to the assignment's optional-extra checklist, but they are implemented and should still be maintained:
 
 - Same-origin preset caching for mixed-format sample assets, including the lightweight `Luigi` `.ply` preset.
+- LAN-friendly dev networking: product frontend API calls remain same-origin relative `/api/*`, the Vite `/api` proxy target can be overridden with `VITE_API_PROXY_TARGET`, and the backend now reflects development origins by default unless `CORS_ORIGIN` narrows or disables that behavior.
 - An opt-in SparkJS renderer path for comparison and diagnostics alongside the default `mkkellogg` renderer.
 - Robust sampled scene bounds plus adaptive near/far camera frustum updates for more stable framing and close inspection, including a tighter `5%-95%` framing fallback when `1%-99%` bounds are visibly inflated by outliers.
 - A shared deterministic projected-box framing helper used by both renderer adapters instead of preset-specific framing overrides.

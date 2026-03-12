@@ -42,9 +42,32 @@ npm install
 npm run dev
 ```
 
-Open `http://localhost:5173`.
+Open `http://localhost:5173` locally, or `http://<your-lan-ip>:5173` from another device on the same network.
 
-The Vite dev server proxies API requests to the Express server on `http://localhost:3001`.
+The frontend uses same-origin relative `/api/*` requests. In development, the Vite dev server proxies those requests to the Express server.
+
+## LAN / Remote Device Notes
+
+If you want the app reachable from other devices on your Wi-Fi during development, expose the Vite dev server on your LAN and keep the frontend on relative `/api/*` routes:
+
+```bash
+VITE_HOST=0.0.0.0 npm run dev
+```
+
+Optional LAN-related environment variables:
+
+```bash
+VITE_API_PROXY_TARGET=http://127.0.0.1:3001  # override the Vite /api proxy target
+CORS_ORIGIN=*                                # allow any dev origin, or use a comma-delimited allowlist
+HOST=0.0.0.0                                 # optional explicit Express bind host
+```
+
+Notes:
+
+- Product code does not hardcode `localhost` or `127.0.0.1` in frontend `fetch` requests; the runtime API calls already use relative `/api/*` paths.
+- The backend reflects any origin by default in non-production development, so `http://<your-lan-ip>:5173` can call the API without extra CORS changes. Set `CORS_ORIGIN` if you want to lock that down or keep CORS enabled in production.
+- The current product code does not use `navigator.clipboard`, `navigator.mediaDevices`, or geolocation APIs, so those secure-context-only browser restrictions are not expected to break existing buttons on plain HTTP LAN access.
+- Browsers do not treat `http://<your-lan-ip>` as a secure context. The app already defaults to compatibility mode, but the explicit shared-memory diagnostic path behind `?viewerMode=default` may still be unavailable over plain HTTP unless you serve the app over HTTPS.
 
 If `npm install` fails because of a local npm cache permissions issue, retry with:
 
@@ -166,6 +189,7 @@ Notes:
 - The export panel now exposes deterministic export settings: a profile selector (`720p`, `1080p`, or `720p + 1080p Batch`), an integer FPS input, a file-base input, and a `Save Export Plan` action that writes those settings alongside the current path.
 - Export progress is client-driven from rendered/uploaded frame counts plus a final `Encoding MP4 with FFmpeg…` phase. A dedicated `Cancel` button aborts the active request, tells the backend to kill/clean the FFmpeg job, and leaves no partially downloaded MP4 in the UI.
 - Batch export runs one target at a time against the same recorded path and downloads each finished MP4 with deterministic file names (`<base>.mp4` for single-target profiles, `<base>-720p.mp4` / `<base>-1080p.mp4` for the batch profile).
+- For LAN development, the frontend keeps using relative `/api/*` calls, the Vite proxy target can be overridden with `VITE_API_PROXY_TARGET`, and the backend now accepts arbitrary dev origins by default unless `CORS_ORIGIN` narrows or disables that behavior.
 - The committed browser smoke fixture lives at `client/public/test-assets/smoke-grid.ply` and is used by the Firefox Playwright regression test.
 - In the current host environment, the Firefox browser regression test fails before any scene load begins in both the `?viewerMode=default` and `?viewerMode=compat` paths with `Init error: Error creating WebGL context.` The same symptom can be caused by Firefox lacking WebGL support in headless mode, so interpret it as an environment compatibility failure first and an app regression only after confirming raw Firefox WebGL works on the host.
 - The current client build emits a Vite warning from Spark's packaged WASM data URL during bundling, but the build still completes successfully.

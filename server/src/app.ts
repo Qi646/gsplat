@@ -1,4 +1,4 @@
-import cors from 'cors';
+import cors, { type CorsOptions } from 'cors';
 import express from 'express';
 import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
@@ -16,10 +16,12 @@ import {
 } from './pathGeneration.js';
 import { PresetArchiveService, formatPresetRequestId } from './presetArchive.js';
 
+export type AppCorsOrigin = CorsOptions['origin'];
+
 export interface AppOptions {
   clientBuildDir: string;
   clientIndexPath: string;
-  corsOrigin: string;
+  corsOrigin: AppCorsOrigin;
   exportService: ExportService;
   pathPlanner: PathGenerationPlanner;
   presetService: PresetService;
@@ -36,6 +38,8 @@ export const CROSS_ORIGIN_ISOLATION_HEADERS = {
   'Cross-Origin-Opener-Policy': 'same-origin',
 } as const;
 
+const DEFAULT_DEVELOPMENT_CORS_ORIGIN: AppCorsOrigin = true;
+
 export function applyCrossOriginIsolationHeaders(
   _request: express.Request,
   response: express.Response,
@@ -49,7 +53,7 @@ export function createApp(options: Partial<AppOptions> = {}): express.Express {
   const app = express();
   const clientBuildDir = options.clientBuildDir ?? path.join(process.cwd(), 'public');
   const clientIndexPath = options.clientIndexPath ?? path.join(clientBuildDir, 'index.html');
-  const corsOrigin = options.corsOrigin ?? 'http://localhost:5173';
+  const corsOrigin = resolveCorsOrigin(options.corsOrigin);
   const exportService = options.exportService ?? new FfmpegExportService();
   const pathPlanner = options.pathPlanner ?? new OpenAIVisionPathPlanner();
   const presetService = options.presetService ?? new PresetArchiveService();
@@ -189,6 +193,49 @@ export function createApp(options: Partial<AppOptions> = {}): express.Express {
   }
 
   return app;
+}
+
+export function resolveCorsOrigin(
+  explicitCorsOrigin: AppCorsOrigin | undefined,
+  corsOriginEnv = process.env['CORS_ORIGIN'],
+  nodeEnv = process.env['NODE_ENV'],
+): AppCorsOrigin {
+  if (explicitCorsOrigin !== undefined) {
+    return explicitCorsOrigin;
+  }
+
+  const parsedCorsOrigin = parseCorsOriginEnv(corsOriginEnv);
+  if (parsedCorsOrigin !== undefined) {
+    return parsedCorsOrigin;
+  }
+
+  return nodeEnv === 'production' ? false : DEFAULT_DEVELOPMENT_CORS_ORIGIN;
+}
+
+function parseCorsOriginEnv(value: string | undefined): AppCorsOrigin | undefined {
+  const normalizedValue = value?.trim();
+  if (!normalizedValue) {
+    return undefined;
+  }
+
+  if (normalizedValue === '*' || normalizedValue.toLowerCase() === 'true') {
+    return true;
+  }
+
+  if (normalizedValue.toLowerCase() === 'false') {
+    return false;
+  }
+
+  const origins = normalizedValue
+    .split(',')
+    .map(origin => origin.trim())
+    .filter(origin => origin.length > 0);
+
+  if (origins.length === 0) {
+    return undefined;
+  }
+
+  return origins.length === 1 ? origins[0] : origins;
 }
 
 function sendExportError(
