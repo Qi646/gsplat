@@ -666,6 +666,26 @@ describe('pathGeneration model-response parsing', () => {
     });
   });
 
+  it('accepts the canonical create-keyframe step response shape', () => {
+    const parsed = parsePathGenerationStepModelResponse({
+      action: { type: 'create-keyframe' },
+      complete: false,
+      pathMode: 'subject-centric',
+      reason: 'User asked for a cinematic move around a single truck with the camera focused on it. This is a subject-centric task: keep the truck as the primary subject and move the camera around to reveal the front license plate at the end. No draft keyframes exist yet, so begin by preserving the current pose.',
+      warning: 'Ensure subsequent moves keep the truck centered; avoid large lateral moves that risk occluding the truck with foreground elements. A second keyframe should be created before finishing on the license plate.',
+    });
+
+    expect(parsed).toEqual({
+      action: {
+        type: 'create-keyframe',
+      },
+      complete: false,
+      pathMode: 'subject-centric',
+      reason: 'User asked for a cinematic move around a single truck with the camera focused on it. This is a subject-centric task: keep the truck as the primary subject and move the camera around to reveal the front license plate at the end. No draft keyframes exist yet, so begin by preserving the current pose.',
+      warning: 'Ensure subsequent moves keep the truck centered; avoid large lateral moves that risk occluding the truck with foreground elements. A second keyframe should be created before finishing on the license plate.',
+    });
+  });
+
   it('normalizes loose arc direction labels', () => {
     const parsed = parsePathGenerationComposeModelResponse({
       segments: [
