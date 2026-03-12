@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { createClientId } from '../lib/createClientId';
 import type {
   InterpolatedPose,
   Keyframe,
@@ -788,7 +789,7 @@ export class AgenticPathOrchestrator {
     }
 
     return {
-      draftId: crypto.randomUUID(),
+      draftId: createClientId('draft'),
       groundedRoute: null,
       groundedSubject,
       keyframes: builtDraft.keyframes,
@@ -974,7 +975,7 @@ export class AgenticPathOrchestrator {
     }
 
     return {
-      draftId: crypto.randomUUID(),
+      draftId: createClientId('draft'),
       groundedRoute,
       groundedSubject: null,
       keyframes: builtDraft.keyframes,
@@ -1609,7 +1610,7 @@ export function groundRouteFromObservations(
     confidence,
     length,
     maxTurnDegrees,
-    routeId: crypto.randomUUID(),
+    routeId: createClientId('route'),
     waypoints: downsampleRouteWaypoints(orderedWaypoints).map(vectorToSerializable),
   };
 }
@@ -1637,7 +1638,7 @@ export function buildDraftPath(options: BuildDraftPathOptions): BuiltDraftPath {
       const ratio = sampleCount > 1 ? sampleIndex / (sampleCount - 1) : 1;
       keyframes.push({
         fov: sample.fov,
-        id: crypto.randomUUID(),
+        id: createClientId('keyframe'),
         position: vectorToSerializable(sample.position),
         quaternion: quaternionToSerializable(sample.quaternion),
         time: segmentStartTime + segment.durationSeconds * ratio,
@@ -1710,7 +1711,7 @@ export function buildRouteDraftPath(options: BuildRouteDraftPathOptions): BuiltD
       const ratio = sampleCount > 1 ? sampleIndex / (sampleCount - 1) : 1;
       keyframes.push({
         fov: sample.fov,
-        id: crypto.randomUUID(),
+        id: createClientId('keyframe'),
         position: vectorToSerializable(sample.position),
         quaternion: quaternionToSerializable(sample.quaternion),
         time: segmentStartTime + segment.durationSeconds * ratio,

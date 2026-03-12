@@ -62,6 +62,25 @@ describe('KeyframeManager', () => {
     expect(keyframes[1].fov).toBe(40);
   });
 
+  it('captures keyframes without crypto.randomUUID in insecure contexts', () => {
+    vi.stubGlobal('crypto', {
+      getRandomValues: (<T extends ArrayBufferView>(buffer: T): T => {
+        new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength).fill(0xcd);
+        return buffer;
+      }) as Crypto['getRandomValues'],
+    } as Partial<Crypto>);
+    vi.spyOn(Date, 'now').mockReturnValue(1_700_000_000_000);
+
+    const viewer = new FakeViewer();
+    const manager = new KeyframeManager({ viewer, events: new AppEvents() });
+
+    setCameraPose(viewer.camera, new THREE.Vector3(7, 8, 9));
+    const keyframe = manager.addKeyframe();
+
+    expect(keyframe?.id).toBe('keyframe-loyw3v28-cdcdcdcdcdcdcdcdcdcd');
+    expect(manager.getKeyframes()).toHaveLength(1);
+  });
+
   it('reorders keyframes and redistributes time across the existing duration', () => {
     const viewer = new FakeViewer();
     const manager = new KeyframeManager({ viewer, events: new AppEvents() });

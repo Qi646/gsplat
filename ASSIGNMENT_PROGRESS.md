@@ -9,7 +9,7 @@ This file tracks current progress against [ASSIGNMENT.md](./ASSIGNMENT.md). Upda
 - MVP requirements: 4/4 implemented in the root app.
 - Optional extras from `ASSIGNMENT.md`: 4/10 fully implemented, 2/10 partially implemented.
 - Deliverables: repo + README are present; demo recording and one-page design note are still pending.
-- Latest validation on 2026-03-12: `npm test --workspace=client -- stepwiseAgent`, `npm run build --workspace=client`, `npm test --workspace=server -- pathGeneration app`, `npm run build --workspace=server`, `npm test`, and `npm run build` passed.
+- Latest validation on 2026-03-12: `npm test --workspace=client -- KeyframeManager createClientId`, `npm run build --workspace=client`, `npm test`, and `npm run build` passed.
 
 ## MVP Requirements
 
@@ -50,6 +50,7 @@ These items are beyond the MVP and do not map directly to the assignment's optio
 
 - Same-origin preset caching for mixed-format sample assets, including the lightweight `Luigi` `.ply` preset.
 - LAN-friendly dev networking: product frontend API calls remain same-origin relative `/api/*`, the Vite `/api` proxy target can be overridden with `VITE_API_PROXY_TARGET`, and the backend now reflects development origins by default unless `CORS_ORIGIN` narrows or disables that behavior.
+- LAN-friendly browser behavior: manual keyframe capture and draft/keyframe ID generation now fall back cleanly when `http://<lan-ip>` lacks secure-context `crypto.randomUUID()`, so the same controls work on forwarded `localhost` and plain HTTP LAN sessions.
 - An opt-in SparkJS renderer path for comparison and diagnostics alongside the default `mkkellogg` renderer.
 - Robust sampled scene bounds plus adaptive near/far camera frustum updates for more stable framing and close inspection, including a tighter `5%-95%` framing fallback when `1%-99%` bounds are visibly inflated by outliers.
 - A shared deterministic projected-box framing helper used by both renderer adapters instead of preset-specific framing overrides.

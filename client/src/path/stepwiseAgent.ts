@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { createClientId } from '../lib/createClientId';
 import type { InterpolatedPose, Keyframe, SerializableVector3 } from '../types';
 import type {
   AgenticDraftControls,
@@ -295,7 +296,7 @@ export class StepwiseAgentOrchestrator {
     }
 
     return {
-      draftId: crypto.randomUUID(),
+      draftId: createClientId('draft'),
       groundedRoute: null,
       groundedSubject: null,
       keyframes,
@@ -384,7 +385,7 @@ interface SerializedBounds {
 function captureKeyframeFromCamera(camera: THREE.PerspectiveCamera, lastTime: number | null): Keyframe {
   return {
     fov: camera.fov,
-    id: crypto.randomUUID(),
+    id: createClientId('keyframe'),
     position: {
       x: camera.position.x,
       y: camera.position.y,

@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { createClientId } from '../lib/createClientId';
 import type { AppEvents, CameraPath, InterpolatedPose, Keyframe } from '../types';
 import { buildCameraPath, parseCameraPath } from './cameraPath';
 import { PathInterpolator } from './PathInterpolator';
@@ -50,7 +51,7 @@ export class KeyframeManager {
     }
 
     const keyframe: Keyframe = {
-      id: crypto.randomUUID(),
+      id: createClientId('keyframe'),
       time: timeSeconds ?? this.suggestTime(),
       position: {
         x: camera.position.x,

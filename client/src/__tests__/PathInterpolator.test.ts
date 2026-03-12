@@ -1,11 +1,12 @@
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
+import { createClientId } from '../lib/createClientId';
 import type { Keyframe } from '../types';
 import { PathInterpolator } from '../path/PathInterpolator';
 
 function makeKeyframe(overrides: Partial<Keyframe>): Keyframe {
   return {
-    id: overrides.id ?? crypto.randomUUID(),
+    id: overrides.id ?? createClientId('test-keyframe'),
     time: overrides.time ?? 0,
     position: overrides.position ?? { x: 0, y: 0, z: 0 },
     quaternion: overrides.quaternion ?? { x: 0, y: 0, z: 0, w: 1 },
