@@ -380,20 +380,24 @@ describe('StepwiseAgentOrchestrator', () => {
       expect.objectContaining({
         action: { type: 'create-keyframe' },
         predictedOutcome: expect.objectContaining({
-          expectedProgress: 'preserve-state',
-          viewChangeType: 'preserve',
+          effectKind: 'preserve',
         }),
       }),
       expect.objectContaining({
         action: { primitive: 'yaw-right-small', type: 'rotate' },
         predictedOutcome: expect.objectContaining({
-          viewChangeType: 're-aim',
+          effectKind: 'rotate',
+          rotationDegrees: expect.objectContaining({
+            pitch: 0,
+            yaw: expect.closeTo(-6, 5),
+          }),
         }),
       }),
       expect.objectContaining({
         action: { primitive: 'strafe-left-short', type: 'move' },
         predictedOutcome: expect.objectContaining({
-          viewChangeType: 'viewpoint-change',
+          effectKind: 'translate',
+          translationLocal: { forward: 0, right: -0.07, up: 0 },
         }),
       }),
     ]));

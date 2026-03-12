@@ -40,10 +40,18 @@ export interface StepwiseLocalIntent {
 }
 
 export interface StepwiseCandidatePredictedOutcome {
-  expectedProgress: 'advance' | 'change-viewpoint' | 'gather-evidence' | 'preserve-state';
+  effectKind: 'preserve' | 'store-evidence' | 'translate' | 'rotate';
   repeatsRecentAction: boolean;
+  rotationDegrees?: {
+    pitch: number;
+    yaw: number;
+  };
   summary: string;
-  viewChangeType: 'gather-evidence' | 'preserve' | 're-aim' | 'viewpoint-change';
+  translationLocal?: {
+    forward: number;
+    right: number;
+    up: number;
+  };
 }
 
 export interface StepwiseCandidateAction {
@@ -449,9 +457,8 @@ function buildCandidateActions(
     push(
       { type: 'create-keyframe' },
       {
-        expectedProgress: 'preserve-state',
+        effectKind: 'preserve',
         summary: 'Preserve the current camera pose as a draft keyframe before making further changes.',
-        viewChangeType: 'preserve',
       },
     );
   }
@@ -459,9 +466,8 @@ function buildCandidateActions(
   push(
     { type: 'capture-image' },
     {
-      expectedProgress: 'gather-evidence',
+      effectKind: 'store-evidence',
       summary: 'Keep the current frame as evidence without changing the camera pose.',
-      viewChangeType: 'gather-evidence',
     },
   );
 
@@ -491,17 +497,55 @@ function buildCandidateActions(
 function describeCandidateAction(action: Extract<StepwiseAction, { type: 'move' | 'rotate' }>): Omit<StepwiseCandidatePredictedOutcome, 'repeatsRecentAction'> {
   if (action.type === 'rotate') {
     return {
-      expectedProgress: 'change-viewpoint',
+      effectKind: 'rotate',
+      rotationDegrees: describeRotateEffect(action.primitive),
       summary: describeRotatePrimitive(action.primitive),
-      viewChangeType: 're-aim',
     };
   }
 
   return {
-    expectedProgress: action.primitive.startsWith('forward') ? 'advance' : 'change-viewpoint',
+    effectKind: 'translate',
     summary: describeMovePrimitive(action.primitive),
-    viewChangeType: 'viewpoint-change',
+    translationLocal: describeMoveEffect(action.primitive),
   };
+}
+
+function describeMoveEffect(primitive: StepwiseMovePrimitive): { forward: number; right: number; up: number } {
+  switch (primitive) {
+    case 'forward-short':
+      return { forward: MOVE_DISTANCE_MULTIPLIERS[primitive], right: 0, up: 0 };
+    case 'forward-medium':
+      return { forward: MOVE_DISTANCE_MULTIPLIERS[primitive], right: 0, up: 0 };
+    case 'back-short':
+      return { forward: MOVE_DISTANCE_MULTIPLIERS[primitive], right: 0, up: 0 };
+    case 'strafe-left-short':
+      return { forward: 0, right: MOVE_DISTANCE_MULTIPLIERS[primitive], up: 0 };
+    case 'strafe-right-short':
+      return { forward: 0, right: MOVE_DISTANCE_MULTIPLIERS[primitive], up: 0 };
+    case 'rise-short':
+      return { forward: 0, right: 0, up: MOVE_DISTANCE_MULTIPLIERS[primitive] };
+    case 'lower-short':
+      return { forward: 0, right: 0, up: MOVE_DISTANCE_MULTIPLIERS[primitive] };
+  }
+}
+
+function describeRotateEffect(primitive: StepwiseRotatePrimitive): { pitch: number; yaw: number } {
+  switch (primitive) {
+    case 'yaw-left-small':
+    case 'yaw-right-small':
+    case 'yaw-left-medium':
+    case 'yaw-right-medium':
+      return {
+        pitch: 0,
+        yaw: THREE.MathUtils.radToDeg(ROTATE_ANGLE_RADIANS[primitive]),
+      };
+    case 'pitch-up-small':
+    case 'pitch-down-small':
+      return {
+        pitch: THREE.MathUtils.radToDeg(ROTATE_ANGLE_RADIANS[primitive]),
+        yaw: 0,
+      };
+  }
 }
 
 function describeMovePrimitive(primitive: StepwiseMovePrimitive): string {

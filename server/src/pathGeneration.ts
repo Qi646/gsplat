@@ -285,10 +285,18 @@ export interface PathGenerationStepLocalIntent {
 }
 
 export interface PathGenerationStepCandidatePredictedOutcome {
-  expectedProgress: 'advance' | 'change-viewpoint' | 'gather-evidence' | 'preserve-state';
+  effectKind: 'preserve' | 'store-evidence' | 'translate' | 'rotate';
   repeatsRecentAction: boolean;
+  rotationDegrees?: {
+    pitch: number;
+    yaw: number;
+  };
   summary: string;
-  viewChangeType: 'gather-evidence' | 'preserve' | 're-aim' | 'viewpoint-change';
+  translationLocal?: {
+    forward: number;
+    right: number;
+    up: number;
+  };
 }
 
 export interface PathGenerationStepCandidateAction {
@@ -915,7 +923,7 @@ function buildStepSystemPrompt(): string {
     'When the current frame and the action history disagree, trust the current frame.',
     'The runtime provides a bounded candidateActions list. Evaluate those candidates instead of inventing new actions.',
     'Do not choose an action by matching prompt keywords, pathMode labels, or localIntent labels to primitive heuristics.',
-    'Choose an action only from explicit evidence in the current frame, current camera metadata, and the runtime-provided candidate predictedOutcome summaries.',
+    'Choose an action only from explicit evidence in the current frame, current camera metadata, and the runtime-provided candidate predictedOutcome data.',
     'localIntent is optional. If present, it must be an object with keys kind and successCriteria and should describe the immediate goal after you choose the action, not act as a heuristic that selects the action.',
     'candidateAssessment must be an array of zero or more objects with keys action, assessment, and optional score.',
     'chosenAction must be either {"type":"capture-image"}, {"type":"create-keyframe"}, {"type":"move","primitive":"..."}, or {"type":"rotate","primitive":"..."}.',
@@ -931,7 +939,7 @@ function buildStepSystemPrompt(): string {
     'If you want a short forward move, use {"type":"move","primitive":"forward-short"}. If you want to turn right, use {"type":"rotate","primitive":"yaw-right-small"} or {"type":"rotate","primitive":"yaw-right-medium"}.',
     'Yaw directions are camera turn directions in the current frame: if the subject sits to the right of center and should move toward center, prefer yaw-right; if the subject sits to the left of center and should move toward center, prefer yaw-left.',
     'Use yaw only to re-aim the camera. Do not claim that an in-place yaw reveals a different side or the front of a subject unless the current image already shows that this small re-aim is sufficient; otherwise prefer a move on a later step.',
-    'Use the provided candidate predictedOutcome summaries to reason about likely consequences; do not infer action effects from primitive names alone.',
+    'Use the provided candidate predictedOutcome data to reason about likely consequences; do not infer action effects from primitive names alone.',
     'Use create-keyframe when the current camera pose should be preserved in the draft.',
     'Use capture-image when the current frame is useful evidence to remember for later decisions.',
     'Do not use step-count, keyframe-count, or prompt-family heuristics to force create-keyframe, capture-image, move, rotate, or complete=true.',
@@ -1145,7 +1153,7 @@ function buildStepUserContent(request: PathGenerationStepRequest): Array<Record<
         `Strategy version: ${request.strategyVersion}`,
         `Step index: ${request.stepIndex}`,
         'Decide the next action from the current capture first. Use prior state only to track progress and avoid repetition.',
-        'Do not map prompt wording, pathMode labels, or localIntent labels directly to action primitives. Use only the visible current evidence plus candidate predicted outcomes.',
+        'Do not map prompt wording, pathMode labels, or localIntent labels directly to action primitives. Use only the visible current evidence plus candidate predictedOutcome data.',
         `Draft controls: ${JSON.stringify(request.draftControls)}`,
         `Draft keyframes: ${JSON.stringify(request.draftKeyframes)}`,
         `Action history: ${JSON.stringify(request.actionHistory)}`,
@@ -1837,30 +1845,55 @@ function parseStepCandidatePredictedOutcome(
     throw new PathGenerationError(400, `${context} must be an object.`);
   }
 
-  const expectedProgress = value['expectedProgress'];
-  const viewChangeType = value['viewChangeType'];
+  const effectKind = value['effectKind'];
   if (
-    expectedProgress !== 'advance'
-    && expectedProgress !== 'change-viewpoint'
-    && expectedProgress !== 'gather-evidence'
-    && expectedProgress !== 'preserve-state'
+    effectKind !== 'preserve'
+    && effectKind !== 'store-evidence'
+    && effectKind !== 'translate'
+    && effectKind !== 'rotate'
   ) {
-    throw new PathGenerationError(400, `${context}.expectedProgress must be a supported candidate progress label.`);
-  }
-  if (
-    viewChangeType !== 'gather-evidence'
-    && viewChangeType !== 'preserve'
-    && viewChangeType !== 're-aim'
-    && viewChangeType !== 'viewpoint-change'
-  ) {
-    throw new PathGenerationError(400, `${context}.viewChangeType must be a supported candidate view-change label.`);
+    throw new PathGenerationError(400, `${context}.effectKind must be preserve, store-evidence, translate, or rotate.`);
   }
 
   return {
-    expectedProgress,
+    effectKind,
     repeatsRecentAction: value['repeatsRecentAction'] === true,
+    rotationDegrees: readOptionalStepRotationDegrees(value['rotationDegrees'], `${context}.rotationDegrees`),
     summary: readString(value, 'summary', context),
-    viewChangeType,
+    translationLocal: readOptionalStepTranslationLocal(value['translationLocal'], `${context}.translationLocal`),
+  };
+}
+
+function readOptionalStepTranslationLocal(
+  value: unknown,
+  context: string,
+): { forward: number; right: number; up: number } | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+  if (!isRecord(value)) {
+    throw new PathGenerationError(400, `${context} must be an object.`);
+  }
+  return {
+    forward: readFiniteNumber(value, 'forward', context),
+    right: readFiniteNumber(value, 'right', context),
+    up: readFiniteNumber(value, 'up', context),
+  };
+}
+
+function readOptionalStepRotationDegrees(
+  value: unknown,
+  context: string,
+): { pitch: number; yaw: number } | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+  if (!isRecord(value)) {
+    throw new PathGenerationError(400, `${context} must be an object.`);
+  }
+  return {
+    pitch: readFiniteNumber(value, 'pitch', context),
+    yaw: readFiniteNumber(value, 'yaw', context),
   };
 }
 

@@ -71,28 +71,27 @@ function createStepRequest() {
       {
         action: { type: 'create-keyframe' },
         predictedOutcome: {
-          expectedProgress: 'preserve-state',
+          effectKind: 'preserve',
           repeatsRecentAction: true,
           summary: 'Preserve the current camera pose.',
-          viewChangeType: 'preserve',
         },
       },
       {
         action: { primitive: 'forward-medium', type: 'move' },
         predictedOutcome: {
-          expectedProgress: 'advance',
+          effectKind: 'translate',
           repeatsRecentAction: false,
           summary: 'Move forward along the current view direction.',
-          viewChangeType: 'viewpoint-change',
+          translationLocal: { forward: 0.18, right: 0, up: 0 },
         },
       },
       {
         action: { primitive: 'yaw-right-small', type: 'rotate' },
         predictedOutcome: {
-          expectedProgress: 'change-viewpoint',
+          effectKind: 'rotate',
           repeatsRecentAction: false,
+          rotationDegrees: { pitch: 0, yaw: -6 },
           summary: 'Turn slightly right in place.',
-          viewChangeType: 're-aim',
         },
       },
     ],
@@ -429,7 +428,8 @@ describe('pathGeneration request parsing', () => {
     expect(parsed.memoryCaptures[0]?.capturedAtStep).toBe(1);
     expect(parsed.actionHistory[0]?.action).toEqual({ type: 'create-keyframe' });
     expect(parsed.candidateActions).toHaveLength(3);
-    expect(parsed.candidateActions[1]?.predictedOutcome.viewChangeType).toBe('viewpoint-change');
+    expect(parsed.candidateActions[1]?.predictedOutcome.effectKind).toBe('translate');
+    expect(parsed.candidateActions[1]?.predictedOutcome.translationLocal).toEqual({ forward: 0.18, right: 0, up: 0 });
   });
 
   it('normalizes verify-capture aliases for active probes', () => {
@@ -1157,7 +1157,7 @@ describe('OpenAIVisionPathPlanner request compatibility', () => {
       : undefined;
     expect(systemMessage?.content).toContain('When the current frame and the action history disagree, trust the current frame.');
     expect(systemMessage?.content).toContain('Do not choose an action by matching prompt keywords, pathMode labels, or localIntent labels to primitive heuristics.');
-    expect(systemMessage?.content).toContain('Choose an action only from explicit evidence in the current frame, current camera metadata, and the runtime-provided candidate predictedOutcome summaries.');
+    expect(systemMessage?.content).toContain('Choose an action only from explicit evidence in the current frame, current camera metadata, and the runtime-provided candidate predictedOutcome data.');
     expect(systemMessage?.content).toContain('if the subject sits to the right of center and should move toward center, prefer yaw-right; if the subject sits to the left of center and should move toward center, prefer yaw-left.');
     expect(systemMessage?.content).toContain('Use yaw only to re-aim the camera.');
     expect(systemMessage?.content).toContain('Do not use step-count, keyframe-count, or prompt-family heuristics to force create-keyframe, capture-image, move, rotate, or complete=true.');
