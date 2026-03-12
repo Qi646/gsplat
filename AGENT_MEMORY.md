@@ -1,6 +1,7 @@
 # AGENT_MEMORY
 
 ## Current Context
+- 2026-03-12: Proposed agentic path V2 should be one shared architecture with phased capability rollout, not separate heuristic engines per prompt family. Shared layers: scene memory, prompt-to-shot-program compilation, bounded exploration controller, global planner over a viewpoint/navigation graph, deterministic local trajectory synthesizer, and verifier/critic. Capability-specific modules should be limited to grounding/extraction seams such as route grounding, portal/room topology grounding, and multi-entity grounding.
 - 2026-03-12: LAN-accessibility pass found no hardcoded `localhost` / `127.0.0.1` frontend fetch or axios URLs in product code; runtime API calls already use same-origin `/api/*`. The backend now reflects any dev origin by default, accepts `CORS_ORIGIN` overrides (`*`, `true` / `false`, or comma-delimited origin lists), the Vite `/api` proxy target is overrideable via `VITE_API_PROXY_TARGET`, and current product code does not use `navigator.clipboard`, `navigator.mediaDevices`, or geolocation. Plain `http://<LAN-IP>` still is not a secure context, so the explicit shared-memory `?viewerMode=default` diagnostic path may remain unavailable there and compatibility mode stays the safe LAN default.
 - 2026-03-12: Chrome DevTools MCP project smoke against the live app on `localhost:5173` passed the core non-AI viewer flow in `?renderer=mkkellogg&viewerMode=compat`: deterministic `smoke-grid.ply` load reported `sceneLoaded: true`, manual wheel-driven camera motion plus two keyframe captures enabled live preview/export, Inspect -> Fly -> Inspect switching worked, and a 3s 720p/30 FPS MP4 export completed with `output.mp4` after 91 rendered frames.
 - 2026-03-12: The same Chrome MCP smoke exposed two browser findings that are worth following up: every tested `mkkellogg` page still logs a Spark-side failed WASM request (`@sparkjsdev/spark` imported via a malformed `data:application/wasm` Vite path returning HTTP 431) plus an `Uncaught (in promise)` console error even when Spark is not the active renderer, and the Truck preset's agentic draft flow timed out after the built-in 60s generation budget while `capturing round 1 scout views` before recovering control.
@@ -141,6 +142,18 @@
 - For browser-level viewer regressions, prefer the committed local smoke fixture plus the app debug snapshot over remote presets so failures separate browser startup, viewer init, scene load, and visible render phases.
 
 ## Active Plan
+- Define agentic path V2 around a shared planning stack:
+  - `SceneMemoryBuilder`: accumulates captures, grounded entities/regions/routes/portals, traversability/free-space estimates, and candidate viewpoints.
+  - `PromptCompiler`: converts free-form prompts into a bounded shot program such as `traverse(route)`, `orbit(entity)`, `transition(entityA->entityB)`, `inspect(entity)`, or `exit(region)`.
+  - `ExplorationController`: runs a bounded observe -> decide -> move/capture loop to gather missing evidence before planning.
+  - `GlobalPlanBuilder`: plans subgoal order and coarse path over viewpoint / navigation graphs.
+  - `TrajectorySynthesizer`: converts graph decisions into smooth camera motion with hard safety and continuity constraints.
+  - `DraftCritic`: verifies semantic match, visibility, plausibility, and transition quality, then permits bounded repair.
+- Roll out V2 by capability envelope instead of trying to solve every prompt family at once:
+  - `V2.1`: single-route traversal (`follow the curved road`, `weave through the trees`) on a shared route/traversability stack.
+  - `V2.2`: compound two-subject / two-shot programs (`orbit the table then push in on the apple`) using the same planner with multi-entity grounding.
+  - `V2.3`: room / portal traversal (`go through the rooms and exit the building`) using shared planning plus portal/topology grounding.
+  - Leave open-ended exploration and larger multi-beat narratives for later after the shared stack is stable and evaluated.
 - Next viewer-specific bug follow-up should investigate the Firefox `Error creating WebGL context.` startup failure now captured by the Playwright regression harness.
 - Finish the remaining deliverable polish: demo recording plus the one-page design note.
 
