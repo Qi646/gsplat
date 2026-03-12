@@ -666,6 +666,52 @@ describe('pathGeneration model-response parsing', () => {
     });
   });
 
+  it('repairs move actions whose primitive is clearly a rotate primitive', () => {
+    const parsed = parsePathGenerationStepModelResponse({
+      action: {
+        primitive: 'yaw-right-small',
+        type: 'move',
+      },
+      complete: false,
+      pathMode: 'subject-centric',
+      reason: 'Turn right slightly to continue the orbit.',
+    });
+
+    expect(parsed).toEqual({
+      action: {
+        primitive: 'yaw-right-small',
+        type: 'rotate',
+      },
+      complete: false,
+      pathMode: 'subject-centric',
+      reason: 'Turn right slightly to continue the orbit.',
+      warning: undefined,
+    });
+  });
+
+  it('repairs rotate actions whose primitive is clearly a move primitive', () => {
+    const parsed = parsePathGenerationStepModelResponse({
+      action: {
+        primitive: 'forward-medium',
+        type: 'rotate',
+      },
+      complete: false,
+      pathMode: 'route-following',
+      reason: 'Advance down the route.',
+    });
+
+    expect(parsed).toEqual({
+      action: {
+        primitive: 'forward-medium',
+        type: 'move',
+      },
+      complete: false,
+      pathMode: 'route-following',
+      reason: 'Advance down the route.',
+      warning: undefined,
+    });
+  });
+
   it('accepts the canonical create-keyframe step response shape', () => {
     const parsed = parsePathGenerationStepModelResponse({
       action: { type: 'create-keyframe' },

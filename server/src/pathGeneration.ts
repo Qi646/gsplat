@@ -873,6 +873,9 @@ function buildStepSystemPrompt(): string {
     'If action.type is move or rotate, primitive must be one of the allowed primitives for that type.',
     'Do not mix action types and primitives. Never pair rotate with create-keyframe, or move with a rotate primitive.',
     'Do not return shorthand labels, prose actions, or synonyms inside action. Use the exact enum strings above.',
+    'Canonical valid examples: {"type":"create-keyframe"}, {"type":"capture-image"}, {"type":"move","primitive":"strafe-right-short"}, {"type":"rotate","primitive":"yaw-right-small"}.',
+    'Canonical invalid examples: {"type":"move","primitive":"yaw-right-small"}, {"type":"rotate","primitive":"forward-short"}, {"type":"create-keyframe","primitive":"forward-short"}.',
+    'If you want a short forward move, use {"type":"move","primitive":"forward-short"}. If you want to turn right, use {"type":"rotate","primitive":"yaw-right-small"} or {"type":"rotate","primitive":"yaw-right-medium"}.',
     'Use create-keyframe when the current camera pose should be preserved in the draft.',
     'Use capture-image when the current frame is useful evidence to remember for later decisions.',
     'Prefer a first create-keyframe within the first few steps and a second create-keyframe before completing.',
@@ -1789,6 +1792,13 @@ function parseStepAction(value: unknown, context: string): PathGenerationStepAct
   }
 
   if (type === 'move') {
+    const repairedRotatePrimitive = tryParseRotatePrimitive(primitiveValue);
+    if (repairedRotatePrimitive) {
+      return {
+        primitive: repairedRotatePrimitive,
+        type: 'rotate',
+      };
+    }
     return {
       primitive: parseMovePrimitive(primitiveValue, `${context}.primitive`),
       type,
@@ -1796,6 +1806,13 @@ function parseStepAction(value: unknown, context: string): PathGenerationStepAct
   }
 
   if (type === 'rotate') {
+    const repairedMovePrimitive = tryParseMovePrimitive(primitiveValue);
+    if (repairedMovePrimitive) {
+      return {
+        primitive: repairedMovePrimitive,
+        type: 'move',
+      };
+    }
     return {
       primitive: parseRotatePrimitive(primitiveValue, `${context}.primitive`),
       type,
@@ -2094,6 +2111,17 @@ function parseMovePrimitive(value: unknown, context: string): PathGenerationStep
   throw new PathGenerationError(502, `${context} must be a supported move primitive.`);
 }
 
+function tryParseMovePrimitive(value: unknown): PathGenerationStepMovePrimitive | null {
+  try {
+    return parseMovePrimitive(value, 'action.primitive');
+  } catch (error) {
+    if (error instanceof PathGenerationError) {
+      return null;
+    }
+    throw error;
+  }
+}
+
 function parseRotatePrimitive(value: unknown, context: string): PathGenerationStepRotatePrimitive {
   if (
     value === 'yaw-left-small'
@@ -2129,6 +2157,17 @@ function parseRotatePrimitive(value: unknown, context: string): PathGenerationSt
   }
 
   throw new PathGenerationError(502, `${context} must be a supported rotate primitive.`);
+}
+
+function tryParseRotatePrimitive(value: unknown): PathGenerationStepRotatePrimitive | null {
+  try {
+    return parseRotatePrimitive(value, 'action.primitive');
+  } catch (error) {
+    if (error instanceof PathGenerationError) {
+      return null;
+    }
+    throw error;
+  }
 }
 
 function isMovePrimitiveAlias(value: unknown): boolean {
