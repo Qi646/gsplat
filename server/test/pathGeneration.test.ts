@@ -1112,7 +1112,7 @@ describe('OpenAIVisionPathPlanner request compatibility', () => {
     expect(requestBodies[0]?.['response_format']).toEqual({ type: 'json_object' });
   });
 
-  it('includes explicit current-frame yaw framing guidance for stepwise planning', async () => {
+  it('forbids heuristic action matching in the stepwise system prompt', async () => {
     const requestBodies: Array<Record<string, unknown>> = [];
     const fetchImpl = vi.fn(async (_input: unknown, init?: RequestInit) => {
       requestBodies.push(JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>);
@@ -1156,8 +1156,11 @@ describe('OpenAIVisionPathPlanner request compatibility', () => {
         && typeof (entry as { content?: unknown }).content === 'string')
       : undefined;
     expect(systemMessage?.content).toContain('When the current frame and the action history disagree, trust the current frame.');
+    expect(systemMessage?.content).toContain('Do not choose an action by matching prompt keywords, pathMode labels, or localIntent labels to primitive heuristics.');
+    expect(systemMessage?.content).toContain('Choose an action only from explicit evidence in the current frame, current camera metadata, and the runtime-provided candidate predictedOutcome summaries.');
     expect(systemMessage?.content).toContain('if the subject sits to the right of center and should move toward center, prefer yaw-right; if the subject sits to the left of center and should move toward center, prefer yaw-left.');
     expect(systemMessage?.content).toContain('Use yaw only to re-aim the camera.');
+    expect(systemMessage?.content).toContain('Do not use step-count, keyframe-count, or prompt-family heuristics to force create-keyframe, capture-image, move, rotate, or complete=true.');
   });
 
   it('falls back from reasoning_effort and parses structured completion content', async () => {
