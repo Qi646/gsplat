@@ -2,9 +2,10 @@ export type AgenticOrientationMode = 'look-at-subject' | 'look-forward';
 export type AgenticOrbitDirection = 'clockwise' | 'counterclockwise';
 export type AgenticVerticalBias = 'low' | 'mid' | 'high';
 export type PathGenerationPathMode = 'subject-centric' | 'route-following' | 'multi-subject' | 'ambiguous';
-export type PathGenerationSegmentType = 'hold' | 'arc' | 'dolly' | 'pedestal';
+export type PathGenerationSegmentType = 'hold' | 'arc' | 'dolly' | 'pedestal' | 'traverse';
 export type PathGenerationDollyDirection = 'in' | 'out';
 export type PathGenerationPedestalDirection = 'up' | 'down';
+export type PathGenerationLateralBias = 'left' | 'center' | 'right';
 export type PathGenerationHoldPreference = 'auto' | 'none' | 'brief' | 'linger';
 export type PathGenerationVerifyCaptureKind = 'draft-sample' | 'active-probe';
 export type PathGenerationVerifyProbeReason =
@@ -79,6 +80,21 @@ export interface PathGenerationSubjectLocalization {
   pixelY: number;
 }
 
+export interface PathGenerationRoutePixelPoint {
+  x: number;
+  y: number;
+}
+
+export interface PathGenerationRouteObservation {
+  captureId: string;
+  centerlinePixels: PathGenerationRoutePixelPoint[];
+  confidence: number;
+  entryPixel: PathGenerationRoutePixelPoint;
+  exitPixel: PathGenerationRoutePixelPoint;
+  routeKind: string | null;
+  widthPixels: number | null;
+}
+
 export interface PathGenerationGroundRequest {
   captureRound: number;
   captures: PathGenerationCapture[];
@@ -91,6 +107,7 @@ export interface PathGenerationGroundRequest {
 export interface PathGenerationGroundResponse {
   intent: PathGenerationPromptIntent;
   pathMode: PathGenerationPathMode;
+  routeObservations?: PathGenerationRouteObservation[];
   subjectLocalizations: PathGenerationSubjectLocalization[];
   unsupportedReason?: string;
   warning?: string;
@@ -104,6 +121,15 @@ export interface PathGenerationGroundedSubject {
   confidence: number;
   meanResidual: number;
   sceneScale: number;
+}
+
+export interface PathGenerationGroundedRoute {
+  averageClearance: number;
+  confidence: number;
+  length: number;
+  maxTurnDegrees: number;
+  routeId: string;
+  waypoints: PathGenerationVector3[];
 }
 
 export interface PathGenerationBaseSegmentPlan {
@@ -137,16 +163,25 @@ export interface PathGenerationPedestalSegmentPlan extends PathGenerationBaseSeg
   travelDirection?: PathGenerationPedestalDirection;
 }
 
+export interface PathGenerationTraverseSegmentPlan extends PathGenerationBaseSegmentPlan {
+  distanceRatio?: number;
+  lateralBias?: PathGenerationLateralBias;
+  segmentType: 'traverse';
+  verticalBias?: AgenticVerticalBias;
+}
+
 export type PathGenerationSegmentPlan =
   | PathGenerationHoldSegmentPlan
   | PathGenerationArcSegmentPlan
   | PathGenerationDollySegmentPlan
-  | PathGenerationPedestalSegmentPlan;
+  | PathGenerationPedestalSegmentPlan
+  | PathGenerationTraverseSegmentPlan;
 
 export interface PathGenerationComposeRequest {
   currentCamera: PathGenerationCamera;
   draftControls: PathGenerationDraftControls;
-  groundedSubject: PathGenerationGroundedSubject;
+  groundedRoute: PathGenerationGroundedRoute | null;
+  groundedSubject: PathGenerationGroundedSubject | null;
   intent: PathGenerationPromptIntent;
   pathTail: PathGenerationPathTail | null;
   sceneBounds: PathGenerationBounds;
@@ -166,7 +201,13 @@ export interface PathGenerationVerifyCapture {
   id: string;
   imageDataUrl: string;
   probeReason: PathGenerationVerifyProbeReason;
-  projectedSubject: {
+  projectedRoute?: {
+    centerNdcX: number;
+    clearanceMargin: number;
+    headingErrorDegrees: number;
+    visibleFraction: number;
+  };
+  projectedSubject?: {
     ndcX: number;
     ndcY: number;
     visible: boolean;
@@ -179,7 +220,8 @@ export interface PathGenerationVerifyRequest {
   captures: PathGenerationVerifyCapture[];
   currentCamera: PathGenerationCamera;
   draftControls: PathGenerationDraftControls;
-  groundedSubject: PathGenerationGroundedSubject;
+  groundedRoute: PathGenerationGroundedRoute | null;
+  groundedSubject: PathGenerationGroundedSubject | null;
   intent: PathGenerationPromptIntent;
   prompt: string;
   sceneBounds: PathGenerationBounds;
@@ -206,7 +248,7 @@ export interface PathGenerationPlannerStatus {
     unsupportedPathModes: PathGenerationPathMode[];
   };
   model: string | null;
-  plannerVersion: 'multistep-v1';
+  plannerVersion: 'multistep-v2';
   reason: string | null;
 }
 
@@ -267,9 +309,9 @@ const STATUS_CAPABILITIES = {
   maxCaptureRounds: 2,
   maxSegments: 4,
   maxVerificationCaptures: 8,
-  segmentTypes: ['hold', 'arc', 'dolly', 'pedestal'] as PathGenerationSegmentType[],
-  supportedPathModes: ['subject-centric'] as PathGenerationPathMode[],
-  unsupportedPathModes: ['route-following', 'multi-subject', 'ambiguous'] as PathGenerationPathMode[],
+  segmentTypes: ['hold', 'arc', 'dolly', 'pedestal', 'traverse'] as PathGenerationSegmentType[],
+  supportedPathModes: ['subject-centric', 'route-following'] as PathGenerationPathMode[],
+  unsupportedPathModes: ['multi-subject', 'ambiguous'] as PathGenerationPathMode[],
 };
 
 export class PathGenerationError extends Error {
@@ -304,7 +346,7 @@ export class OpenAIVisionPathPlanner implements PathGenerationPlanner {
         available: false,
         capabilities: STATUS_CAPABILITIES,
         model,
-        plannerVersion: 'multistep-v1',
+        plannerVersion: 'multistep-v2',
         reason: 'Agentic path generation is disabled because OPENAI_API_KEY is not configured on the server.',
       };
     }
@@ -313,7 +355,7 @@ export class OpenAIVisionPathPlanner implements PathGenerationPlanner {
       available: true,
       capabilities: STATUS_CAPABILITIES,
       model,
-      plannerVersion: 'multistep-v1',
+      plannerVersion: 'multistep-v2',
       reason: null,
     };
   }
@@ -330,7 +372,7 @@ export class OpenAIVisionPathPlanner implements PathGenerationPlanner {
       parsedRequest.captures,
     );
 
-    if (response.pathMode !== 'subject-centric' && !response.unsupportedReason) {
+    if (STATUS_CAPABILITIES.unsupportedPathModes.includes(response.pathMode) && !response.unsupportedReason) {
       response.unsupportedReason = defaultUnsupportedReasonForPathMode(response.pathMode);
     }
 
@@ -341,7 +383,7 @@ export class OpenAIVisionPathPlanner implements PathGenerationPlanner {
     const parsedRequest = parsePathGenerationComposeRequest(request);
     const apiKey = this.requireApiKey();
 
-    if (parsedRequest.intent.pathMode !== 'subject-centric') {
+    if (STATUS_CAPABILITIES.unsupportedPathModes.includes(parsedRequest.intent.pathMode)) {
       throw new PathGenerationError(
         400,
         defaultUnsupportedReasonForPathMode(parsedRequest.intent.pathMode),
@@ -460,11 +502,17 @@ export function parsePathGenerationComposeRequest(input: unknown): PathGeneratio
   }
 
   const rawValidationFeedback = input['validationFeedback'];
+  const intent = parsePromptIntent(input['intent'], 'intent');
   return {
     currentCamera: parseCamera(input['currentCamera'], 'currentCamera'),
     draftControls: parseDraftControls(input['draftControls'], 'draftControls'),
-    groundedSubject: parseGroundedSubject(input['groundedSubject'], 'groundedSubject'),
-    intent: parsePromptIntent(input['intent'], 'intent'),
+    groundedRoute: intent.pathMode === 'route-following'
+      ? parseGroundedRoute(input['groundedRoute'], 'groundedRoute')
+      : null,
+    groundedSubject: intent.pathMode === 'subject-centric'
+      ? parseGroundedSubject(input['groundedSubject'], 'groundedSubject')
+      : null,
+    intent,
     pathTail: input['pathTail'] === null || input['pathTail'] === undefined
       ? null
       : parsePathTail(input['pathTail'], 'pathTail'),
@@ -491,12 +539,18 @@ export function parsePathGenerationVerifyRequest(input: unknown): PathGeneration
     );
   }
 
+  const intent = parsePromptIntent(input['intent'], 'intent');
   return {
     captures: rawCaptures.map((capture, index) => parseVerifyCapture(capture, `captures[${index}]`)),
     currentCamera: parseCamera(input['currentCamera'], 'currentCamera'),
     draftControls: parseDraftControls(input['draftControls'], 'draftControls'),
-    groundedSubject: parseGroundedSubject(input['groundedSubject'], 'groundedSubject'),
-    intent: parsePromptIntent(input['intent'], 'intent'),
+    groundedRoute: intent.pathMode === 'route-following'
+      ? parseGroundedRoute(input['groundedRoute'], 'groundedRoute')
+      : null,
+    groundedSubject: intent.pathMode === 'subject-centric'
+      ? parseGroundedSubject(input['groundedSubject'], 'groundedSubject')
+      : null,
+    intent,
     prompt: readString(input, 'prompt', 'request'),
     sceneBounds: parseBounds(input['sceneBounds'], 'sceneBounds'),
     segments: parseSegmentPlanArray(input['segments'], 'segments'),
@@ -517,11 +571,15 @@ export function parsePathGenerationGroundModelResponse(
   if (!Array.isArray(rawLocalizations)) {
     throw new PathGenerationError(502, 'Vision planner grounding response is missing subjectLocalizations.');
   }
+  const rawRouteObservations = input['routeObservations'];
 
   const intent = parsePromptIntent(input['intent'], 'intent', pathMode);
   return {
     intent: { ...intent, pathMode },
     pathMode,
+    routeObservations: pathMode === 'route-following'
+      ? parseRouteObservationArray(rawRouteObservations, captures)
+      : undefined,
     subjectLocalizations: rawLocalizations.map((entry, index) =>
       parseLocalization(entry, `subjectLocalizations[${index}]`, captures, index)),
     unsupportedReason: readOptionalNonEmptyString(input, 'unsupportedReason'),
@@ -579,40 +637,47 @@ function buildGroundSystemPrompt(): string {
   return [
     'You are the grounding step of a camera path planner for a 3D scene viewer.',
     'Classify the prompt into exactly one pathMode: "subject-centric", "route-following", "multi-subject", or "ambiguous".',
-    'Only "subject-centric" is supported in v1.',
+    'In multistep-v2, "subject-centric" and "route-following" are supported.',
     'Route-following prompts include weave through, pass between, move down a corridor, or follow a route through space.',
     'Multi-subject prompts include visiting multiple landmarks or switching primary subjects.',
     'Ambiguous means there is not one clear primary subject or movement request.',
-    'Return JSON only with keys pathMode, intent, subjectLocalizations, warning, unsupportedReason.',
+    'Return JSON only with keys pathMode, intent, subjectLocalizations, routeObservations, warning, unsupportedReason.',
     'intent must contain pathMode, continuousPath, subjectHint, tone, orientationPreference, targetDurationSeconds, requestedMoveTypes.',
-    'For supported prompts, subjectLocalizations should include every capture where the primary subject is visible.',
+    'For subject-centric prompts, subjectLocalizations should include every capture where the primary subject is visible.',
+    'For route-following prompts, routeObservations should include every capture where the route is visible.',
     'Every subjectLocalizations entry must include captureId, pixelX, pixelY, confidence.',
+    'Every routeObservations entry must include captureId, confidence, entryPixel, exitPixel, centerlinePixels, routeKind, widthPixels.',
+    'Each route centerline must contain 3 to 8 ordered pixel points from near-to-far traversal.',
     'captureId must exactly match one of the input capture ids.',
     'Never invent captures that are not present in the input.',
-    'When unsupported, set unsupportedReason and leave subjectLocalizations empty unless a clear primary subject is still visible.',
-    'requestedMoveTypes may only contain hold, arc, dolly, pedestal.',
+    'When unsupported, set unsupportedReason and leave subjectLocalizations and routeObservations empty.',
+    'requestedMoveTypes may only contain hold, arc, dolly, pedestal, traverse.',
     'Map orbit, turntable, circle-around requests to "arc"; push-in/pull-back to "dolly"; rise/drop to "pedestal"; pause/linger to "hold".',
+    'Map follow, weave, corridor, aisle, path-through, or move-along requests to "traverse".',
   ].join(' ');
 }
 
 function buildComposeSystemPrompt(): string {
   return [
     'You are the composition step of a camera path planner for a 3D scene viewer.',
-    'The prompt has already been classified as subject-centric and the subject is already grounded in 3D.',
+    'The prompt has already been classified and grounded in 3D.',
     'Return JSON only with keys summary, segments, warning.',
-    'Use at most 4 ordered segments and only these segment types: hold, arc, dolly, pedestal.',
+    'Use at most 4 ordered segments and only these segment types: hold, arc, dolly, pedestal, traverse.',
     'Every segment must include segmentType, durationSeconds, lookMode.',
     'Arc segments may include sweepDegrees, direction, verticalBias.',
     'Dolly segments may include travelDirection, distanceScale, verticalBias.',
     'Pedestal segments may include travelDirection and heightScale.',
+    'Traverse segments may include distanceRatio, lateralBias, and verticalBias.',
     'Hold segments may include fovDelta.',
     'When verticalBias is present, it must be the string "low", "mid", or "high"; never emit numeric verticalBias values.',
     'When direction is present, it must be the string "clockwise" or "counterclockwise".',
+    'When lateralBias is present, it must be the string "left", "center", or "right".',
     'Do not output raw keyframes.',
-    'Keep the overall path cinematic, continuous, and compatible with a single primary subject.',
+    'Keep the overall path cinematic, continuous, and compatible with one supported prompt mode.',
     'Respect draftControls when provided. requestedDurationSeconds should strongly guide the overall duration.',
     'When holdPreference is "brief" or "linger", prefer a final hold segment. "linger" should be materially longer than a beat.',
     'When holdPreference is "none", do not include hold segments.',
+    'For route-following, emit at most one traverse segment and prefer optional opening/ending hold segments over extra route fragments.',
     'If validationFeedback is present, adjust the segment choices to address those failures.',
   ].join(' ');
 }
@@ -628,6 +693,7 @@ function buildVerifySystemPrompt(): string {
     '"active-probe" captures are small nearby inspection views around a risky draft moment; they are evidence-gathering probes, not literal path poses.',
     'Use active-probe captures to judge uncertainty, occlusion, floor clearance, and long-path plausibility, but do not require the final path to exactly match a probe framing.',
     'Reject drafts that visibly lose the subject, drift away from the requested framing, dip under the world/floor, or fail a requested ending hold.',
+    'For route-following, also reject drafts that lose the route, look implausibly misaligned to the route direction, or squeeze through visibly low-clearance sections.',
     'When holdPreference is "brief" or "linger", check that the later verification frames read like a real pause rather than continuous motion.',
     'When holdPreference is "none", treat the explicit control as overriding hold language in the prompt.',
     'If approved is false, issues must contain short, actionable reasons the composer can address.',
@@ -762,6 +828,7 @@ function buildComposeUserContent(request: PathGenerationComposeRequest): string 
     `Intent: ${JSON.stringify(request.intent)}`,
     `Draft controls: ${JSON.stringify(request.draftControls)}`,
     `Grounded subject: ${JSON.stringify(request.groundedSubject)}`,
+    `Grounded route: ${JSON.stringify(request.groundedRoute)}`,
     `Scene bounds: ${JSON.stringify(request.sceneBounds)}`,
     `Current camera: ${JSON.stringify(request.currentCamera)}`,
     `Path tail: ${JSON.stringify(request.pathTail)}`,
@@ -779,6 +846,7 @@ function buildVerifyUserContent(request: PathGenerationVerifyRequest): Array<Rec
         `Draft summary: ${request.summary}`,
         `Segments: ${JSON.stringify(request.segments)}`,
         `Grounded subject: ${JSON.stringify(request.groundedSubject)}`,
+        `Grounded route: ${JSON.stringify(request.groundedRoute)}`,
         `Scene bounds: ${JSON.stringify(request.sceneBounds)}`,
         `Current camera: ${JSON.stringify(request.currentCamera)}`,
       ].join('\n'),
@@ -792,6 +860,7 @@ function buildVerifyUserContent(request: PathGenerationVerifyRequest): Array<Rec
         camera: capture.camera,
         captureKind: capture.captureKind,
         probeReason: capture.probeReason,
+        projectedRoute: capture.projectedRoute,
         projectedSubject: capture.projectedSubject,
         timeSeconds: capture.timeSeconds,
       })}`,
@@ -995,6 +1064,21 @@ function parseGroundedSubject(value: unknown, context: string): PathGenerationGr
   };
 }
 
+function parseGroundedRoute(value: unknown, context: string): PathGenerationGroundedRoute {
+  if (!isRecord(value)) {
+    throw new PathGenerationError(400, `${context} must be an object.`);
+  }
+
+  return {
+    averageClearance: readPositiveNumber(value, 'averageClearance', context),
+    confidence: readFiniteNumber(value, 'confidence', context),
+    length: readPositiveNumber(value, 'length', context),
+    maxTurnDegrees: readFiniteNumber(value, 'maxTurnDegrees', context),
+    routeId: readString(value, 'routeId', context),
+    waypoints: parseVector3Array(value['waypoints'], `${context}.waypoints`),
+  };
+}
+
 function parseLocalization(
   value: unknown,
   context: string,
@@ -1011,6 +1095,89 @@ function parseLocalization(
     pixelX: readFiniteNumber(value, 'pixelX', context),
     pixelY: readFiniteNumber(value, 'pixelY', context),
   };
+}
+
+function parseRouteObservationArray(
+  value: unknown,
+  captures: PathGenerationCapture[],
+): PathGenerationRouteObservation[] {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new PathGenerationError(502, 'Vision planner grounding response is missing routeObservations.');
+  }
+
+  return value.map((entry, index) => parseRouteObservation(entry, `routeObservations[${index}]`, captures, index));
+}
+
+function parseRouteObservation(
+  value: unknown,
+  context: string,
+  captures: PathGenerationCapture[],
+  observationIndex: number,
+): PathGenerationRouteObservation {
+  if (!isRecord(value)) {
+    throw new PathGenerationError(502, `${context} must be an object.`);
+  }
+
+  const captureId = resolveLocalizationCaptureId(value, context, captures, observationIndex);
+  const capture = captures.find(entry => entry.id === captureId) ?? null;
+  return {
+    captureId,
+    centerlinePixels: parseRoutePixelPointArray(
+      value['centerlinePixels'] ?? value['centerline'] ?? value['polyline'],
+      `${context}.centerlinePixels`,
+      capture,
+      3,
+      8,
+    ),
+    confidence: readFiniteNumber(value, 'confidence', context),
+    entryPixel: parseRoutePixelPoint(value['entryPixel'] ?? value['entry'], `${context}.entryPixel`, capture),
+    exitPixel: parseRoutePixelPoint(value['exitPixel'] ?? value['exit'], `${context}.exitPixel`, capture),
+    routeKind: readNullableString(value, 'routeKind'),
+    widthPixels: readNullableFiniteNumber(value, 'widthPixels'),
+  };
+}
+
+function parseRoutePixelPointArray(
+  value: unknown,
+  context: string,
+  capture: PathGenerationCapture | null,
+  minimumLength: number,
+  maximumLength: number,
+): PathGenerationRoutePixelPoint[] {
+  if (!Array.isArray(value) || value.length < minimumLength) {
+    throw new PathGenerationError(502, `${context} must be an array with at least ${minimumLength} points.`);
+  }
+
+  return value
+    .slice(0, maximumLength)
+    .map((entry, index) => parseRoutePixelPoint(entry, `${context}[${index}]`, capture));
+}
+
+function parseRoutePixelPoint(
+  value: unknown,
+  context: string,
+  capture: PathGenerationCapture | null,
+): PathGenerationRoutePixelPoint {
+  if (!isRecord(value)) {
+    throw new PathGenerationError(502, `${context} must be an object.`);
+  }
+
+  const x = readFiniteNumber(
+    value,
+    'x' in value ? 'x' : 'pixelX',
+    context,
+  );
+  const y = readFiniteNumber(
+    value,
+    'y' in value ? 'y' : 'pixelY',
+    context,
+  );
+
+  if (capture && (x < 0 || x > capture.width || y < 0 || y > capture.height)) {
+    throw new PathGenerationError(502, `${context} must stay within the capture bounds.`);
+  }
+
+  return { x, y };
 }
 
 function resolveLocalizationCaptureId(
@@ -1161,7 +1328,7 @@ function parsePromptIntent(
       `${context}.orientationPreference`,
     ),
     pathMode,
-    requestedMoveTypes: parseRequestedMoveTypes(value['requestedMoveTypes'], `${context}.requestedMoveTypes`),
+    requestedMoveTypes: parseRequestedMoveTypes(value['requestedMoveTypes'], `${context}.requestedMoveTypes`, pathMode),
     subjectHint: readNullableString(value, 'subjectHint'),
     targetDurationSeconds: readNullableFiniteNumber(value, 'targetDurationSeconds'),
     tone: readNullableString(value, 'tone'),
@@ -1192,15 +1359,20 @@ function parseQuaternion(value: unknown, context: string): PathGenerationQuatern
   };
 }
 
-function parseRequestedMoveTypes(value: unknown, context: string): PathGenerationSegmentType[] {
+function parseRequestedMoveTypes(
+  value: unknown,
+  context: string,
+  pathMode: PathGenerationPathMode,
+): PathGenerationSegmentType[] {
+  const fallbackMove = pathMode === 'route-following' ? 'traverse' : 'arc';
   if (!Array.isArray(value)) {
-    return ['arc'];
+    return [fallbackMove];
   }
 
   const moves = value
     .map(entry => coerceSegmentType(entry))
     .filter((entry): entry is PathGenerationSegmentType => entry !== null);
-  return moves.length > 0 ? Array.from(new Set(moves)) : ['arc'];
+  return moves.length > 0 ? Array.from(new Set(moves)) : [fallbackMove];
 }
 
 function parseSegmentPlanArray(value: unknown, context: string): PathGenerationSegmentPlan[] {
@@ -1220,7 +1392,7 @@ function parseSegmentPlan(value: unknown, context: string): PathGenerationSegmen
 
   const segmentType = coerceSegmentType(value['segmentType']);
   if (!segmentType) {
-    throw new PathGenerationError(502, `${context}.segmentType must be hold, arc, dolly, or pedestal.`);
+    throw new PathGenerationError(502, `${context}.segmentType must be hold, arc, dolly, pedestal, or traverse.`);
   }
 
   const baseSegment: PathGenerationBaseSegmentPlan = {
@@ -1263,6 +1435,20 @@ function parseSegmentPlan(value: unknown, context: string): PathGenerationSegmen
     };
   }
 
+  if (segmentType === 'traverse') {
+    return {
+      ...baseSegment,
+      distanceRatio: readOptionalFiniteNumber(value, 'distanceRatio'),
+      lateralBias: value['lateralBias'] === undefined
+        ? undefined
+        : parseLateralBias(value['lateralBias'], `${context}.lateralBias`),
+      segmentType,
+      verticalBias: value['verticalBias'] === undefined
+        ? undefined
+        : parseVerticalBias(value['verticalBias'], `${context}.verticalBias`),
+    };
+  }
+
   return {
     ...baseSegment,
     heightScale: readOptionalFiniteNumber(value, 'heightScale'),
@@ -1274,7 +1460,7 @@ function parseSegmentPlan(value: unknown, context: string): PathGenerationSegmen
 }
 
 function coerceSegmentType(value: unknown): PathGenerationSegmentType | null {
-  if (value === 'hold' || value === 'arc' || value === 'dolly' || value === 'pedestal') {
+  if (value === 'hold' || value === 'arc' || value === 'dolly' || value === 'pedestal' || value === 'traverse') {
     return value;
   }
 
@@ -1294,6 +1480,9 @@ function coerceSegmentType(value: unknown): PathGenerationSegmentType | null {
   }
   if (normalized === 'pause' || normalized === 'linger' || normalized === 'still') {
     return 'hold';
+  }
+  if (normalized === 'traverse' || normalized === 'follow' || normalized === 'route' || normalized === 'travel') {
+    return 'traverse';
   }
 
   return null;
@@ -1381,6 +1570,27 @@ function parsePedestalDirection(value: unknown, context: string): PathGeneration
   throw new PathGenerationError(502, `${context} must be "up" or "down".`);
 }
 
+function parseLateralBias(value: unknown, context: string): PathGenerationLateralBias {
+  if (value === 'left' || value === 'center' || value === 'right') {
+    return value;
+  }
+
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (normalized.includes('left')) {
+      return 'left';
+    }
+    if (normalized.includes('right')) {
+      return 'right';
+    }
+    if (normalized.includes('center') || normalized.includes('middle') || normalized.includes('balanced')) {
+      return 'center';
+    }
+  }
+
+  throw new PathGenerationError(502, `${context} must be "left", "center", or "right".`);
+}
+
 function parseHoldPreference(value: unknown, context: string): PathGenerationHoldPreference {
   if (value === 'auto' || value === 'none' || value === 'brief' || value === 'linger') {
     return value;
@@ -1414,6 +1624,14 @@ function parseVector3(value: unknown, context: string): PathGenerationVector3 {
   };
 }
 
+function parseVector3Array(value: unknown, context: string): PathGenerationVector3[] {
+  if (!Array.isArray(value) || value.length < 2) {
+    throw new PathGenerationError(400, `${context} must be an array with at least two points.`);
+  }
+
+  return value.map((entry, index) => parseVector3(entry, `${context}[${index}]`));
+}
+
 function parseVerifyCapture(value: unknown, context: string): PathGenerationVerifyCapture {
   if (!isRecord(value)) {
     throw new PathGenerationError(400, `${context} must be an object.`);
@@ -1426,7 +1644,12 @@ function parseVerifyCapture(value: unknown, context: string): PathGenerationVeri
     id: readString(value, 'id', context),
     imageDataUrl: readString(value, 'imageDataUrl', context),
     probeReason: parseVerifyProbeReason(value['probeReason'] ?? 'overview', `${context}.probeReason`),
-    projectedSubject: parseVerifyProjectedSubject(value['projectedSubject'], `${context}.projectedSubject`),
+    projectedRoute: value['projectedRoute'] === undefined
+      ? undefined
+      : parseVerifyProjectedRoute(value['projectedRoute'], `${context}.projectedRoute`),
+    projectedSubject: value['projectedSubject'] === undefined
+      ? undefined
+      : parseVerifyProjectedSubject(value['projectedSubject'], `${context}.projectedSubject`),
     timeSeconds: readFiniteNumber(value, 'timeSeconds', context),
     width: readFiniteNumber(value, 'width', context),
   };
@@ -1499,7 +1722,7 @@ function parseVerifyProbeReason(value: unknown, context: string): PathGeneration
 function parseVerifyProjectedSubject(
   value: unknown,
   context: string,
-): PathGenerationVerifyCapture['projectedSubject'] {
+): NonNullable<PathGenerationVerifyCapture['projectedSubject']> {
   if (!isRecord(value)) {
     throw new PathGenerationError(400, `${context} must be an object.`);
   }
@@ -1508,6 +1731,22 @@ function parseVerifyProjectedSubject(
     ndcX: readFiniteNumber(value, 'ndcX', context),
     ndcY: readFiniteNumber(value, 'ndcY', context),
     visible: value['visible'] === true,
+  };
+}
+
+function parseVerifyProjectedRoute(
+  value: unknown,
+  context: string,
+): NonNullable<PathGenerationVerifyCapture['projectedRoute']> {
+  if (!isRecord(value)) {
+    throw new PathGenerationError(400, `${context} must be an object.`);
+  }
+
+  return {
+    centerNdcX: readFiniteNumber(value, 'centerNdcX', context),
+    clearanceMargin: readFiniteNumber(value, 'clearanceMargin', context),
+    headingErrorDegrees: readFiniteNumber(value, 'headingErrorDegrees', context),
+    visibleFraction: readFiniteNumber(value, 'visibleFraction', context),
   };
 }
 
@@ -1677,16 +1916,13 @@ function buildPlanningRequestFailure(statusCode: number, failureText: string): P
 }
 
 function defaultUnsupportedReasonForPathMode(pathMode: PathGenerationPathMode): string {
-  if (pathMode === 'route-following') {
-    return 'Route-following prompts like weaving through geometry are not supported in agentic path v1.';
-  }
   if (pathMode === 'multi-subject') {
-    return 'Multi-subject path prompts are not supported in agentic path v1.';
+    return 'Multi-subject path prompts are not supported in agentic path v2.1.';
   }
   if (pathMode === 'ambiguous') {
-    return 'The prompt is too ambiguous for agentic path v1. Name one clear subject and one continuous camera move.';
+    return 'The prompt is too ambiguous for agentic path v2.1. Name one clear subject or one clear route.';
   }
-  return 'The prompt is not supported in agentic path v1.';
+  return 'The prompt is not supported in agentic path v2.1.';
 }
 
 function parsePlannerRequestFailureDetails(failureText: string): PlannerRequestFailureDetails {

@@ -72,6 +72,7 @@ function createComposeRequest() {
       meanResidual: 0.08,
       sceneScale: 8,
     },
+    groundedRoute: null,
     intent: {
       continuousPath: true,
       orientationPreference: 'look-at-subject',
@@ -137,6 +138,7 @@ function createVerifyRequest() {
       meanResidual: 0.08,
       sceneScale: 8,
     },
+    groundedRoute: null,
     intent: {
       continuousPath: true,
       orientationPreference: 'look-at-subject',
@@ -169,6 +171,130 @@ function createVerifyRequest() {
   };
 }
 
+function createRouteComposeRequest() {
+  return {
+    currentCamera: {
+      aspect: 16 / 9,
+      fov: 60,
+      position: { x: 4, y: 1, z: 0 },
+      quaternion: { x: 0, y: 0, z: 0, w: 1 },
+    },
+    groundedRoute: {
+      averageClearance: 1.2,
+      confidence: 0.86,
+      length: 9.5,
+      maxTurnDegrees: 42,
+      routeId: 'route-main',
+      waypoints: [
+        { x: 0, y: 0, z: 0 },
+        { x: 2, y: 0, z: 1 },
+        { x: 5, y: 0, z: 3 },
+      ],
+    },
+    groundedSubject: null,
+    intent: {
+      continuousPath: true,
+      orientationPreference: 'look-forward',
+      pathMode: 'route-following',
+      requestedMoveTypes: ['traverse', 'hold'],
+      subjectHint: 'road',
+      targetDurationSeconds: 12,
+      tone: 'dynamic',
+    },
+    draftControls: {
+      holdPreference: 'brief',
+      requestedDurationSeconds: 12,
+    },
+    pathTail: null,
+    sceneBounds: {
+      max: { x: 8, y: 4, z: 8 },
+      min: { x: -4, y: -2, z: -4 },
+    },
+    validationFeedback: ['The route draft lost the corridor near the end.'],
+  };
+}
+
+function createRouteVerifyRequest() {
+  return {
+    captures: [
+      {
+        camera: {
+          aspect: 16 / 9,
+          fov: 60,
+          position: { x: 4, y: 1, z: 0 },
+          quaternion: { x: 0, y: 0, z: 0, w: 1 },
+        },
+        captureKind: 'active-probe',
+        height: 360,
+        id: 'verify-probe-1',
+        imageDataUrl: 'data:image/jpeg;base64,AA==',
+        probeReason: 'segment-transition',
+        projectedRoute: {
+          centerNdcX: 0.08,
+          clearanceMargin: 0.55,
+          headingErrorDegrees: 9,
+          visibleFraction: 0.74,
+        },
+        timeSeconds: 6,
+        width: 640,
+      },
+    ],
+    currentCamera: {
+      aspect: 16 / 9,
+      fov: 60,
+      position: { x: 4, y: 1, z: 0 },
+      quaternion: { x: 0, y: 0, z: 0, w: 1 },
+    },
+    draftControls: {
+      holdPreference: 'brief',
+      requestedDurationSeconds: 12,
+    },
+    groundedRoute: {
+      averageClearance: 1.2,
+      confidence: 0.86,
+      length: 9.5,
+      maxTurnDegrees: 42,
+      routeId: 'route-main',
+      waypoints: [
+        { x: 0, y: 0, z: 0 },
+        { x: 2, y: 0, z: 1 },
+        { x: 5, y: 0, z: 3 },
+      ],
+    },
+    groundedSubject: null,
+    intent: {
+      continuousPath: true,
+      orientationPreference: 'look-forward',
+      pathMode: 'route-following',
+      requestedMoveTypes: ['traverse', 'hold'],
+      subjectHint: 'road',
+      targetDurationSeconds: 12,
+      tone: 'dynamic',
+    },
+    prompt: 'Follow the road and end with a brief pause.',
+    sceneBounds: {
+      max: { x: 8, y: 4, z: 8 },
+      min: { x: -4, y: -2, z: -4 },
+    },
+    segments: [
+      {
+        distanceRatio: 0.9,
+        durationSeconds: 9,
+        lateralBias: 'center',
+        lookMode: 'look-forward',
+        segmentType: 'traverse',
+        verticalBias: 'mid',
+      },
+      {
+        durationSeconds: 3,
+        lookMode: 'look-forward',
+        segmentType: 'hold',
+      },
+    ],
+    summary: 'Follow the road and settle into a short ending hold.',
+  };
+}
+
 describe('pathGeneration request parsing', () => {
   it('accepts valid ground requests', () => {
     const parsed = parsePathGenerationGroundRequest(createGroundRequest());
@@ -182,11 +308,21 @@ describe('pathGeneration request parsing', () => {
     const parsed = parsePathGenerationComposeRequest(createComposeRequest());
 
     expect(parsed.intent.pathMode).toBe('subject-centric');
+    expect(parsed.groundedRoute).toBeNull();
     expect(parsed.draftControls).toEqual({
       holdPreference: 'brief',
       requestedDurationSeconds: 10,
     });
     expect(parsed.validationFeedback).toEqual(['Subject drifted out of the safe frame box.']);
+  });
+
+  it('accepts valid route-following compose requests', () => {
+    const parsed = parsePathGenerationComposeRequest(createRouteComposeRequest());
+
+    expect(parsed.intent.pathMode).toBe('route-following');
+    expect(parsed.groundedSubject).toBeNull();
+    expect(parsed.groundedRoute?.routeId).toBe('route-main');
+    expect(parsed.intent.requestedMoveTypes).toContain('traverse');
   });
 
   it('accepts valid verify requests', () => {
@@ -201,6 +337,19 @@ describe('pathGeneration request parsing', () => {
     expect(parsed.captures[0]).toMatchObject({
       captureKind: 'draft-sample',
       probeReason: 'overview',
+    });
+  });
+
+  it('accepts valid route-following verify requests', () => {
+    const parsed = parsePathGenerationVerifyRequest(createRouteVerifyRequest());
+
+    expect(parsed.intent.pathMode).toBe('route-following');
+    expect(parsed.groundedRoute?.routeId).toBe('route-main');
+    expect(parsed.captures[0]).toMatchObject({
+      captureKind: 'active-probe',
+      projectedRoute: {
+        centerNdcX: 0.08,
+      },
     });
   });
 
@@ -297,24 +446,42 @@ describe('pathGeneration model-response parsing', () => {
     ]);
   });
 
-  it('accepts unsupported route-following classifications', () => {
+  it('accepts supported route-following classifications with route observations', () => {
+    const request = createGroundRequest();
     const parsed = parsePathGenerationGroundModelResponse({
       intent: {
         continuousPath: true,
         orientationPreference: 'look-forward',
         pathMode: 'route-following',
-        requestedMoveTypes: [],
+        requestedMoveTypes: ['traverse'],
         subjectHint: 'trees',
         targetDurationSeconds: 8,
         tone: 'dynamic',
       },
       pathMode: 'route-following',
       subjectLocalizations: [],
-      unsupportedReason: 'Route-following prompts are not supported in v1.',
-    });
+      routeObservations: [
+        {
+          captureId: 'capture-current',
+          confidence: 0.91,
+          entryPixel: { x: 120, y: 300 },
+          exitPixel: { x: 520, y: 120 },
+          centerlinePixels: [
+            { x: 120, y: 300 },
+            { x: 260, y: 250 },
+            { x: 410, y: 190 },
+            { x: 520, y: 120 },
+          ],
+          routeKind: 'corridor',
+          widthPixels: 180,
+        },
+      ],
+    }, request.captures);
 
     expect(parsed.pathMode).toBe('route-following');
-    expect(parsed.unsupportedReason).toMatch(/not supported/i);
+    expect(parsed.unsupportedReason).toBeUndefined();
+    expect(parsed.routeObservations).toHaveLength(1);
+    expect(parsed.routeObservations?.[0]?.centerlinePixels).toHaveLength(4);
   });
 
   it('accepts valid composed segment plans', () => {
@@ -340,6 +507,28 @@ describe('pathGeneration model-response parsing', () => {
     expect(parsed.segments).toHaveLength(2);
     expect(parsed.segments[0]?.segmentType).toBe('arc');
     expect(parsed.segments[1]?.segmentType).toBe('hold');
+  });
+
+  it('accepts traverse segment plans for route-following', () => {
+    const parsed = parsePathGenerationComposeModelResponse({
+      segments: [
+        {
+          distanceRatio: 0.88,
+          durationSeconds: 9,
+          lateralBias: 'middle',
+          lookMode: 'look-forward',
+          segmentType: 'traverse',
+          verticalBias: 'eye-level',
+        },
+      ],
+      summary: 'Follow the corridor in one continuous move.',
+    });
+
+    expect(parsed.segments[0]).toMatchObject({
+      segmentType: 'traverse',
+      lateralBias: 'center',
+      verticalBias: 'mid',
+    });
   });
 
   it('normalizes loose arc direction labels', () => {
@@ -441,12 +630,12 @@ describe('OpenAIVisionPathPlanner status', () => {
           maxCaptureRounds: 2,
           maxSegments: 4,
           maxVerificationCaptures: 8,
-          segmentTypes: ['hold', 'arc', 'dolly', 'pedestal'],
-          supportedPathModes: ['subject-centric'],
-          unsupportedPathModes: ['route-following', 'multi-subject', 'ambiguous'],
+          segmentTypes: ['hold', 'arc', 'dolly', 'pedestal', 'traverse'],
+          supportedPathModes: ['subject-centric', 'route-following'],
+          unsupportedPathModes: ['multi-subject', 'ambiguous'],
         },
         model: 'gpt-4.1-mini',
-        plannerVersion: 'multistep-v1',
+        plannerVersion: 'multistep-v2',
         reason: 'Agentic path generation is disabled because OPENAI_API_KEY is not configured on the server.',
       });
     } finally {
