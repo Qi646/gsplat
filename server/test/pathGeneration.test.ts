@@ -828,6 +828,51 @@ describe('pathGeneration model-response parsing', () => {
     });
   });
 
+  it('drops malformed candidate-assessment entries when chosenAction is still valid', () => {
+    const parsed = parsePathGenerationStepModelResponse({
+      candidateAssessment: [
+        {
+          action: {
+            primitive: 'move left a little',
+            type: 'rotate',
+          },
+          assessment: 'This would change the view a bit.',
+        },
+      ],
+      chosenAction: {
+        primitive: 'strafe-left-short',
+        type: 'move',
+      },
+      complete: false,
+      localIntent: {
+        kind: 'change-viewpoint',
+        successCriteria: ['shift the vantage point'],
+      },
+      pathMode: 'subject-centric',
+      reason: 'A small left strafe changes viewpoint more directly than another in-place turn.',
+    });
+
+    expect(parsed).toEqual({
+      action: {
+        primitive: 'strafe-left-short',
+        type: 'move',
+      },
+      candidateAssessment: [],
+      chosenAction: {
+        primitive: 'strafe-left-short',
+        type: 'move',
+      },
+      complete: false,
+      localIntent: {
+        kind: 'change-viewpoint',
+        successCriteria: ['shift the vantage point'],
+      },
+      pathMode: 'subject-centric',
+      reason: 'A small left strafe changes viewpoint more directly than another in-place turn.',
+      warning: undefined,
+    });
+  });
+
   it('normalizes loose arc direction labels', () => {
     const parsed = parsePathGenerationComposeModelResponse({
       segments: [

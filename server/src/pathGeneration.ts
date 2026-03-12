@@ -1889,7 +1889,17 @@ function parseStepCandidateAssessmentArray(
     throw new PathGenerationError(502, `${context} must be an array.`);
   }
 
-  return value.map((entry, index) => parseStepCandidateAssessment(entry, `${context}[${index}]`));
+  const assessments: PathGenerationStepCandidateAssessment[] = [];
+  for (const [index, entry] of value.entries()) {
+    try {
+      assessments.push(parseStepCandidateAssessment(entry, `${context}[${index}]`));
+    } catch (error) {
+      if (!(error instanceof PathGenerationError)) {
+        throw error;
+      }
+    }
+  }
+  return assessments;
 }
 
 function parseStepCandidateAssessment(value: unknown, context: string): PathGenerationStepCandidateAssessment {
