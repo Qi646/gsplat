@@ -644,6 +644,28 @@ describe('pathGeneration model-response parsing', () => {
     });
   });
 
+  it('coerces malformed motion actions back to create-keyframe when the primitive text says so', () => {
+    const parsed = parsePathGenerationStepModelResponse({
+      action: {
+        primitive: 'create-keyframe',
+        type: 'rotate',
+      },
+      complete: false,
+      pathMode: 'subject-centric',
+      reason: 'Preserve the starting pose before moving around the truck.',
+    });
+
+    expect(parsed).toEqual({
+      action: {
+        type: 'create-keyframe',
+      },
+      complete: false,
+      pathMode: 'subject-centric',
+      reason: 'Preserve the starting pose before moving around the truck.',
+      warning: undefined,
+    });
+  });
+
   it('normalizes loose arc direction labels', () => {
     const parsed = parsePathGenerationComposeModelResponse({
       segments: [

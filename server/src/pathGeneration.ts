@@ -1774,20 +1774,25 @@ function parseStepActionHistoryEntry(value: unknown, context: string): PathGener
 function parseStepAction(value: unknown, context: string): PathGenerationStepAction {
   const type = inferStepActionType(value, context);
   const record = isRecord(value) ? value : null;
+  const primitiveValue = readStepActionPrimitive(record, value);
+  const coercedNonMotionType = inferNonMotionStepActionType(primitiveValue);
+  if (coercedNonMotionType) {
+    return { type: coercedNonMotionType };
+  }
   if (type === 'capture-image' || type === 'create-keyframe') {
     return { type };
   }
 
   if (type === 'move') {
     return {
-      primitive: parseMovePrimitive(readStepActionPrimitive(record, value), `${context}.primitive`),
+      primitive: parseMovePrimitive(primitiveValue, `${context}.primitive`),
       type,
     };
   }
 
   if (type === 'rotate') {
     return {
-      primitive: parseRotatePrimitive(readStepActionPrimitive(record, value), `${context}.primitive`),
+      primitive: parseRotatePrimitive(primitiveValue, `${context}.primitive`),
       type,
     };
   }
@@ -1869,6 +1874,25 @@ function readStepActionPrimitive(record: UnknownRecord | null, fallbackValue: un
   }
 
   return fallbackValue;
+}
+
+function inferNonMotionStepActionType(value: unknown): Extract<PathGenerationStepAction, { type: 'capture-image' | 'create-keyframe' }>['type'] | null {
+  if (typeof value !== 'string') {
+    return null;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  if (normalized.length === 0) {
+    return null;
+  }
+  if (normalized.includes('capture')) {
+    return 'capture-image';
+  }
+  if (normalized.includes('keyframe') || normalized.includes('store')) {
+    return 'create-keyframe';
+  }
+
+  return null;
 }
 
 function coerceSegmentType(value: unknown): PathGenerationSegmentType | null {
