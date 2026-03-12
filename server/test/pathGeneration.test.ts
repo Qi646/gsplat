@@ -1227,6 +1227,70 @@ describe('OpenAIVisionPathPlanner request compatibility', () => {
     );
   });
 
+  it('constrains compose enum fields to exact literals in the system prompt', async () => {
+    const requestBodies: Array<Record<string, unknown>> = [];
+    const fetchImpl = vi.fn(async (_input: unknown, init?: RequestInit) => {
+      requestBodies.push(JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>);
+      return new Response(JSON.stringify({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                segments: [
+                  {
+                    durationSeconds: 4,
+                    lookMode: 'look-at-subject',
+                    segmentType: 'arc',
+                    sweepDegrees: 120,
+                  },
+                ],
+                summary: 'Arc around the subject.',
+              }),
+            },
+          },
+        ],
+      }), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 200,
+      });
+    }) as unknown as typeof fetch;
+    const planner = new OpenAIVisionPathPlanner({
+      apiKey: 'test-key',
+      fetchImpl,
+      model: 'gpt-5-mini-2025-08-07',
+    });
+
+    await planner.composePathPlan(createComposeRequest());
+
+    expect(requestBodies).toHaveLength(1);
+    const messages = requestBodies[0]?.['messages'];
+    expect(Array.isArray(messages)).toBe(true);
+    const systemMessage = Array.isArray(messages)
+      ? messages.find((entry): entry is { content: string; role: string } =>
+        typeof entry === 'object'
+        && entry !== null
+        && 'role' in entry
+        && 'content' in entry
+        && (entry as { role?: unknown }).role === 'system'
+        && typeof (entry as { content?: unknown }).content === 'string')
+      : undefined;
+    expect(systemMessage?.content).toContain(
+      'Every segment.lookMode must be exactly "look-at-subject" or "look-forward". Do not use synonyms.',
+    );
+    expect(systemMessage?.content).toContain(
+      'Dolly.travelDirection, when present, must be exactly "in" or "out".',
+    );
+    expect(systemMessage?.content).toContain(
+      'Pedestal.travelDirection, when present, must be exactly "up" or "down".',
+    );
+    expect(systemMessage?.content).toContain(
+      'Traverse.lateralBias, when present, must be exactly "left", "center", or "right".',
+    );
+    expect(systemMessage?.content).toContain(
+      'Canonical invalid segment examples: {"segmentType":"dolly","durationSeconds":4,"lookMode":"frontal","travelDirection":"push-in"}',
+    );
+  });
+
   it('omits custom temperature and adds minimal reasoning effort for GPT-5 family models when composing', async () => {
     const requestBodies: Array<Record<string, unknown>> = [];
     const fetchImpl = vi.fn(async (_input: unknown, init?: RequestInit) => {
@@ -1319,6 +1383,55 @@ describe('OpenAIVisionPathPlanner request compatibility', () => {
     expect(systemMessage?.content).toContain('if the subject sits to the right of center and should move toward center, prefer yaw-right; if the subject sits to the left of center and should move toward center, prefer yaw-left.');
     expect(systemMessage?.content).toContain('Use yaw only to re-aim the camera.');
     expect(systemMessage?.content).toContain('Do not use step-count, keyframe-count, or prompt-family heuristics to force create-keyframe, capture-image, move, rotate, or complete=true.');
+    expect(systemMessage?.content).toContain('pathMode must be exactly one of those strings; do not use synonyms.');
+    expect(systemMessage?.content).toContain('Each candidateAssessment.action must use the same exact chosenAction enum contract described below.');
+  });
+
+  it('constrains verification response shape in the system prompt', async () => {
+    const requestBodies: Array<Record<string, unknown>> = [];
+    const fetchImpl = vi.fn(async (_input: unknown, init?: RequestInit) => {
+      requestBodies.push(JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>);
+      return new Response(JSON.stringify({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                approved: true,
+                issues: [],
+              }),
+            },
+          },
+        ],
+      }), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 200,
+      });
+    }) as unknown as typeof fetch;
+    const planner = new OpenAIVisionPathPlanner({
+      apiKey: 'test-key',
+      fetchImpl,
+      model: 'gpt-5-mini-2025-08-07',
+    });
+
+    await planner.verifyPathPlan(createVerifyRequest());
+
+    expect(requestBodies).toHaveLength(1);
+    const messages = requestBodies[0]?.['messages'];
+    expect(Array.isArray(messages)).toBe(true);
+    const systemMessage = Array.isArray(messages)
+      ? messages.find((entry): entry is { content: string; role: string } =>
+        typeof entry === 'object'
+        && entry !== null
+        && 'role' in entry
+        && 'content' in entry
+        && (entry as { role?: unknown }).role === 'system'
+        && typeof (entry as { content?: unknown }).content === 'string')
+      : undefined;
+    expect(systemMessage?.content).toContain('approved must be a boolean.');
+    expect(systemMessage?.content).toContain('issues must be an array of non-empty strings. If approved is false, issues must not be empty.');
+    expect(systemMessage?.content).toContain(
+      'probeReason values in the input use exact enums such as "overview", "floor-clearance", "subject-framing", "subject-distance", "segment-transition", "hold-read", and "long-path-lookahead".',
+    );
   });
 
   it('falls back from reasoning_effort and parses structured completion content', async () => {
