@@ -55,9 +55,11 @@ describe('createApp', () => {
       getStatus: overrides.getStatus ?? vi.fn<PathGenerationPlannerStatus>(() => ({
         available: true,
         capabilities: {
+          includesActiveVerificationProbes: true,
           includesPlannerVerification: true,
           maxCaptureRounds: 2,
           maxSegments: 4,
+          maxVerificationCaptures: 8,
           segmentTypes: ['hold', 'arc', 'dolly', 'pedestal'],
           supportedPathModes: ['subject-centric'],
           unsupportedPathModes: ['route-following', 'multi-subject', 'ambiguous'],
@@ -400,9 +402,11 @@ describe('createApp', () => {
         getStatus: vi.fn(() => ({
           available: false,
           capabilities: {
+            includesActiveVerificationProbes: true,
             includesPlannerVerification: true,
             maxCaptureRounds: 2,
             maxSegments: 4,
+            maxVerificationCaptures: 8,
             segmentTypes: ['hold', 'arc', 'dolly', 'pedestal'],
             supportedPathModes: ['subject-centric'],
             unsupportedPathModes: ['route-following', 'multi-subject', 'ambiguous'],
@@ -420,9 +424,11 @@ describe('createApp', () => {
     expect(response.body).toEqual({
       available: false,
       capabilities: {
+        includesActiveVerificationProbes: true,
         includesPlannerVerification: true,
         maxCaptureRounds: 2,
         maxSegments: 4,
+        maxVerificationCaptures: 8,
         segmentTypes: ['hold', 'arc', 'dolly', 'pedestal'],
         supportedPathModes: ['subject-centric'],
         unsupportedPathModes: ['route-following', 'multi-subject', 'ambiguous'],
@@ -594,9 +600,11 @@ function createPathGenerationVerifyRequest() {
           position: { x: 4, y: 1, z: 0 },
           quaternion: { x: 0, y: 0, z: 0, w: 1 },
         },
+        captureKind: 'draft-sample',
         height: 360,
         id: 'verify-sample-1',
         imageDataUrl: 'data:image/jpeg;base64,AA==',
+        probeReason: 'overview',
         projectedSubject: {
           ndcX: 0.02,
           ndcY: -0.04,

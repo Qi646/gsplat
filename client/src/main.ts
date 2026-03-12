@@ -99,9 +99,11 @@ function parseAgenticPathStatus(input: unknown): AgenticPathStatus {
     return {
       available: false,
       capabilities: {
+        includesActiveVerificationProbes: true,
         includesPlannerVerification: true,
         maxCaptureRounds: 2,
         maxSegments: 4,
+        maxVerificationCaptures: 8,
         segmentTypes: ['hold', 'arc', 'dolly', 'pedestal'],
         supportedPathModes: ['subject-centric'],
         unsupportedPathModes: ['route-following', 'multi-subject', 'ambiguous'],
@@ -119,9 +121,13 @@ function parseAgenticPathStatus(input: unknown): AgenticPathStatus {
   return {
     available: record['available'] === true,
     capabilities: {
+      includesActiveVerificationProbes: capabilities?.['includesActiveVerificationProbes'] !== false,
       includesPlannerVerification: capabilities?.['includesPlannerVerification'] !== false,
       maxCaptureRounds: 2,
       maxSegments: 4,
+      maxVerificationCaptures: typeof capabilities?.['maxVerificationCaptures'] === 'number'
+        ? capabilities['maxVerificationCaptures'] as number
+        : 8,
       segmentTypes: ['hold', 'arc', 'dolly', 'pedestal'],
       supportedPathModes: ['subject-centric'],
       unsupportedPathModes: ['route-following', 'multi-subject', 'ambiguous'],
@@ -290,9 +296,11 @@ async function main(): Promise<void> {
   let agenticPathStatus: AgenticPathStatus = {
     available: false,
     capabilities: {
+      includesActiveVerificationProbes: true,
       includesPlannerVerification: true,
       maxCaptureRounds: 2,
       maxSegments: 4,
+      maxVerificationCaptures: 8,
       segmentTypes: ['hold', 'arc', 'dolly', 'pedestal'],
       supportedPathModes: ['subject-centric'],
       unsupportedPathModes: ['route-following', 'multi-subject', 'ambiguous'],
@@ -611,7 +619,7 @@ async function main(): Promise<void> {
 
     const modelLabel = agenticPathStatus.model ? ` Using ${agenticPathStatus.model}.` : '';
     agenticPathNote.textContent =
-      `Prompt one continuous subject-centric camera move. The planner uses nearby scout captures, your timing/hold options, and a sampled draft verification pass before accepting the draft.${modelLabel}`;
+      `Prompt one continuous subject-centric camera move. The planner uses nearby scout captures, your timing/hold options, and active verification probes around risky draft moments before accepting the draft.${modelLabel}`;
   };
 
   const updateAgenticPathBlocker = () => {

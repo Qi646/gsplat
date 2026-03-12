@@ -104,9 +104,11 @@ function createVerifyRequest() {
           position: { x: 4, y: 1, z: 0 },
           quaternion: { x: 0, y: 0, z: 0, w: 1 },
         },
+        captureKind: 'draft-sample',
         height: 360,
         id: 'verify-sample-1',
         imageDataUrl: 'data:image/jpeg;base64,AA==',
+        probeReason: 'overview',
         projectedSubject: {
           ndcX: 0.04,
           ndcY: -0.03,
@@ -196,6 +198,28 @@ describe('pathGeneration request parsing', () => {
       requestedDurationSeconds: 12,
     });
     expect(parsed.captures).toHaveLength(1);
+    expect(parsed.captures[0]).toMatchObject({
+      captureKind: 'draft-sample',
+      probeReason: 'overview',
+    });
+  });
+
+  it('normalizes verify-capture aliases for active probes', () => {
+    const request = createVerifyRequest();
+    request.captures = [
+      {
+        ...request.captures[0],
+        captureKind: 'probe',
+        probeReason: 'floor check',
+      },
+    ];
+
+    const parsed = parsePathGenerationVerifyRequest(request);
+
+    expect(parsed.captures[0]).toMatchObject({
+      captureKind: 'active-probe',
+      probeReason: 'floor-clearance',
+    });
   });
 });
 
@@ -412,9 +436,11 @@ describe('OpenAIVisionPathPlanner status', () => {
       expect(planner.getStatus()).toEqual({
         available: false,
         capabilities: {
+          includesActiveVerificationProbes: true,
           includesPlannerVerification: true,
           maxCaptureRounds: 2,
           maxSegments: 4,
+          maxVerificationCaptures: 8,
           segmentTypes: ['hold', 'arc', 'dolly', 'pedestal'],
           supportedPathModes: ['subject-centric'],
           unsupportedPathModes: ['route-following', 'multi-subject', 'ambiguous'],

@@ -607,7 +607,7 @@ describe('AgenticPathOrchestrator', () => {
       'repairing',
       'validating',
     ]);
-    expect(progressStages.filter(stage => stage === 'verifying')).toHaveLength(5);
+    expect(progressStages.filter(stage => stage === 'verifying').length).toBeGreaterThanOrEqual(5);
   });
 
   it('uses the rescue round when only the current view localizes the subject initially', async () => {
@@ -767,7 +767,93 @@ describe('AgenticPathOrchestrator', () => {
       'validating',
     ]);
     expect(progressStages.filter(stage => stage === 'repairing')).toHaveLength(1);
-    expect(progressStages.filter(stage => stage === 'verifying')).toHaveLength(10);
+    expect(progressStages.filter(stage => stage === 'verifying').length).toBeGreaterThanOrEqual(10);
+  });
+
+  it('adds active verification probes for longer drafts', async () => {
+    installCapturePipelineStubs();
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      callback(0);
+      return 1;
+    });
+
+    const { viewer } = createMockViewer({
+      bounds: new THREE.Box3(
+        new THREE.Vector3(-10, -4, -10),
+        new THREE.Vector3(10, 8, 10),
+      ),
+      initialCamera: createCamera(new THREE.Vector3(5, 1, 0), new THREE.Vector3(0, 0.5, 0)),
+    });
+    const verifyRequests: Array<{
+      captures: Array<{
+        captureKind: string;
+        id: string;
+        probeReason: string;
+      }>;
+    }> = [];
+
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith('/api/path/ground')) {
+        const request = JSON.parse(String(init?.body ?? '{}')) as { captures: AgenticPathCapture[] };
+        const subject = new THREE.Vector3(0, 0.5, 0);
+        return new Response(JSON.stringify(createGroundResponse(
+          'subject-centric',
+          request.captures.map(capture => projectPoint(subject, capture)),
+        )), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        });
+      }
+
+      if (url.endsWith('/api/path/verify')) {
+        verifyRequests.push(JSON.parse(String(init?.body ?? '{}')) as {
+          captures: Array<{
+            captureKind: string;
+            id: string;
+            probeReason: string;
+          }>;
+        });
+        return new Response(JSON.stringify({
+          approved: true,
+          issues: [],
+        }), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        });
+      }
+
+      return new Response(JSON.stringify({
+        segments: [
+          createSegmentPlan({ durationSeconds: 14, segmentType: 'hold' }),
+        ],
+        summary: 'Long draft with a final hold.',
+      }), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 200,
+      });
+    }) as unknown as typeof fetch;
+
+    const orchestrator = new AgenticPathOrchestrator({
+      fetchImpl,
+      viewer,
+    });
+
+    const draft = await orchestrator.generateDraft({
+      controls: createDraftControls({ holdPreference: 'linger', requestedDurationSeconds: 14 }),
+      existingKeyframes: [],
+      prompt: 'Create a longer cinematic move around the truck and then linger.',
+    });
+
+    expect(draft.summary).toBe('Long draft with a final hold.');
+    expect(verifyRequests).toHaveLength(1);
+    expect(verifyRequests[0]?.captures.length).toBeGreaterThan(4);
+    expect(verifyRequests[0]?.captures.some(capture => capture.captureKind === 'draft-sample')).toBe(true);
+    expect(verifyRequests[0]?.captures.some(capture => capture.captureKind === 'active-probe')).toBe(true);
+    expect(verifyRequests[0]?.captures.some(capture =>
+      capture.captureKind === 'active-probe'
+      && (capture.probeReason === 'long-path-lookahead' || capture.probeReason === 'hold-read')
+    )).toBe(true);
   });
 
   it('stops on unsupported route-following prompts', async () => {

@@ -6,6 +6,15 @@ export type PathGenerationSegmentType = 'hold' | 'arc' | 'dolly' | 'pedestal';
 export type PathGenerationDollyDirection = 'in' | 'out';
 export type PathGenerationPedestalDirection = 'up' | 'down';
 export type PathGenerationHoldPreference = 'auto' | 'none' | 'brief' | 'linger';
+export type PathGenerationVerifyCaptureKind = 'draft-sample' | 'active-probe';
+export type PathGenerationVerifyProbeReason =
+  | 'overview'
+  | 'floor-clearance'
+  | 'subject-framing'
+  | 'subject-distance'
+  | 'segment-transition'
+  | 'hold-read'
+  | 'long-path-lookahead';
 
 export interface PathGenerationVector3 {
   x: number;
@@ -152,9 +161,11 @@ export interface PathGenerationComposeResponse {
 
 export interface PathGenerationVerifyCapture {
   camera: PathGenerationCamera;
+  captureKind: PathGenerationVerifyCaptureKind;
   height: number;
   id: string;
   imageDataUrl: string;
+  probeReason: PathGenerationVerifyProbeReason;
   projectedSubject: {
     ndcX: number;
     ndcY: number;
@@ -185,9 +196,11 @@ export interface PathGenerationVerifyResponse {
 export interface PathGenerationPlannerStatus {
   available: boolean;
   capabilities: {
+    includesActiveVerificationProbes: boolean;
     includesPlannerVerification: boolean;
     maxCaptureRounds: number;
     maxSegments: number;
+    maxVerificationCaptures: number;
     segmentTypes: PathGenerationSegmentType[];
     supportedPathModes: PathGenerationPathMode[];
     unsupportedPathModes: PathGenerationPathMode[];
@@ -249,9 +262,11 @@ const DEFAULT_CHAT_COMPLETION_REQUEST_COMPATIBILITY: ChatCompletionRequestCompat
 const MAX_CHAT_COMPLETION_COMPATIBILITY_ATTEMPTS = 4;
 const PLANNER_COMPLETION_TOKEN_LIMIT = 1800;
 const STATUS_CAPABILITIES = {
+  includesActiveVerificationProbes: true,
   includesPlannerVerification: true,
   maxCaptureRounds: 2,
   maxSegments: 4,
+  maxVerificationCaptures: 8,
   segmentTypes: ['hold', 'arc', 'dolly', 'pedestal'] as PathGenerationSegmentType[],
   supportedPathModes: ['subject-centric'] as PathGenerationPathMode[],
   unsupportedPathModes: ['route-following', 'multi-subject', 'ambiguous'] as PathGenerationPathMode[],
@@ -469,6 +484,12 @@ export function parsePathGenerationVerifyRequest(input: unknown): PathGeneration
   if (!Array.isArray(rawCaptures) || rawCaptures.length === 0) {
     throw new PathGenerationError(400, 'Verify requests must include at least one draft review capture.');
   }
+  if (rawCaptures.length > STATUS_CAPABILITIES.maxVerificationCaptures) {
+    throw new PathGenerationError(
+      400,
+      `Verify requests may include at most ${STATUS_CAPABILITIES.maxVerificationCaptures} captures.`,
+    );
+  }
 
   return {
     captures: rawCaptures.map((capture, index) => parseVerifyCapture(capture, `captures[${index}]`)),
@@ -599,9 +620,13 @@ function buildComposeSystemPrompt(): string {
 function buildVerifySystemPrompt(): string {
   return [
     'You are the verification step of a camera path planner for a 3D scene viewer.',
-    'A draft path has already been composed and locally validated. Review the sampled draft images and metadata.',
+    'A draft path has already been composed and locally validated. Review the sampled draft images, active probe images, and metadata.',
     'Return JSON only with keys approved, issues, warning.',
     'Set approved to true only if the draft visually matches the prompt and looks plausible.',
+    'Verify captures may be either "draft-sample" or "active-probe".',
+    '"draft-sample" captures are exact poses from the proposed path.',
+    '"active-probe" captures are small nearby inspection views around a risky draft moment; they are evidence-gathering probes, not literal path poses.',
+    'Use active-probe captures to judge uncertainty, occlusion, floor clearance, and long-path plausibility, but do not require the final path to exactly match a probe framing.',
     'Reject drafts that visibly lose the subject, drift away from the requested framing, dip under the world/floor, or fail a requested ending hold.',
     'When holdPreference is "brief" or "linger", check that the later verification frames read like a real pause rather than continuous motion.',
     'When holdPreference is "none", treat the explicit control as overriding hold language in the prompt.',
@@ -765,6 +790,8 @@ function buildVerifyUserContent(request: PathGenerationVerifyRequest): Array<Rec
     content.push({
       text: `Draft review frame ${capture.id}: ${JSON.stringify({
         camera: capture.camera,
+        captureKind: capture.captureKind,
+        probeReason: capture.probeReason,
         projectedSubject: capture.projectedSubject,
         timeSeconds: capture.timeSeconds,
       })}`,
@@ -1394,13 +1421,79 @@ function parseVerifyCapture(value: unknown, context: string): PathGenerationVeri
 
   return {
     camera: parseCamera(value['camera'], `${context}.camera`),
+    captureKind: parseVerifyCaptureKind(value['captureKind'] ?? 'draft-sample', `${context}.captureKind`),
     height: readFiniteNumber(value, 'height', context),
     id: readString(value, 'id', context),
     imageDataUrl: readString(value, 'imageDataUrl', context),
+    probeReason: parseVerifyProbeReason(value['probeReason'] ?? 'overview', `${context}.probeReason`),
     projectedSubject: parseVerifyProjectedSubject(value['projectedSubject'], `${context}.projectedSubject`),
     timeSeconds: readFiniteNumber(value, 'timeSeconds', context),
     width: readFiniteNumber(value, 'width', context),
   };
+}
+
+function parseVerifyCaptureKind(value: unknown, context: string): PathGenerationVerifyCaptureKind {
+  if (value === 'draft-sample' || value === 'active-probe') {
+    return value;
+  }
+
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (normalized.includes('probe')) {
+      return 'active-probe';
+    }
+    if (normalized.includes('sample') || normalized.includes('draft') || normalized.includes('path')) {
+      return 'draft-sample';
+    }
+  }
+
+  throw new PathGenerationError(400, `${context} must be "draft-sample" or "active-probe".`);
+}
+
+function parseVerifyProbeReason(value: unknown, context: string): PathGenerationVerifyProbeReason {
+  if (
+    value === 'overview'
+    || value === 'floor-clearance'
+    || value === 'subject-framing'
+    || value === 'subject-distance'
+    || value === 'segment-transition'
+    || value === 'hold-read'
+    || value === 'long-path-lookahead'
+  ) {
+    return value;
+  }
+
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (normalized.includes('floor') || normalized.includes('clearance') || normalized.includes('under')) {
+      return 'floor-clearance';
+    }
+    if (normalized.includes('frame') || normalized.includes('edge') || normalized.includes('subject')) {
+      return normalized.includes('distance') || normalized.includes('close')
+        ? 'subject-distance'
+        : 'subject-framing';
+    }
+    if (normalized.includes('distance') || normalized.includes('close')) {
+      return 'subject-distance';
+    }
+    if (normalized.includes('transition') || normalized.includes('boundary')) {
+      return 'segment-transition';
+    }
+    if (normalized.includes('hold') || normalized.includes('pause')) {
+      return 'hold-read';
+    }
+    if (normalized.includes('lookahead') || normalized.includes('long')) {
+      return 'long-path-lookahead';
+    }
+    if (normalized.includes('overview') || normalized.includes('sample')) {
+      return 'overview';
+    }
+  }
+
+  throw new PathGenerationError(
+    400,
+    `${context} must be a supported verification capture reason.`,
+  );
 }
 
 function parseVerifyProjectedSubject(
