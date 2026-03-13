@@ -55,7 +55,7 @@ export class NavigationAgentOrchestrator {
 
   constructor(options: NavigationAgentOrchestratorOptions) {
     this.viewer = options.viewer;
-    this.fetchImpl = options.fetchImpl ?? fetch;
+    this.fetchImpl = resolveFetchImpl(options.fetchImpl);
     this.onProgress = options.onProgress;
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   }
@@ -470,6 +470,14 @@ function samplePoints(points: ScenePointSample[], max: number): Array<{ x: numbe
     }
   }
   return result;
+}
+
+function resolveFetchImpl(fetchImpl?: typeof fetch): typeof fetch {
+  const resolvedFetch = fetchImpl ?? globalThis.fetch;
+  if (typeof resolvedFetch !== 'function') {
+    throw new Error('A fetch implementation is required for navigation agent path generation.');
+  }
+  return resolvedFetch.bind(globalThis);
 }
 
 async function blobToJpegDataUrl(blob: Blob): Promise<string> {
