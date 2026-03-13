@@ -228,7 +228,7 @@ export class NavigationAgentOrchestrator {
       throw new AgenticPathGenerationError('Navigation agent placed no keyframes. Try a different prompt.');
     }
 
-    await this.verifyKeyframes(collectedKeyframes, bounds, serializedBounds, serializedSceneUp);
+    await this.verifyKeyframes(collectedKeyframes, bounds, serializedBounds, serializedSceneUp, rawPoints);
 
     return {
       draftId: createClientId('draft'),
@@ -384,6 +384,7 @@ export class NavigationAgentOrchestrator {
     bounds: THREE.Box3,
     serializedBounds: unknown,
     serializedSceneUp: { x: number; y: number; z: number },
+    rawPoints: ReturnType<ViewerAdapter['sampleScenePoints']>,
   ): Promise<void> {
     const camera = this.viewer.getCamera();
     if (!camera) return;
@@ -410,6 +411,7 @@ export class NavigationAgentOrchestrator {
       this.applyPoseToViewer(kfPose);
       const imageDataUrl = await this.captureDataUrl();
 
+      const serializedScenePoints = samplePoints(rawPoints, MAX_SCENE_POINTS);
       const verifyRequest = {
         bounds: serializedBounds,
         currentCamera: {
@@ -422,7 +424,7 @@ export class NavigationAgentOrchestrator {
         keyframeCount: keyframes.length,
         keyframeIndex: i,
         prompt: '',
-        scenePoints: [],
+        scenePoints: serializedScenePoints,
         sceneUp: serializedSceneUp,
         turnNumber: 3,
       };
@@ -448,21 +450,6 @@ export class NavigationAgentOrchestrator {
       };
       this.clampPose(correctedPose, bounds, diagonal, sceneUp);
       this.applyPoseToViewer(correctedPose);
-
-      // One retry capture to confirm
-      const retryImageDataUrl = await this.captureDataUrl();
-      const retryRequest = {
-        ...verifyRequest,
-        currentCamera: {
-          aspect: camera.aspect,
-          fov: correctedPose.fov,
-          position: { x: correctedPose.position.x, y: correctedPose.position.y, z: correctedPose.position.z },
-          quaternion: { x: correctedPose.quaternion.x, y: correctedPose.quaternion.y, z: correctedPose.quaternion.z, w: correctedPose.quaternion.w },
-        },
-        imageDataUrl: retryImageDataUrl,
-      };
-      await this.callPlanTurn(retryRequest);
-      this.checkTimeout();
 
       // Update the keyframe in-place with corrected pose
       kf.position = { x: correctedPose.position.x, y: correctedPose.position.y, z: correctedPose.position.z };

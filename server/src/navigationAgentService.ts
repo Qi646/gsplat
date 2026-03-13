@@ -151,17 +151,21 @@ function buildSceneUpSection(sceneUp: NavVector3, bounds: NavBounds): string {
 }
 
 function buildVerifySystemPrompt(): string {
-  return `You are a keyframe validator for a 3D Gaussian Splat scene viewer. Given a screenshot from a specific keyframe, determine whether the camera appears to be inside an object or underground (clipped into geometry, solid-color fill, or clearly below floor level).
+  return `You are a keyframe validator for a 3D Gaussian Splat scene viewer. Given a screenshot from a specific keyframe, determine whether the view is unusable: clipped into geometry (solid-color fill, heavy artifacting, or clearly inside a wall/floor), underground, or a featureless nose-to-surface close-up with no scene depth visible.
 
 Return ONLY a JSON object with an "actions" array.
 
-If the view looks valid (reasonable scene view, not clipped/inside geometry):
+If the view is valid (scene is visible with reasonable depth and context):
 {"actions":[{"type":"done","summary":"valid"}]}
 
-If the view is invalid (inside object, underground, or otherwise broken), return a corrected pose:
-{"actions":[{"type":"set_pose","position":{"x":0,"y":1,"z":3},"quaternion":{"x":0,"y":0,"z":0,"w":1}}]}
+If the view is clearly invalid, use the provided scene center, bounds, and scene points to place the camera at a safe external vantage. Choose a position offset from the scene center along a combination of scene-up and a lateral axis, at roughly 40–60% of the scene diagonal distance away:
+{"actions":[{"type":"set_pose","position":{"x":CX+lateral,"y":CY+up_offset,"z":CZ+depth_offset},"quaternion":{"x":0,"y":0,"z":0,"w":1}}]}
 
-Only return set_pose if the view is clearly invalid. When in doubt, return done.`;
+Replace CX/CY/CZ with scene center coordinates from the bounds. Set the quaternion so the camera looks toward the scene center (use look_at logic: if camera is at the offset position, orient toward scene center).
+
+Use the scene points to find where the actual geometry is concentrated and aim for a spot outside that cluster.
+
+Only correct if clearly invalid. When in doubt, return done.`;
 }
 
 function buildVerifyUserMessage(request: NavTurnRequest): unknown[] {
@@ -175,6 +179,12 @@ function buildVerifyUserMessage(request: NavTurnRequest): unknown[] {
     z: (bounds.min.z + bounds.max.z) / 2,
   };
 
+  const diagonal = Math.sqrt(
+    Math.pow(bounds.max.x - bounds.min.x, 2) +
+      Math.pow(bounds.max.y - bounds.min.y, 2) +
+      Math.pow(bounds.max.z - bounds.min.z, 2),
+  );
+
   const contextText = [
     `## Keyframe ${keyframeIndex + 1} of ${keyframeCount}`,
     `Camera position: (${fmt(currentCamera.position.x)}, ${fmt(currentCamera.position.y)}, ${fmt(currentCamera.position.z)})`,
@@ -182,9 +192,15 @@ function buildVerifyUserMessage(request: NavTurnRequest): unknown[] {
     `## Scene bounds`,
     `min(${fmt(bounds.min.x)}, ${fmt(bounds.min.y)}, ${fmt(bounds.min.z)}) max(${fmt(bounds.max.x)}, ${fmt(bounds.max.y)}, ${fmt(bounds.max.z)})`,
     `Scene center: (${fmt(center.x)}, ${fmt(center.y)}, ${fmt(center.z)})`,
+    `Scene diagonal: ${fmt(diagonal)}`,
     sceneUpSection,
     ``,
-    `Is this view valid, or does the camera appear to be inside geometry or underground?`,
+    `## Scene points (${request.scenePoints.length} sampled, format: x,y,z,opacity)`,
+    request.scenePoints
+      .map(p => `${fmt(p.x)},${fmt(p.y)},${fmt(p.z)},${p.opacity.toFixed(2)}`)
+      .join('\n'),
+    ``,
+    `Is this view valid, or does the camera appear to be inside geometry, underground, or nose-to-surface with no scene depth?`,
   ]
     .filter(Boolean)
     .join('\n');
