@@ -70,227 +70,69 @@ export interface OpenAINavigationAgentServiceOptions {
 const DEFAULT_OPENAI_BASE_URL = 'https://api.openai.com/v1';
 const DEFAULT_OPENAI_MODEL = 'gpt-5-mini';
 
-const NAV_TOOLS = [
-  {
-    function: {
-      description:
-        'Move the camera along its local axes. Units are fractions of the scene diagonal (1.0 = one full diagonal). Positive forward moves toward the scene center, positive right moves right, positive up moves up.',
-      name: 'move',
-      parameters: {
-        properties: {
-          forward: { description: 'Forward/backward displacement (positive = forward, negative = back)', type: 'number' },
-          right: { description: 'Left/right displacement (positive = right, negative = left)', type: 'number' },
-          up: { description: 'Up/down displacement (positive = up, negative = down)', type: 'number' },
-        },
-        required: ['forward', 'right', 'up'],
-        type: 'object',
-      },
-    },
-    type: 'function',
-  },
-  {
-    function: {
-      description: 'Rotate the camera. Yaw rotates left/right around world Y. Pitch tilts up/down around camera X. Roll tilts around camera Z.',
-      name: 'rotate',
-      parameters: {
-        properties: {
-          pitchDeg: { description: 'Pitch in degrees (positive = tilt up, negative = tilt down)', type: 'number' },
-          rollDeg: { description: 'Roll in degrees (positive = clockwise)', type: 'number' },
-          yawDeg: { description: 'Yaw in degrees (positive = turn right, negative = turn left)', type: 'number' },
-        },
-        required: ['yawDeg', 'pitchDeg', 'rollDeg'],
-        type: 'object',
-      },
-    },
-    type: 'function',
-  },
-  {
-    function: {
-      description:
-        'Rotate the camera in-place to face a specific 3D world point. Camera position stays unchanged. Great for reorienting toward a scene subject.',
-      name: 'look_at',
-      parameters: {
-        properties: {
-          target: {
-            description: 'World-space point to look at',
-            properties: {
-              x: { type: 'number' },
-              y: { type: 'number' },
-              z: { type: 'number' },
-            },
-            required: ['x', 'y', 'z'],
-            type: 'object',
-          },
-        },
-        required: ['target'],
-        type: 'object',
-      },
-    },
-    type: 'function',
-  },
-  {
-    function: {
-      description:
-        'Place the camera on a sphere centered at a 3D world point, at the given azimuth, elevation, and radius. The camera automatically looks at the target. Use this to arc around a subject. Azimuth 0 = north (+Z), 90 = east (+X), 180 = south (-Z), 270 = west (-X). Elevation 0 = equator, 90 = directly above.',
-      name: 'orbit',
-      parameters: {
-        properties: {
-          azimuth_deg: { description: 'Azimuth angle in degrees (0=north/+Z, 90=east/+X)', type: 'number' },
-          elevation_deg: { description: 'Elevation angle in degrees above equator (0=equator, 90=top)', type: 'number' },
-          radius: {
-            description: 'Distance from target in scene units. Use bounds size as reference.',
-            type: 'number',
-          },
-          target: {
-            description: 'Center point of the orbit sphere',
-            properties: {
-              x: { type: 'number' },
-              y: { type: 'number' },
-              z: { type: 'number' },
-            },
-            required: ['x', 'y', 'z'],
-            type: 'object',
-          },
-        },
-        required: ['target', 'azimuth_deg', 'elevation_deg', 'radius'],
-        type: 'object',
-      },
-    },
-    type: 'function',
-  },
-  {
-    function: {
-      description: 'Teleport the camera to an exact world-space pose. Use when you know precise coordinates.',
-      name: 'set_pose',
-      parameters: {
-        properties: {
-          fov: { description: 'Optional field of view in degrees', type: 'number' },
-          position: {
-            description: 'World position',
-            properties: {
-              x: { type: 'number' },
-              y: { type: 'number' },
-              z: { type: 'number' },
-            },
-            required: ['x', 'y', 'z'],
-            type: 'object',
-          },
-          quaternion: {
-            description: 'Orientation as unit quaternion (x,y,z,w)',
-            properties: {
-              w: { type: 'number' },
-              x: { type: 'number' },
-              y: { type: 'number' },
-              z: { type: 'number' },
-            },
-            required: ['x', 'y', 'z', 'w'],
-            type: 'object',
-          },
-        },
-        required: ['position', 'quaternion'],
-        type: 'object',
-      },
-    },
-    type: 'function',
-  },
-  {
-    function: {
-      description:
-        'Record the current camera pose as a keyframe in the path. Call this after positioning the camera where you want a keyframe. Include a short human-readable note for debugging.',
-      name: 'place_keyframe',
-      parameters: {
-        properties: {
-          note: { description: 'Optional description of this keyframe (e.g. "wide establishing shot")', type: 'string' },
-        },
-        type: 'object',
-      },
-    },
-    type: 'function',
-  },
-  {
-    function: {
-      description:
-        'Capture a screenshot of the current view and start a correction turn. Use this if you are unsure whether your keyframes look good. Can only be called once per session.',
-      name: 'capture_and_assess',
-      parameters: {
-        properties: {
-          reason: { description: 'Why you want to assess the current view', type: 'string' },
-        },
-        required: ['reason'],
-        type: 'object',
-      },
-    },
-    type: 'function',
-  },
-  {
-    function: {
-      description: 'End the session. Call this after placing all keyframes. Provide a short summary of the path you created.',
-      name: 'done',
-      parameters: {
-        properties: {
-          summary: { description: 'Short description of the camera path you created', type: 'string' },
-        },
-        required: ['summary'],
-        type: 'object',
-      },
-    },
-    type: 'function',
-  },
-] as const;
-
 function buildSystemPrompt(): string {
-  return `You are a camera path planning agent for a 3D Gaussian Splat scene viewer. Your job is to plan an interesting camera path by calling tool functions.
+  return `You are a camera path planning agent for a 3D Gaussian Splat scene viewer. Plan a cinematic camera path by returning a JSON object.
 
 You receive:
 - A screenshot of the current camera view
-- Up to 512 sampled 3D scene points (x, y, z, opacity) from the splat cloud — use these for spatial reasoning
+- Up to 512 sampled 3D scene points (x, y, z, opacity) for spatial reasoning
 - Scene bounding box (min/max x,y,z)
 - Current camera pose (position, quaternion, fov)
 - A user prompt describing the desired camera movement
 
-## CRITICAL: Single-response batch workflow
-You must emit ALL your tool calls in ONE response. Tools are executed in order without any intermediate feedback. Do NOT stop after one tool expecting a result — keep calling tools until you call done().
+## Output format
+Return ONLY a JSON object with an "actions" array. Example:
+{
+  "actions": [
+    { "type": "orbit", "target": {"x": 0, "y": 0, "z": 0}, "azimuth_deg": 45, "elevation_deg": 20, "radius": 1.5 },
+    { "type": "place_keyframe", "note": "wide establishing shot" },
+    { "type": "orbit", "target": {"x": 0, "y": 0, "z": 0}, "azimuth_deg": 135, "elevation_deg": 10, "radius": 1.2 },
+    { "type": "place_keyframe", "note": "side angle" },
+    { "type": "done", "summary": "Slow orbit around the scene" }
+  ]
+}
 
-Required pattern for each keyframe:
-  1. Call a positioning tool (orbit / move / look_at / rotate / set_pose) to place the camera
-  2. Immediately call place_keyframe() to record that position
-Repeat for every keyframe. End with done().
+## Action types
+Camera positioning (always follow with place_keyframe):
+- orbit: { type, target:{x,y,z}, azimuth_deg, elevation_deg, radius }
+- move: { type, forward, right, up }  — fractions of scene diagonal
+- look_at: { type, target:{x,y,z} }  — rotate in place to face a point
+- rotate: { type, yawDeg, pitchDeg, rollDeg }
+- set_pose: { type, position:{x,y,z}, quaternion:{x,y,z,w}, fov? }
 
-Minimal correct example (4 tool calls):
-  orbit(...)         ← position camera at shot 1
-  place_keyframe()   ← record shot 1
-  orbit(...)         ← position camera at shot 2
-  place_keyframe()   ← record shot 2
-  done()             ← finish
+Control:
+- place_keyframe: { type, note? }  — records current camera pose as a keyframe
+- capture_and_assess: { type, reason }  — request a screenshot review (once only, as last action before done)
+- done: { type, summary }  — ends the sequence (must be last action)
 
-If you call orbit/move/look_at/rotate/set_pose WITHOUT immediately following it with place_keyframe(), no keyframe is recorded for that position. Always pair them.
+## Required pattern
+Every positioning action MUST be immediately followed by place_keyframe. End with done.
+Correct:   orbit → place_keyframe → orbit → place_keyframe → done
+Wrong:     orbit → orbit → done  (no keyframes recorded)
 
 ## Spatial reasoning from point cloud
-The scene points give you the actual 3D geometry. Cluster them mentally to find:
-- The scene center (centroid of high-opacity points)
-- Interesting subjects (dense clusters)
-- Floor level (minimum Y among high-density points)
-- Scene scale (use bounding box diagonal)
+- Scene center: centroid of high-opacity points
+- Floor level: minimum Y among dense points
+- Scene scale: bounding box diagonal
 
-## Orbit math reference
-orbit(target, azimuth_deg, elevation_deg, radius) places the camera at:
-  x = target.x + radius * cos(elevation_rad) * sin(azimuth_rad)
-  y = target.y + radius * sin(elevation_rad)
-  z = target.z + radius * cos(elevation_rad) * cos(azimuth_rad)
-where azimuth 0=north(+Z), 90=east(+X). Camera looks at target.
+## Orbit math
+orbit(target, azimuth_deg, elevation_deg, radius) places camera at:
+  x = target.x + radius * cos(el) * sin(az)
+  y = target.y + radius * sin(el)
+  z = target.z + radius * cos(el) * cos(az)
+azimuth 0=north(+Z), 90=east(+X). Camera auto-looks at target.
 
 ## Strategy
-1. Start with a good establishing keyframe (wide view of scene)
-2. Move through 3-6 interesting positions, placing a keyframe at each
-3. Make the path cinematic: vary height, angle, and distance
-4. Call done() with a summary
+1. Wide establishing shot (high elevation, large radius)
+2. 2–4 more angles varying height, azimuth, and distance
+3. Close detail shot if an interesting subject is found
+4. End with done()
 
 ## Constraints
-- Place at least 3 keyframes and at most 8 keyframes
-- Stay within the scene bounds (expanded by 30% of diagonal)
+- Place 3–8 keyframes
+- Stay within scene bounds (expanded 30% of diagonal)
 - Keep camera above floor level
-- Call done() or capture_and_assess() as the last action
-- Do not call capture_and_assess() more than once`;
+- done must be the last action`;
 }
 
 function buildUserMessage(request: NavTurnRequest): unknown[] {
@@ -343,42 +185,43 @@ function fmt(n: number): string {
   return n.toFixed(3);
 }
 
-interface ToolCall {
-  function: {
-    arguments: string;
-    name: string;
-  };
-  id: string;
-  type: 'function';
-}
-
 interface ChatCompletionResponse {
   choices?: Array<{
     finish_reason?: string | null;
     message?: {
-      content?: unknown;
-      tool_calls?: ToolCall[];
+      content?: string | null;
     };
   }>;
 }
 
-function parseToolCallsFromResponse(response: ChatCompletionResponse): NavAction[] {
-  const message = response.choices?.[0]?.message;
-  if (!message) {
+function parseActionsFromContent(response: ChatCompletionResponse): NavAction[] {
+  const content = response.choices?.[0]?.message?.content;
+  if (!content) {
     throw new NavigationAgentError(502, 'Navigation agent returned an empty response.');
   }
 
-  const toolCalls = message.tool_calls;
-  if (!toolCalls || toolCalls.length === 0) {
-    throw new NavigationAgentError(502, 'Navigation agent returned no tool calls.');
+  let parsed: unknown;
+  try {
+    // Strip markdown code fences if present
+    const jsonMatch = content.match(/\{[\s\S]*\}/);
+    parsed = JSON.parse(jsonMatch ? jsonMatch[0] : content);
+  } catch {
+    throw new NavigationAgentError(502, 'Navigation agent returned invalid JSON.');
+  }
+
+  if (typeof parsed !== 'object' || parsed === null) {
+    throw new NavigationAgentError(502, 'Navigation agent response is not a JSON object.');
+  }
+
+  const rawActions = (parsed as Record<string, unknown>)['actions'];
+  if (!Array.isArray(rawActions)) {
+    throw new NavigationAgentError(502, 'Navigation agent response missing "actions" array.');
   }
 
   const actions: NavAction[] = [];
-  for (const toolCall of toolCalls) {
-    const action = parseToolCall(toolCall);
-    if (action) {
-      actions.push(action);
-    }
+  for (const raw of rawActions) {
+    const action = parseRawAction(raw as Record<string, unknown>);
+    if (action) actions.push(action);
   }
 
   if (actions.length === 0) {
@@ -388,33 +231,27 @@ function parseToolCallsFromResponse(response: ChatCompletionResponse): NavAction
   return actions;
 }
 
-function parseToolCall(toolCall: ToolCall): NavAction | null {
-  let args: Record<string, unknown>;
-  try {
-    args = JSON.parse(toolCall.function.arguments) as Record<string, unknown>;
-  } catch {
-    return null;
-  }
+function parseRawAction(raw: Record<string, unknown>): NavAction | null {
+  const type = raw['type'];
+  if (typeof type !== 'string') return null;
 
-  const name = toolCall.function.name;
-
-  switch (name) {
+  switch (type) {
     case 'move':
       return {
         type: 'move',
-        forward: Number(args['forward'] ?? 0),
-        right: Number(args['right'] ?? 0),
-        up: Number(args['up'] ?? 0),
+        forward: Number(raw['forward'] ?? 0),
+        right: Number(raw['right'] ?? 0),
+        up: Number(raw['up'] ?? 0),
       };
     case 'rotate':
       return {
         type: 'rotate',
-        yawDeg: Number(args['yawDeg'] ?? 0),
-        pitchDeg: Number(args['pitchDeg'] ?? 0),
-        rollDeg: Number(args['rollDeg'] ?? 0),
+        yawDeg: Number(raw['yawDeg'] ?? 0),
+        pitchDeg: Number(raw['pitchDeg'] ?? 0),
+        rollDeg: Number(raw['rollDeg'] ?? 0),
       };
     case 'look_at': {
-      const target = args['target'] as Record<string, unknown> | undefined;
+      const target = raw['target'] as Record<string, unknown> | undefined;
       if (!target) return null;
       return {
         type: 'look_at',
@@ -422,19 +259,19 @@ function parseToolCall(toolCall: ToolCall): NavAction | null {
       };
     }
     case 'orbit': {
-      const target = args['target'] as Record<string, unknown> | undefined;
+      const target = raw['target'] as Record<string, unknown> | undefined;
       if (!target) return null;
       return {
         type: 'orbit',
         target: { x: Number(target['x'] ?? 0), y: Number(target['y'] ?? 0), z: Number(target['z'] ?? 0) },
-        azimuth_deg: Number(args['azimuth_deg'] ?? 0),
-        elevation_deg: Number(args['elevation_deg'] ?? 0),
-        radius: Number(args['radius'] ?? 1),
+        azimuth_deg: Number(raw['azimuth_deg'] ?? 0),
+        elevation_deg: Number(raw['elevation_deg'] ?? 0),
+        radius: Number(raw['radius'] ?? 1),
       };
     }
     case 'set_pose': {
-      const position = args['position'] as Record<string, unknown> | undefined;
-      const quaternion = args['quaternion'] as Record<string, unknown> | undefined;
+      const position = raw['position'] as Record<string, unknown> | undefined;
+      const quaternion = raw['quaternion'] as Record<string, unknown> | undefined;
       if (!position || !quaternion) return null;
       const action: Extract<NavAction, { type: 'set_pose' }> = {
         type: 'set_pose',
@@ -446,25 +283,23 @@ function parseToolCall(toolCall: ToolCall): NavAction | null {
           w: Number(quaternion['w'] ?? 1),
         },
       };
-      if (typeof args['fov'] === 'number') {
-        action.fov = args['fov'];
-      }
+      if (typeof raw['fov'] === 'number') action.fov = raw['fov'];
       return action;
     }
     case 'place_keyframe':
       return {
         type: 'place_keyframe',
-        note: typeof args['note'] === 'string' ? args['note'] : undefined,
+        note: typeof raw['note'] === 'string' ? raw['note'] : undefined,
       };
     case 'capture_and_assess':
       return {
         type: 'capture_and_assess',
-        reason: typeof args['reason'] === 'string' ? args['reason'] : 'Assessment requested',
+        reason: typeof raw['reason'] === 'string' ? raw['reason'] : 'Assessment requested',
       };
     case 'done':
       return {
         type: 'done',
-        summary: typeof args['summary'] === 'string' ? args['summary'] : 'Camera path complete',
+        summary: typeof raw['summary'] === 'string' ? raw['summary'] : 'Camera path complete',
       };
     default:
       return null;
@@ -517,8 +352,7 @@ export class OpenAINavigationAgentService {
         { role: 'user', content: buildUserMessage(request) },
       ],
       model,
-      tool_choice: 'auto',
-      tools: NAV_TOOLS,
+      response_format: { type: 'json_object' },
     };
 
     const response = await this.fetchImpl(
@@ -539,7 +373,7 @@ export class OpenAINavigationAgentService {
     }
 
     const completion = (await response.json()) as ChatCompletionResponse;
-    const actions = parseToolCallsFromResponse(completion);
+    const actions = parseActionsFromContent(completion);
 
     return { actions };
   }
