@@ -45,10 +45,12 @@ export interface NavTurnRequest {
   bounds: NavBounds;
   currentCamera: NavCamera;
   imageDataUrl: string;
+  keyframeCount?: number;
+  keyframeIndex?: number;
   prompt: string;
   scenePoints: NavScenePoint[];
   sceneUp?: NavVector3;
-  turnNumber: 1 | 2;
+  turnNumber: 1 | 2 | 3;
 }
 
 export interface NavTurnResponse {
@@ -146,6 +148,51 @@ function buildSceneUpSection(sceneUp: NavVector3, bounds: NavBounds): string {
     `Floor level: ${fmt(floorHeight)} (minimum projection of bounds along scene-up)`,
     `Orbit elevation moves along the scene-up direction above.`,
   ].join('\n');
+}
+
+function buildVerifySystemPrompt(): string {
+  return `You are a keyframe validator for a 3D Gaussian Splat scene viewer. Given a screenshot from a specific keyframe, determine whether the camera appears to be inside an object or underground (clipped into geometry, solid-color fill, or clearly below floor level).
+
+Return ONLY a JSON object with an "actions" array.
+
+If the view looks valid (reasonable scene view, not clipped/inside geometry):
+{"actions":[{"type":"done","summary":"valid"}]}
+
+If the view is invalid (inside object, underground, or otherwise broken), return a corrected pose:
+{"actions":[{"type":"set_pose","position":{"x":0,"y":1,"z":3},"quaternion":{"x":0,"y":0,"z":0,"w":1}}]}
+
+Only return set_pose if the view is clearly invalid. When in doubt, return done.`;
+}
+
+function buildVerifyUserMessage(request: NavTurnRequest): unknown[] {
+  const { keyframeIndex = 0, keyframeCount = 1, bounds, sceneUp, currentCamera } = request;
+
+  const sceneUpSection = sceneUp ? buildSceneUpSection(sceneUp, bounds) : '';
+
+  const center = {
+    x: (bounds.min.x + bounds.max.x) / 2,
+    y: (bounds.min.y + bounds.max.y) / 2,
+    z: (bounds.min.z + bounds.max.z) / 2,
+  };
+
+  const contextText = [
+    `## Keyframe ${keyframeIndex + 1} of ${keyframeCount}`,
+    `Camera position: (${fmt(currentCamera.position.x)}, ${fmt(currentCamera.position.y)}, ${fmt(currentCamera.position.z)})`,
+    ``,
+    `## Scene bounds`,
+    `min(${fmt(bounds.min.x)}, ${fmt(bounds.min.y)}, ${fmt(bounds.min.z)}) max(${fmt(bounds.max.x)}, ${fmt(bounds.max.y)}, ${fmt(bounds.max.z)})`,
+    `Scene center: (${fmt(center.x)}, ${fmt(center.y)}, ${fmt(center.z)})`,
+    sceneUpSection,
+    ``,
+    `Is this view valid, or does the camera appear to be inside geometry or underground?`,
+  ]
+    .filter(Boolean)
+    .join('\n');
+
+  return [
+    { type: 'text', text: contextText },
+    { type: 'image_url', image_url: { url: request.imageDataUrl } },
+  ];
 }
 
 function buildUserMessage(request: NavTurnRequest): unknown[] {
@@ -364,10 +411,11 @@ export class OpenAINavigationAgentService {
     const apiKey = this.requireApiKey();
     const model = this.resolveModel();
 
+    const isVerifyTurn = request.turnNumber === 3;
     const body = {
       messages: [
-        { role: 'system', content: buildSystemPrompt() },
-        { role: 'user', content: buildUserMessage(request) },
+        { role: 'system', content: isVerifyTurn ? buildVerifySystemPrompt() : buildSystemPrompt() },
+        { role: 'user', content: isVerifyTurn ? buildVerifyUserMessage(request) : buildUserMessage(request) },
       ],
       model,
       response_format: { type: 'json_object' },

@@ -228,6 +228,8 @@ export class NavigationAgentOrchestrator {
       throw new AgenticPathGenerationError('Navigation agent placed no keyframes. Try a different prompt.');
     }
 
+    await this.verifyKeyframes(collectedKeyframes, bounds, serializedBounds, serializedSceneUp);
+
     return {
       draftId: createClientId('draft'),
       groundedRoute: null,
@@ -374,6 +376,98 @@ export class NavigationAgentOrchestrator {
       return (await response.json()) as NavTurnResponse;
     } finally {
       clearTimeout(timer);
+    }
+  }
+
+  private async verifyKeyframes(
+    keyframes: Keyframe[],
+    bounds: THREE.Box3,
+    serializedBounds: unknown,
+    serializedSceneUp: { x: number; y: number; z: number },
+  ): Promise<void> {
+    const camera = this.viewer.getCamera();
+    if (!camera) return;
+
+    for (let i = 0; i < keyframes.length; i++) {
+      if (this.cancelled) throw new AgenticPathGenerationError('Cancelled.');
+
+      const kf = keyframes[i];
+      if (!kf) continue;
+
+      this.reportProgress({
+        buttonLabel: 'Verifying…',
+        captureIndex: i + 1,
+        message: `Verifying keyframe ${i + 1}/${keyframes.length}…`,
+        stage: 'verifying',
+        totalCaptures: keyframes.length,
+      });
+
+      const kfPose: CurrentPose = {
+        fov: kf.fov,
+        position: new THREE.Vector3(kf.position.x, kf.position.y, kf.position.z),
+        quaternion: new THREE.Quaternion(kf.quaternion.x, kf.quaternion.y, kf.quaternion.z, kf.quaternion.w),
+      };
+      this.applyPoseToViewer(kfPose);
+      const imageDataUrl = await this.captureDataUrl();
+
+      const verifyRequest = {
+        bounds: serializedBounds,
+        currentCamera: {
+          aspect: camera.aspect,
+          fov: kfPose.fov,
+          position: { x: kfPose.position.x, y: kfPose.position.y, z: kfPose.position.z },
+          quaternion: { x: kfPose.quaternion.x, y: kfPose.quaternion.y, z: kfPose.quaternion.z, w: kfPose.quaternion.w },
+        },
+        imageDataUrl,
+        keyframeCount: keyframes.length,
+        keyframeIndex: i,
+        prompt: '',
+        scenePoints: [],
+        sceneUp: serializedSceneUp,
+        turnNumber: 3,
+      };
+
+      const response = await this.callPlanTurn(verifyRequest);
+      this.checkTimeout();
+
+      const setPoseAction = response.actions.find(a => a.type === 'set_pose');
+      if (!setPoseAction) continue;
+
+      // Apply correction
+      const p = setPoseAction['position'] as { x: number; y: number; z: number } | undefined;
+      const q = setPoseAction['quaternion'] as { x: number; y: number; z: number; w: number } | undefined;
+      if (!p || !q) continue;
+
+      const diagonal = bounds.getSize(new THREE.Vector3()).length();
+      const sceneUp = new THREE.Vector3(serializedSceneUp.x, serializedSceneUp.y, serializedSceneUp.z);
+
+      const correctedPose: CurrentPose = {
+        fov: typeof setPoseAction['fov'] === 'number' ? (setPoseAction['fov'] as number) : kfPose.fov,
+        position: new THREE.Vector3(p.x, p.y, p.z),
+        quaternion: new THREE.Quaternion(q.x, q.y, q.z, q.w).normalize(),
+      };
+      this.clampPose(correctedPose, bounds, diagonal, sceneUp);
+      this.applyPoseToViewer(correctedPose);
+
+      // One retry capture to confirm
+      const retryImageDataUrl = await this.captureDataUrl();
+      const retryRequest = {
+        ...verifyRequest,
+        currentCamera: {
+          aspect: camera.aspect,
+          fov: correctedPose.fov,
+          position: { x: correctedPose.position.x, y: correctedPose.position.y, z: correctedPose.position.z },
+          quaternion: { x: correctedPose.quaternion.x, y: correctedPose.quaternion.y, z: correctedPose.quaternion.z, w: correctedPose.quaternion.w },
+        },
+        imageDataUrl: retryImageDataUrl,
+      };
+      await this.callPlanTurn(retryRequest);
+      this.checkTimeout();
+
+      // Update the keyframe in-place with corrected pose
+      kf.position = { x: correctedPose.position.x, y: correctedPose.position.y, z: correctedPose.position.z };
+      kf.quaternion = { x: correctedPose.quaternion.x, y: correctedPose.quaternion.y, z: correctedPose.quaternion.z, w: correctedPose.quaternion.w };
+      kf.fov = correctedPose.fov;
     }
   }
 
