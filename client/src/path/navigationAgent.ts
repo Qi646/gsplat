@@ -228,7 +228,8 @@ export class NavigationAgentOrchestrator {
       throw new AgenticPathGenerationError('Navigation agent placed no keyframes. Try a different prompt.');
     }
 
-    await this.verifyKeyframes(collectedKeyframes, bounds, serializedBounds, serializedSceneUp, rawPoints);
+    const sceneCentroid = computeOpacityCentroid(rawPoints) ?? undefined;
+    await this.verifyKeyframes(collectedKeyframes, bounds, serializedBounds, serializedSceneUp, rawPoints, sceneCentroid);
 
     return {
       draftId: createClientId('draft'),
@@ -385,6 +386,7 @@ export class NavigationAgentOrchestrator {
     serializedBounds: unknown,
     serializedSceneUp: { x: number; y: number; z: number },
     rawPoints: ReturnType<ViewerAdapter['sampleScenePoints']>,
+    sceneCentroid: { x: number; y: number; z: number } | undefined,
   ): Promise<void> {
     const camera = this.viewer.getCamera();
     if (!camera) return;
@@ -424,6 +426,7 @@ export class NavigationAgentOrchestrator {
         keyframeCount: keyframes.length,
         keyframeIndex: i,
         prompt: '',
+        sceneCentroid,
         scenePoints: serializedScenePoints,
         sceneUp: serializedSceneUp,
         turnNumber: 3,
@@ -584,6 +587,19 @@ function serializeCamera(camera: THREE.PerspectiveCamera, pose: CurrentPose): un
     position: { x: pose.position.x, y: pose.position.y, z: pose.position.z },
     quaternion: { x: pose.quaternion.x, y: pose.quaternion.y, z: pose.quaternion.z, w: pose.quaternion.w },
   };
+}
+
+export function computeOpacityCentroid(points: ScenePointSample[]): { x: number; y: number; z: number } | null {
+  let wx = 0, wy = 0, wz = 0, totalW = 0;
+  for (const p of points) {
+    const w = Math.max(0, p.opacity);
+    wx += p.position.x * w;
+    wy += p.position.y * w;
+    wz += p.position.z * w;
+    totalW += w;
+  }
+  if (totalW === 0) return null;
+  return { x: wx / totalW, y: wy / totalW, z: wz / totalW };
 }
 
 function samplePoints(points: ScenePointSample[], max: number): Array<{ x: number; y: number; z: number; opacity: number }> {

@@ -48,6 +48,7 @@ export interface NavTurnRequest {
   keyframeCount?: number;
   keyframeIndex?: number;
   prompt: string;
+  sceneCentroid?: NavVector3;
   scenePoints: NavScenePoint[];
   sceneUp?: NavVector3;
   turnNumber: 1 | 2 | 3;
@@ -158,26 +159,32 @@ Return ONLY a JSON object with an "actions" array.
 If the view is valid (scene is visible with reasonable depth and context):
 {"actions":[{"type":"done","summary":"valid"}]}
 
-If the view is clearly invalid, use the provided scene center, bounds, and scene points to place the camera at a safe external vantage. Choose a position offset from the scene center along a combination of scene-up and a lateral axis, at roughly 40–60% of the scene diagonal distance away:
+If the view is clearly invalid, use the provided scene centroid (opacity-weighted center of actual geometry) and diagonal to place the camera at a safe external vantage. Choose a position offset from the centroid along a combination of scene-up and a lateral axis, at roughly 40–60% of the scene diagonal away:
 {"actions":[{"type":"set_pose","position":{"x":CX+lateral,"y":CY+up_offset,"z":CZ+depth_offset},"quaternion":{"x":0,"y":0,"z":0,"w":1}}]}
 
-Replace CX/CY/CZ with scene center coordinates from the bounds. Set the quaternion so the camera looks toward the scene center (use look_at logic: if camera is at the offset position, orient toward scene center).
+Replace CX/CY/CZ with the scene centroid coordinates from the user message. Set the quaternion so the camera looks toward the centroid. If no centroid is provided, use the bounds midpoint.
 
-Use the scene points to find where the actual geometry is concentrated and aim for a spot outside that cluster.
+Prefer the centroid over the bounds midpoint — geometry is not always centered in its bounding box.
 
 Only correct if clearly invalid. When in doubt, return done.`;
 }
 
 function buildVerifyUserMessage(request: NavTurnRequest): unknown[] {
-  const { keyframeIndex = 0, keyframeCount = 1, bounds, sceneUp, currentCamera } = request;
+  const { keyframeIndex = 0, keyframeCount = 1, bounds, sceneUp, currentCamera, sceneCentroid } = request;
 
   const sceneUpSection = sceneUp ? buildSceneUpSection(sceneUp, bounds) : '';
 
-  const center = {
+  const boundsCenter = {
     x: (bounds.min.x + bounds.max.x) / 2,
     y: (bounds.min.y + bounds.max.y) / 2,
     z: (bounds.min.z + bounds.max.z) / 2,
   };
+
+  // Prefer the opacity-weighted centroid; fall back to bounds midpoint
+  const center = sceneCentroid ?? boundsCenter;
+  const centroidNote = sceneCentroid
+    ? `Scene centroid (opacity-weighted): (${fmt(center.x)}, ${fmt(center.y)}, ${fmt(center.z)})`
+    : `Scene center (bounds midpoint): (${fmt(center.x)}, ${fmt(center.y)}, ${fmt(center.z)})`;
 
   const diagonal = Math.sqrt(
     Math.pow(bounds.max.x - bounds.min.x, 2) +
@@ -191,7 +198,7 @@ function buildVerifyUserMessage(request: NavTurnRequest): unknown[] {
     ``,
     `## Scene bounds`,
     `min(${fmt(bounds.min.x)}, ${fmt(bounds.min.y)}, ${fmt(bounds.min.z)}) max(${fmt(bounds.max.x)}, ${fmt(bounds.max.y)}, ${fmt(bounds.max.z)})`,
-    `Scene center: (${fmt(center.x)}, ${fmt(center.y)}, ${fmt(center.z)})`,
+    centroidNote,
     `Scene diagonal: ${fmt(diagonal)}`,
     sceneUpSection,
     ``,
@@ -201,6 +208,7 @@ function buildVerifyUserMessage(request: NavTurnRequest): unknown[] {
       .join('\n'),
     ``,
     `Is this view valid, or does the camera appear to be inside geometry, underground, or nose-to-surface with no scene depth?`,
+    `If correcting, use the scene centroid above as the anchor for your corrected position.`,
   ]
     .filter(Boolean)
     .join('\n');

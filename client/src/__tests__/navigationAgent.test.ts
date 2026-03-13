@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
-import { applyRotation, computeLookAtQuaternion, computeOrbitPose } from '../path/navigationAgent';
+import { applyRotation, computeLookAtQuaternion, computeOpacityCentroid, computeOrbitPose } from '../path/navigationAgent';
 
 const Y_UP = new THREE.Vector3(0, 1, 0);
 const Y_DOWN = new THREE.Vector3(0, -1, 0);
@@ -140,5 +140,37 @@ describe('applyRotation', () => {
     expect(poseDefault.quaternion.y).toBeCloseTo(poseYUp.quaternion.y, 5);
     expect(poseDefault.quaternion.z).toBeCloseTo(poseYUp.quaternion.z, 5);
     expect(poseDefault.quaternion.w).toBeCloseTo(poseYUp.quaternion.w, 5);
+  });
+});
+
+describe('computeOpacityCentroid', () => {
+  it('returns null for empty input', () => {
+    expect(computeOpacityCentroid([])).toBeNull();
+  });
+
+  it('returns null when all opacities are zero', () => {
+    const points = [
+      { opacity: 0, position: { x: 1, y: 2, z: 3 } },
+      { opacity: 0, position: { x: 4, y: 5, z: 6 } },
+    ];
+    expect(computeOpacityCentroid(points)).toBeNull();
+  });
+
+  it('computes weighted centroid correctly', () => {
+    const points = [
+      { opacity: 1, position: { x: 0, y: 0, z: 0 } },
+      { opacity: 3, position: { x: 4, y: 4, z: 4 } },
+    ];
+    const result = computeOpacityCentroid(points);
+    expect(result).not.toBeNull();
+    expect(result!.x).toBeCloseTo(3, 5);
+    expect(result!.y).toBeCloseTo(3, 5);
+    expect(result!.z).toBeCloseTo(3, 5);
+  });
+
+  it('single point returns that point', () => {
+    const points = [{ opacity: 0.8, position: { x: 5, y: -2, z: 7 } }];
+    const result = computeOpacityCentroid(points);
+    expect(result).toEqual({ x: 5, y: -2, z: 7 });
   });
 });
