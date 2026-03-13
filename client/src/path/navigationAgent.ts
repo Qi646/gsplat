@@ -43,8 +43,6 @@ interface NavTurnResponse {
   actions: NavAction[];
 }
 
-const DEFAULT_LOOK_UP = new THREE.Vector3(0, 1, 0);
-
 export class NavigationAgentOrchestrator {
   private readonly fetchImpl: typeof fetch;
   private generating = false;
@@ -133,6 +131,10 @@ export class NavigationAgentOrchestrator {
     // Capture initial frame
     const camera = this.viewer.getCamera();
     if (!camera) throw new AgenticPathGenerationError('Camera unavailable.');
+
+    // Derive scene-up from the current camera orientation
+    const sceneUp = camera.up.clone().normalize();
+
     const initialImageDataUrl = await this.captureDataUrl();
 
     // Current mutable pose (starts at live camera)
@@ -151,6 +153,7 @@ export class NavigationAgentOrchestrator {
     if (this.cancelled) throw new AgenticPathGenerationError('Cancelled.');
 
     const serializedBounds = serializeBounds(bounds);
+    const serializedSceneUp = { x: sceneUp.x, y: sceneUp.y, z: sceneUp.z };
 
     // Turn 1
     const turn1Response = await this.callPlanTurn({
@@ -159,6 +162,7 @@ export class NavigationAgentOrchestrator {
       imageDataUrl: initialImageDataUrl,
       prompt,
       scenePoints: samplePoints(rawPoints, MAX_SCENE_POINTS),
+      sceneUp: serializedSceneUp,
       turnNumber: 1,
     });
 
@@ -180,7 +184,7 @@ export class NavigationAgentOrchestrator {
         break;
       }
 
-      this.executeAction(action, currentPose, bounds, diagonal, collectedKeyframes, startTime);
+      this.executeAction(action, currentPose, bounds, diagonal, collectedKeyframes, startTime, sceneUp);
     }
 
     // Turn 2 (optional, only if capture_and_assess was called)
@@ -202,6 +206,7 @@ export class NavigationAgentOrchestrator {
         imageDataUrl: assessImageDataUrl,
         prompt,
         scenePoints: samplePoints(rawPoints, MAX_SCENE_POINTS),
+        sceneUp: serializedSceneUp,
         turnNumber: 2,
       });
 
@@ -215,7 +220,7 @@ export class NavigationAgentOrchestrator {
           doneTriggered = true;
           break;
         }
-        this.executeAction(action, currentPose, bounds, diagonal, collectedKeyframes, startTime);
+        this.executeAction(action, currentPose, bounds, diagonal, collectedKeyframes, startTime, sceneUp);
       }
     }
 
@@ -240,6 +245,7 @@ export class NavigationAgentOrchestrator {
     diagonal: number,
     keyframes: Keyframe[],
     startTime: number,
+    sceneUp: THREE.Vector3,
   ): void {
     switch (action.type) {
       case 'move': {
@@ -253,7 +259,7 @@ export class NavigationAgentOrchestrator {
         const rgt = new THREE.Vector3(1, 0, 0).applyQuaternion(quat).multiplyScalar(right * scale);
         const upv = new THREE.Vector3(0, 1, 0).applyQuaternion(quat).multiplyScalar(up * scale);
         pose.position.add(fwd).add(rgt).add(upv);
-        this.clampPose(pose, bounds, diagonal);
+        this.clampPose(pose, bounds, diagonal, sceneUp);
         this.applyPoseToViewer(pose);
         break;
       }
@@ -261,7 +267,7 @@ export class NavigationAgentOrchestrator {
         const yawDeg = Number(action['yawDeg'] ?? 0);
         const pitchDeg = Number(action['pitchDeg'] ?? 0);
         const rollDeg = Number(action['rollDeg'] ?? 0);
-        applyRotation(pose, yawDeg, pitchDeg, rollDeg);
+        applyRotation(pose, yawDeg, pitchDeg, rollDeg, sceneUp);
         this.applyPoseToViewer(pose);
         break;
       }
@@ -269,7 +275,7 @@ export class NavigationAgentOrchestrator {
         const t = action['target'] as { x: number; y: number; z: number } | undefined;
         if (!t) break;
         const target = new THREE.Vector3(t.x, t.y, t.z);
-        pose.quaternion = computeLookAtQuaternion(pose.position, target);
+        pose.quaternion = computeLookAtQuaternion(pose.position, target, sceneUp);
         this.applyPoseToViewer(pose);
         break;
       }
@@ -280,10 +286,10 @@ export class NavigationAgentOrchestrator {
         const azimuth = Number(action['azimuth_deg'] ?? 0);
         const elevation = Number(action['elevation_deg'] ?? 0);
         const radius = Number(action['radius'] ?? diagonal * 0.4);
-        const { position, quaternion } = computeOrbitPose(target, azimuth, elevation, radius);
+        const { position, quaternion } = computeOrbitPose(target, azimuth, elevation, radius, sceneUp);
         pose.position.copy(position);
         pose.quaternion.copy(quaternion);
-        this.clampPose(pose, bounds, diagonal);
+        this.clampPose(pose, bounds, diagonal, sceneUp);
         this.applyPoseToViewer(pose);
         break;
       }
@@ -296,7 +302,7 @@ export class NavigationAgentOrchestrator {
         if (typeof action['fov'] === 'number' && action['fov'] > 0) {
           pose.fov = action['fov'] as number;
         }
-        this.clampPose(pose, bounds, diagonal);
+        this.clampPose(pose, bounds, diagonal, sceneUp);
         this.applyPoseToViewer(pose);
         break;
       }
@@ -316,10 +322,15 @@ export class NavigationAgentOrchestrator {
     }
   }
 
-  private clampPose(pose: CurrentPose, bounds: THREE.Box3, diagonal: number): void {
+  private clampPose(pose: CurrentPose, bounds: THREE.Box3, diagonal: number, sceneUp: THREE.Vector3): void {
     const safe = bounds.clone().expandByScalar(diagonal * 0.3);
     pose.position.clamp(safe.min, safe.max);
-    pose.position.y = Math.max(pose.position.y, bounds.min.y);
+    // Keep camera above floor along scene-up axis
+    const floorHeight = Math.min(bounds.min.dot(sceneUp), bounds.max.dot(sceneUp));
+    const posAlongUp = pose.position.dot(sceneUp);
+    if (posAlongUp < floorHeight) {
+      pose.position.addScaledVector(sceneUp, floorHeight - posAlongUp);
+    }
   }
 
   private applyPoseToViewer(pose: CurrentPose): void {
@@ -377,13 +388,14 @@ export class NavigationAgentOrchestrator {
   }
 }
 
-// --- Math helpers ---
+// --- Math helpers (exported for testing) ---
 
-function computeOrbitPose(
+export function computeOrbitPose(
   target: THREE.Vector3,
   azimuth_deg: number,
   elevation_deg: number,
   radius: number,
+  sceneUp: THREE.Vector3 = new THREE.Vector3(0, 1, 0),
 ): { position: THREE.Vector3; quaternion: THREE.Quaternion } {
   const azRad = THREE.MathUtils.degToRad(azimuth_deg);
   const elRad = THREE.MathUtils.degToRad(elevation_deg);
@@ -393,35 +405,60 @@ function computeOrbitPose(
   const cosAz = Math.cos(azRad);
   const sinAz = Math.sin(azRad);
 
-  const offset = new THREE.Vector3(
-    radius * cosEl * sinAz,
-    radius * sinEl,
-    radius * cosEl * cosAz,
-  );
+  // Build orthonormal frame from sceneUp
+  // north: perpendicular to sceneUp, toward +Z (or +X if degenerate)
+  const up = sceneUp.clone().normalize();
+  let northRef = new THREE.Vector3(0, 0, 1);
+  if (Math.abs(up.dot(northRef)) > 0.98) {
+    northRef = new THREE.Vector3(1, 0, 0);
+  }
+  const north = northRef.clone().addScaledVector(up, -up.dot(northRef)).normalize();
+  const east = up.clone().cross(north).normalize();
+
+  // offset = east*(cosEl*sinAz) + north*(cosEl*cosAz) + up*sinEl
+  const offset = new THREE.Vector3()
+    .addScaledVector(east, radius * cosEl * sinAz)
+    .addScaledVector(north, radius * cosEl * cosAz)
+    .addScaledVector(up, radius * sinEl);
+
   const eye = target.clone().add(offset);
-  const quaternion = computeLookAtQuaternion(eye, target);
+  const quaternion = computeLookAtQuaternion(eye, target, sceneUp);
   return { position: eye, quaternion };
 }
 
-function computeLookAtQuaternion(eye: THREE.Vector3, target: THREE.Vector3): THREE.Quaternion {
+export function computeLookAtQuaternion(
+  eye: THREE.Vector3,
+  target: THREE.Vector3,
+  sceneUp: THREE.Vector3 = new THREE.Vector3(0, 1, 0),
+): THREE.Quaternion {
   const forward = target.clone().sub(eye).normalize();
 
-  let up = DEFAULT_LOOK_UP.clone();
-  // Pole singularity: if looking nearly straight up or down, use +Z as up
+  let up = sceneUp.clone().normalize();
+  // Pole singularity: if looking nearly straight up or down along sceneUp, use fallback
   if (Math.abs(forward.dot(up)) > 0.98) {
+    // Pick a fallback perpendicular to forward
     up = new THREE.Vector3(0, 0, 1);
+    if (Math.abs(forward.dot(up)) > 0.98) {
+      up = new THREE.Vector3(1, 0, 0);
+    }
   }
 
   const m = new THREE.Matrix4().lookAt(eye, target, up);
   return new THREE.Quaternion().setFromRotationMatrix(m);
 }
 
-function applyRotation(pose: CurrentPose, yawDeg: number, pitchDeg: number, rollDeg: number): void {
+export function applyRotation(
+  pose: CurrentPose,
+  yawDeg: number,
+  pitchDeg: number,
+  rollDeg: number,
+  sceneUp: THREE.Vector3 = new THREE.Vector3(0, 1, 0),
+): void {
   const q = pose.quaternion;
 
   if (yawDeg !== 0) {
     const yawQ = new THREE.Quaternion().setFromAxisAngle(
-      new THREE.Vector3(0, 1, 0),
+      sceneUp.clone().normalize(),
       THREE.MathUtils.degToRad(yawDeg),
     );
     q.premultiply(yawQ);

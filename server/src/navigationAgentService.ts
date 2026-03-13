@@ -47,6 +47,7 @@ export interface NavTurnRequest {
   imageDataUrl: string;
   prompt: string;
   scenePoints: NavScenePoint[];
+  sceneUp?: NavVector3;
   turnNumber: 1 | 2;
 }
 
@@ -112,7 +113,7 @@ Wrong:     orbit → orbit → done  (no keyframes recorded)
 
 ## Spatial reasoning from point cloud
 - Scene center: centroid of high-opacity points
-- Floor level: minimum Y among dense points
+- Floor level: lowest point along the scene-up direction (provided in user message)
 - Scene scale: bounding box diagonal
 
 ## Orbit math
@@ -121,6 +122,7 @@ orbit(target, azimuth_deg, elevation_deg, radius) places camera at:
   y = target.y + radius * sin(el)
   z = target.z + radius * cos(el) * cos(az)
 azimuth 0=north(+Z), 90=east(+X). Camera auto-looks at target.
+Elevation axis = scene-up direction (provided per-request in user message).
 
 ## Strategy
 1. Wide establishing shot (high elevation, large radius)
@@ -133,6 +135,17 @@ azimuth 0=north(+Z), 90=east(+X). Camera auto-looks at target.
 - Stay within scene bounds (expanded 30% of diagonal)
 - Keep camera above floor level
 - done must be the last action`;
+}
+
+function buildSceneUpSection(sceneUp: NavVector3, bounds: NavBounds): string {
+  const dot = (a: NavVector3, b: NavVector3): number => a.x * b.x + a.y * b.y + a.z * b.z;
+  const floorHeight = Math.min(dot(bounds.min, sceneUp), dot(bounds.max, sceneUp));
+  return [
+    `## Coordinate system`,
+    `Scene-up direction: (${fmt(sceneUp.x)}, ${fmt(sceneUp.y)}, ${fmt(sceneUp.z)})`,
+    `Floor level: ${fmt(floorHeight)} (minimum projection of bounds along scene-up)`,
+    `Orbit elevation moves along the scene-up direction above.`,
+  ].join('\n');
 }
 
 function buildUserMessage(request: NavTurnRequest): unknown[] {
@@ -148,11 +161,16 @@ function buildUserMessage(request: NavTurnRequest): unknown[] {
     z: (request.bounds.min.z + request.bounds.max.z) / 2,
   };
 
+  const sceneUpSection = request.sceneUp
+    ? buildSceneUpSection(request.sceneUp, request.bounds)
+    : '';
+
   const contextText = [
     `## User prompt\n${request.prompt}`,
     request.turnNumber === 2 && request.assessmentReason
       ? `## Assessment reason (turn 2)\n${request.assessmentReason}\nReview the screenshot and adjust keyframes as needed.`
       : '',
+    sceneUpSection,
     `## Scene info`,
     `Bounding box: min(${fmt(request.bounds.min.x)}, ${fmt(request.bounds.min.y)}, ${fmt(request.bounds.min.z)}) max(${fmt(request.bounds.max.x)}, ${fmt(request.bounds.max.y)}, ${fmt(request.bounds.max.z)})`,
     `Scene diagonal: ${fmt(diagonal)}`,
