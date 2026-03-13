@@ -150,9 +150,11 @@ export class NavigationAgentOrchestrator {
 
     if (this.cancelled) throw new AgenticPathGenerationError('Cancelled.');
 
+    const serializedBounds = serializeBounds(bounds);
+
     // Turn 1
     const turn1Response = await this.callPlanTurn({
-      bounds,
+      bounds: serializedBounds,
       currentCamera: serializeCamera(camera, currentPose),
       imageDataUrl: initialImageDataUrl,
       prompt,
@@ -195,7 +197,7 @@ export class NavigationAgentOrchestrator {
 
       const turn2Response = await this.callPlanTurn({
         assessmentReason: captureAndAssessReason,
-        bounds,
+        bounds: serializedBounds,
         currentCamera: serializeCamera(camera2, currentPose),
         imageDataUrl: assessImageDataUrl,
         prompt,
@@ -447,6 +449,13 @@ function poseFromCamera(camera: THREE.PerspectiveCamera): InterpolatedPose {
     position: camera.position.clone(),
     quaternion: camera.quaternion.clone(),
     fov: camera.fov,
+  };
+}
+
+function serializeBounds(bounds: THREE.Box3): unknown {
+  return {
+    min: { x: bounds.min.x, y: bounds.min.y, z: bounds.min.z },
+    max: { x: bounds.max.x, y: bounds.max.y, z: bounds.max.z },
   };
 }
 

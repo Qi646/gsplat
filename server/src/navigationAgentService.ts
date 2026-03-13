@@ -248,7 +248,22 @@ You receive:
 - Current camera pose (position, quaternion, fov)
 - A user prompt describing the desired camera movement
 
-Your task: Call the provided tools to move the camera to interesting positions and record keyframes. Then call done() when finished.
+## CRITICAL: Single-response batch workflow
+You must emit ALL your tool calls in ONE response. Tools are executed in order without any intermediate feedback. Do NOT stop after one tool expecting a result — keep calling tools until you call done().
+
+Required pattern for each keyframe:
+  1. Call a positioning tool (orbit / move / look_at / rotate / set_pose) to place the camera
+  2. Immediately call place_keyframe() to record that position
+Repeat for every keyframe. End with done().
+
+Minimal correct example (4 tool calls):
+  orbit(...)         ← position camera at shot 1
+  place_keyframe()   ← record shot 1
+  orbit(...)         ← position camera at shot 2
+  place_keyframe()   ← record shot 2
+  done()             ← finish
+
+If you call orbit/move/look_at/rotate/set_pose WITHOUT immediately following it with place_keyframe(), no keyframe is recorded for that position. Always pair them.
 
 ## Spatial reasoning from point cloud
 The scene points give you the actual 3D geometry. Cluster them mentally to find:
