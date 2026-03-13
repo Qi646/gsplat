@@ -10,6 +10,12 @@ import {
   type ExportService,
 } from './exportService.js';
 import {
+  NavigationAgentError,
+  OpenAINavigationAgentService,
+  type NavTurnRequest,
+  type OpenAINavigationAgentServiceOptions,
+} from './navigationAgentService.js';
+import {
   OpenAIVisionPathPlanner,
   PathGenerationError,
   type PathGenerationPlanner,
@@ -23,6 +29,7 @@ export interface AppOptions {
   clientIndexPath: string;
   corsOrigin: AppCorsOrigin;
   exportService: ExportService;
+  navigationAgentOptions?: OpenAINavigationAgentServiceOptions;
   pathPlanner: PathGenerationPlanner;
   presetService: PresetService;
   serveClientBuild: boolean;
@@ -55,6 +62,7 @@ export function createApp(options: Partial<AppOptions> = {}): express.Express {
   const clientIndexPath = options.clientIndexPath ?? path.join(clientBuildDir, 'index.html');
   const corsOrigin = resolveCorsOrigin(options.corsOrigin);
   const exportService = options.exportService ?? new FfmpegExportService();
+  const navigationAgentService = new OpenAINavigationAgentService(options.navigationAgentOptions ?? {});
   const pathPlanner = options.pathPlanner ?? new OpenAIVisionPathPlanner();
   const presetService = options.presetService ?? new PresetArchiveService();
   const serveClientBuild = options.serveClientBuild ?? existsSync(clientIndexPath);
@@ -127,6 +135,20 @@ export function createApp(options: Partial<AppOptions> = {}): express.Express {
       response.status(200).json(stepResponse);
     } catch (error) {
       sendPathGenerationError(response, error, 'Could not choose the next stepwise camera action.');
+    }
+  });
+
+  app.post('/api/path/navigate', async (request, response) => {
+    try {
+      const navResponse = await navigationAgentService.planTurn(request.body as NavTurnRequest);
+      response.status(200).json(navResponse);
+    } catch (error) {
+      if (error instanceof NavigationAgentError) {
+        response.status(error.statusCode).json({ error: error.message });
+        return;
+      }
+      console.error('Could not plan navigation agent turn.', error);
+      response.status(502).json({ error: 'Could not plan navigation agent turn.' });
     }
   });
 

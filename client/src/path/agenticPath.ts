@@ -14,7 +14,7 @@ import { PathInterpolator } from './PathInterpolator';
 export type AgenticOrientationMode = 'look-at-subject' | 'look-forward';
 export type AgenticOrbitDirection = 'clockwise' | 'counterclockwise';
 export type AgenticVerticalBias = 'low' | 'mid' | 'high';
-export type AgenticPathStrategyVersion = 'multistep-v2' | 'stepwise-v1';
+export type AgenticPathStrategyVersion = 'multistep-v2' | 'stepwise-v1' | 'nav-agent-v1';
 export type AgenticPathMode = 'subject-centric' | 'route-following' | 'multi-subject' | 'ambiguous';
 export type AgenticPathSegmentType = 'hold' | 'arc' | 'dolly' | 'pedestal' | 'traverse';
 export type AgenticDollyDirection = 'in' | 'out';

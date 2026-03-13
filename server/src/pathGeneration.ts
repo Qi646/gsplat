@@ -1,7 +1,7 @@
 export type AgenticOrientationMode = 'look-at-subject' | 'look-forward';
 export type AgenticOrbitDirection = 'clockwise' | 'counterclockwise';
 export type AgenticVerticalBias = 'low' | 'mid' | 'high';
-export type PathGenerationStrategyVersion = 'multistep-v2' | 'stepwise-v1';
+export type PathGenerationStrategyVersion = 'multistep-v2' | 'stepwise-v1' | 'nav-agent-v1';
 export type PathGenerationPathMode = 'subject-centric' | 'route-following' | 'multi-subject' | 'ambiguous';
 export type PathGenerationSegmentType = 'hold' | 'arc' | 'dolly' | 'pedestal' | 'traverse';
 export type PathGenerationDollyDirection = 'in' | 'out';
@@ -699,6 +699,13 @@ function buildStrategyStatuses(available: boolean, reason: string | null): PathG
       experimental: true,
       id: 'stepwise-v1',
       label: 'Stepwise Agent',
+      reason,
+    },
+    {
+      available,
+      experimental: true,
+      id: 'nav-agent-v1',
+      label: 'Navigation Agent',
       reason,
     },
   ];

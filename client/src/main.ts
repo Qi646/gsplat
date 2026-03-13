@@ -35,6 +35,7 @@ import {
 import { CameraPathOverlay } from './path/CameraPathOverlay';
 import { KeyframeManager } from './path/KeyframeManager';
 import { PathPreviewPlayer } from './path/PathPreviewPlayer';
+import { NavigationAgentOrchestrator } from './path/navigationAgent';
 import { StepwiseAgentOrchestrator } from './path/stepwiseAgent';
 import {
   AdaptiveRenderBudgetController,
@@ -188,6 +189,13 @@ function defaultAgenticStrategies(available: boolean, reason: string | null): Ag
       label: 'Stepwise Agent',
       reason,
     },
+    {
+      available,
+      experimental: true,
+      id: 'nav-agent-v1',
+      label: 'Navigation Agent',
+      reason,
+    },
   ];
 }
 
@@ -198,17 +206,18 @@ function parseAgenticStrategyStatus(input: unknown): AgenticPathStrategyStatus |
 
   const record = input as Record<string, unknown>;
   const id = record['id'];
-  if (id !== 'multistep-v2' && id !== 'stepwise-v1') {
+  if (id !== 'multistep-v2' && id !== 'stepwise-v1' && id !== 'nav-agent-v1') {
     return null;
   }
 
+  const defaultLabel = id === 'stepwise-v1' ? 'Stepwise Agent' : id === 'nav-agent-v1' ? 'Navigation Agent' : 'Planner Draft';
   return {
     available: record['available'] !== false,
     experimental: record['experimental'] === true,
     id,
     label: typeof record['label'] === 'string' && record['label'].trim().length > 0
       ? record['label']
-      : id === 'stepwise-v1' ? 'Stepwise Agent' : 'Planner Draft',
+      : defaultLabel,
     reason: typeof record['reason'] === 'string' ? record['reason'] : null,
   };
 }
@@ -345,6 +354,14 @@ async function main(): Promise<void> {
     },
     viewer,
   });
+  const navigationAgentOrchestrator = new NavigationAgentOrchestrator({
+    onProgress: progress => {
+      agenticPathProgress = progress;
+      updatePathControlsState();
+      setStatusNote(progress.message);
+    },
+    viewer,
+  });
   const exportManager = new ExportManager({ viewer });
   const adaptiveRenderBudgetController = new AdaptiveRenderBudgetController();
   const pathOverlay = new CameraPathOverlay(pathOverlayElement);
@@ -394,18 +411,24 @@ async function main(): Promise<void> {
     reason: 'Checking whether agentic path generation is available on the server…',
     strategies: defaultAgenticStrategies(false, 'Checking whether agentic path generation is available on the server…'),
   };
-  const getSelectedDraftStrategy = (): AgenticPathStrategyVersion =>
-    pathStrategySelect.value === 'stepwise-v1' ? 'stepwise-v1' : 'multistep-v2';
+  const getSelectedDraftStrategy = (): AgenticPathStrategyVersion => {
+    const v = pathStrategySelect.value;
+    if (v === 'stepwise-v1') return 'stepwise-v1';
+    if (v === 'nav-agent-v1') return 'nav-agent-v1';
+    return 'multistep-v2';
+  };
   const getDraftStrategyStatus = (strategy: AgenticPathStrategyVersion): AgenticPathStrategyStatus =>
     agenticPathStatus.strategies.find(entry => entry.id === strategy)
     ?? defaultAgenticStrategies(agenticPathStatus.available, agenticPathStatus.reason).find(entry => entry.id === strategy)
     ?? defaultAgenticStrategies(false, null)[0]!;
   const isGenerationActive = () =>
-    agenticPathOrchestrator.isGenerating() || stepwiseAgentOrchestrator.isGenerating();
+    agenticPathOrchestrator.isGenerating() || stepwiseAgentOrchestrator.isGenerating() || navigationAgentOrchestrator.isGenerating();
   const cancelActiveGeneration = () =>
     agenticPathOrchestrator.isGenerating()
       ? agenticPathOrchestrator.cancelGeneration()
-      : stepwiseAgentOrchestrator.cancelGeneration();
+      : stepwiseAgentOrchestrator.isGenerating()
+        ? stepwiseAgentOrchestrator.cancelGeneration()
+        : navigationAgentOrchestrator.cancelGeneration();
   const isSceneLoaded = () => !sceneLoadInProgress && viewer.isSceneLoaded();
   const isInteractionLocked = () =>
     keyframeManager.isPreviewActive()
@@ -1296,7 +1319,13 @@ async function main(): Promise<void> {
 
     try {
       const draftStrategy = getSelectedDraftStrategy();
-      const draft = await (draftStrategy === 'stepwise-v1' ? stepwiseAgentOrchestrator : agenticPathOrchestrator).generateDraft({
+      const orchestrator =
+        draftStrategy === 'stepwise-v1'
+          ? stepwiseAgentOrchestrator
+          : draftStrategy === 'nav-agent-v1'
+            ? navigationAgentOrchestrator
+            : agenticPathOrchestrator;
+      const draft = await orchestrator.generateDraft({
         controls: getAgenticDraftControls(),
         existingKeyframes: keyframeManager.getKeyframes(),
         prompt,
@@ -1309,9 +1338,11 @@ async function main(): Promise<void> {
       updatePathControlsState();
       syncPathVisualsState();
       setStatusNote(
-        draftStrategy === 'stepwise-v1'
-          ? 'Experimental stepwise draft ready. Preview it, apply it, discard it, or regenerate with a different prompt.'
-          : 'Draft ready. Preview it, apply it, discard it, or regenerate with a different prompt.',
+        draftStrategy === 'nav-agent-v1'
+          ? 'Navigation agent draft ready. Preview it, apply it, discard it, or regenerate with a different prompt.'
+          : draftStrategy === 'stepwise-v1'
+            ? 'Experimental stepwise draft ready. Preview it, apply it, discard it, or regenerate with a different prompt.'
+            : 'Draft ready. Preview it, apply it, discard it, or regenerate with a different prompt.',
       );
     } catch (error) {
       agenticPathProgress = null;

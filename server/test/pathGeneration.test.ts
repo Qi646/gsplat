@@ -994,6 +994,13 @@ describe('OpenAIVisionPathPlanner status', () => {
             label: 'Stepwise Agent',
             reason: 'Agentic path generation is disabled because OPENAI_API_KEY is not configured on the server.',
           },
+          {
+            available: false,
+            experimental: true,
+            id: 'nav-agent-v1',
+            label: 'Navigation Agent',
+            reason: 'Agentic path generation is disabled because OPENAI_API_KEY is not configured on the server.',
+          },
         ],
       });
     } finally {
